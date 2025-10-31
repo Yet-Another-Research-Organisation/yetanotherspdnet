@@ -9,6 +9,7 @@ jobs:
   coverage:
     name: Generate Coverage Report
     runs-on: ubuntu-latest
+    if: github.event.repository.private == false
 
     steps:
       - name: Checkout code
@@ -42,7 +43,7 @@ jobs:
           name: codecov-main
 
       - name: Archive coverage results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: htmlcov/
