@@ -3,8 +3,9 @@
 __version__ = "0.1.0"
 
 # Import main modules
-from yetanotherspdnet import spd, nn, means, stiefel
+from yetanotherspdnet import means, nn, spd, stiefel
 from yetanotherspdnet.models import SPDNet
+
 
 # Define public API
 __all__ = [

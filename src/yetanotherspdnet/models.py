@@ -6,33 +6,30 @@
 # Brief: Models used in the project
 # =========================================
 
-from typing import List, Tuple, Optional
-import base64
+
+import zlib
 
 import torch
 from torch import nn
 
-from yetanotherspdnet.nn import BiMap, ReEig, LogEig, Vec, BatchNormSPDMean
-
-
-import zlib
+from yetanotherspdnet.nn import BatchNormSPDMean, BiMap, LogEig, ReEig, Vec
 
 
 class SPDNet(nn.Module):
     def __init__(
         self,
         input_dim: int,
-        hidden_layers_size: List[int],
+        hidden_layers_size: list[int],
         output_dim: int,
         softmax: bool = False,
         eps: float = 1e-3,
         batchnorm: bool = False,
         batchnorm_method: str = "geometric_arithmetic_harmonic",
-        seed: Optional[int] = None,
-        device: Optional[torch.device] = None,
-        precision: Optional[torch.dtype] = torch.float64,
+        seed: int | None = None,
+        device: torch.device | None = None,
+        precision: torch.dtype | None = torch.float64,
         max_iter_batchnorm: int = 10,
-        orthogonal_map: Optional[str] = None,
+        orthogonal_map: str | None = None,
         momentum: float = 0.01,
     ) -> None:
         """Standard SPDNet model with hidden layers
@@ -96,7 +93,7 @@ class SPDNet(nn.Module):
 
         # Initialize seed
         if self.seed is not None:
-            rng = torch.manual_seed(self.seed)
+            torch.manual_seed(self.seed)
 
         # Create layers
         spdnet_layers = [
@@ -106,7 +103,9 @@ class SPDNet(nn.Module):
                 seed=self.seed,
                 device=self.device,
                 dtype=self.precision,
-                parametrization_options={"orthogonal_map": self.orthogonal_map} if self.orthogonal_map else None,
+                parametrization_options={"orthogonal_map": self.orthogonal_map}
+                if self.orthogonal_map
+                else None,
             ),
         ]
 
@@ -128,7 +127,9 @@ class SPDNet(nn.Module):
                     seed=self.seed,
                     device=self.device,
                     dtype=self.precision,
-                    parametrization_options={"orthogonal_map": self.orthogonal_map} if self.orthogonal_map else None,
+                    parametrization_options={"orthogonal_map": self.orthogonal_map}
+                    if self.orthogonal_map
+                    else None,
                 )
             )
             spdnet_layers.append(ReEig(eps=eps, dim=hidden_layers_size[i]))
@@ -261,5 +262,3 @@ class SPDNet(nn.Module):
         if not hasattr(self, "model_hash"):
             self.create_model_name_hash()
         return self.model_hash
-
-

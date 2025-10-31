@@ -1,45 +1,43 @@
-from typing import Optional, Callable, Tuple
+from collections.abc import Callable
 
 import torch
 from torch import nn
 from torch.nn.utils import parametrizations
 from torch.nn.utils.parametrize import register_parametrization
 
-from .stiefel import _init_weights_stiefel
-
-from .spd import (
-    vec_batch,
-    vech_batch,
-    EighReLu,
-    eigh_relu,
-    LogmSPD,
-    logm_SPD,
-    ExpmSymmetric,
-    CongruenceRectangular,
-    congruence_rectangular,
-    CongruenceSPD,
-    congruence_SPD,
-    Whitening,
-    whitening,
-)
-
 from .means import (
     ArithmeticMean,
-    arithmetic_mean,
-    adaptive_update_arithmetic,
-    HarmonicMean,
-    harmonic_mean,
-    adaptive_update_harmonic,
     GeometricArithmeticHarmonicMean,
-    geometric_arithmetic_harmonic_mean,
-    adaptive_update_geometric_arithmetic_harmonic,
-    LogEuclideanMean,
-    logEuclidean_mean,
-    adaptive_update_logEuclidean,
     GeometricMean,
-    geometric_mean,
+    HarmonicMean,
+    LogEuclideanMean,
+    adaptive_update_arithmetic,
     adaptive_update_geometric,
+    adaptive_update_geometric_arithmetic_harmonic,
+    adaptive_update_harmonic,
+    adaptive_update_logEuclidean,
+    arithmetic_mean,
+    geometric_arithmetic_harmonic_mean,
+    geometric_mean,
+    harmonic_mean,
+    logEuclidean_mean,
 )
+from .spd import (
+    CongruenceRectangular,
+    CongruenceSPD,
+    EighReLu,
+    ExpmSymmetric,
+    LogmSPD,
+    Whitening,
+    congruence_rectangular,
+    congruence_SPD,
+    eigh_relu,
+    logm_SPD,
+    vec_batch,
+    vech_batch,
+    whitening,
+)
+from .stiefel import _init_weights_stiefel
 
 
 class BiMap(nn.Module):
@@ -49,10 +47,10 @@ class BiMap(nn.Module):
         n_out: int,
         parametrized: bool = True,
         parametrization: Callable = parametrizations.orthogonal,
-        parametrization_options: Optional[dict] = None,
+        parametrization_options: dict | None = None,
         init_method: Callable = _init_weights_stiefel,
-        init_options: Optional[dict] = None,
-        seed: Optional[int] = None,
+        init_options: dict | None = None,
+        seed: int | None = None,
         dtype: torch.dtype = torch.float64,
         device: torch.device = torch.device("cpu"),
         use_autograd: bool = False,
@@ -197,7 +195,7 @@ class BiMap(nn.Module):
 
 class ReEig(nn.Module):
     def __init__(
-        self, eps: float = 1e-2, use_autograd: bool = False, dim: Optional[int] = None
+        self, eps: float = 1e-2, use_autograd: bool = False, dim: int | None = None
     ) -> None:
         """
         ReEig layer in a SPDnet layer according to the paper:
@@ -493,7 +491,7 @@ class BatchNormSPDMean(nn.Module):
         self.add_bias = congruence_SPD if self.use_autograd else CongruenceSPD.apply
 
     def _get_mean_gar(
-        self, mean_param: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        self, mean_param: tuple[torch.Tensor, torch.Tensor, torch.Tensor]
     ) -> torch.Tensor:
         """
         Auxiliary function to get actual mean in the case of geometric
@@ -514,10 +512,10 @@ class BatchNormSPDMean(nn.Module):
 
     def _aux_adaptive_gar(
         self,
-        running_param: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        batch_param: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        running_param: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_param: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         momentum: float,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Auxiliary function for the adaptive update of the geometric
         mean of arithmetic and harmonic means

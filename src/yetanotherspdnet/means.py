@@ -1,18 +1,16 @@
-from typing import Tuple
-
 import torch
 from torch.autograd import Function
 
 from .spd import (
-    symmetrize,
+    ExpmSymmetric,
+    LogmSPD,
     eigh_operation,
     eigh_operation_grad,
+    expm_symmetric,
+    logm_SPD,
     solve_sylvester_SPD,
     sqrtm_SPD,
-    LogmSPD,
-    logm_SPD,
-    ExpmSymmetric,
-    expm_symmetric,
+    symmetrize,
 )
 
 
@@ -341,7 +339,7 @@ class GeometricMean2Points(Function):
         return point1_sqrtm @ middle_term1 @ point1_sqrtm
 
     @staticmethod
-    def backward(ctx, grad_output: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Backward pass of the geometric mean of two SPD matrices
 
@@ -598,7 +596,7 @@ class GeometricMeanIteration(Function):
         return mean_iterate_sqrtm @ exp_log_mean @ mean_iterate_sqrtm
 
     @staticmethod
-    def backward(ctx, grad_output: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Backward pass of one iteration of the fixed-point algorithm for the geometric mean
 
@@ -694,7 +692,7 @@ def GeometricMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
     """
     n_features = data.shape[-1]
     mean = torch.eye(n_features, dtype=data.dtype, device=data.device)
-    for it in range(n_iterations):
+    for _ in range(n_iterations):
         mean = GeometricMeanIteration.apply(mean, data)
     return mean
 
@@ -720,7 +718,7 @@ def geometric_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
     mean = torch.eye(
         n_features, dtype=data.dtype, device=data.device
     )  # initialize with identity to ensure correct manual backpropagation
-    for it in range(n_iterations):
+    for _ in range(n_iterations):
         # sqrtm and inverse sqrtm of mean
         eigvals_mean, eigvecs_mean = torch.linalg.eigh(mean)
         mean_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, torch.sqrt)

@@ -1,8 +1,9 @@
-from typing import Optional
-
 import torch
 
-def _init_weights_stiefel(weight: torch.Tensor, generator: Optional[torch.Generator] = None) -> None:
+
+def _init_weights_stiefel(
+    weight: torch.Tensor, generator: torch.Generator | None = None
+) -> None:
     """
     Initialize weights on the Stiefel manifold.
 
@@ -17,11 +18,10 @@ def _init_weights_stiefel(weight: torch.Tensor, generator: Optional[torch.Genera
     """
     if weight.shape[-2] > weight.shape[-1]:
         raise ValueError("Must have n_out < n_in")
-    
-    U,_,V = torch.svd(torch.randn(
-        weight.shape,
-        dtype=weight.dtype,
-        device=weight.device,
-        generator=generator
-    ))
-    weight.data.copy_(U@V.transpose(-1,-2))
+
+    U, _, V = torch.svd(
+        torch.randn(
+            weight.shape, dtype=weight.dtype, device=weight.device, generator=generator
+        )
+    )
+    weight.data.copy_(U @ V.transpose(-1, -2))

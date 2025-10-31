@@ -1,17 +1,12 @@
 from unittest import TestCase
 
 import torch
+from scipy.linalg import expm, logm, solve_sylvester, sqrtm
 from torch.testing import assert_close
-
-from scipy.linalg import (
-    solve_sylvester,
-    sqrtm,
-    logm,
-    expm
-)
 
 import yetanotherspdnet.spd as spd
 from yetanotherspdnet.stiefel import _init_weights_stiefel
+
 
 seed = 777
 torch.manual_seed(seed)
@@ -36,10 +31,10 @@ def is_symmetric(X: torch.Tensor) -> bool:
     bool
         boolean
     """
-    is_square =  bool(X.shape[-1] == X.shape[-2])
+    is_square = bool(X.shape[-1] == X.shape[-2])
     if not is_square:
         return False
-    return bool(torch.allclose(X, X.transpose(-1,-2)))
+    return bool(torch.allclose(X, X.transpose(-1, -2)))
 
 
 def is_spd(X: torch.Tensor) -> bool:
@@ -56,11 +51,11 @@ def is_spd(X: torch.Tensor) -> bool:
     bool
         boolean
     """
-    is_square =  bool(X.shape[-1] == X.shape[-2])
+    is_square = bool(X.shape[-1] == X.shape[-2])
     if not is_square:
         return False
-    is_symmetric = bool(torch.allclose(X, X.transpose(-1,-2)))
-    is_positivedefinite = bool((torch.linalg.eigvalsh(X)>0).all())
+    is_symmetric = bool(torch.allclose(X, X.transpose(-1, -2)))
+    is_positivedefinite = bool((torch.linalg.eigvalsh(X) > 0).all())
     return is_symmetric and is_positivedefinite
 
 
@@ -77,17 +72,16 @@ class TestSymmetrize(TestCase):
         self.n_matrices = 20
 
         # random batch of matrices
-        self.X = torch.randn(
-            (self.n_matrices, self.n_features, self.n_features)
-        )
-    
+        self.X = torch.randn((self.n_matrices, self.n_features, self.n_features))
+
     def test_symmetrize(self):
         X_sym = spd.symmetrize(self.X)
         X_skew = self.X - X_sym
-        assert_close(X_sym, X_sym.transpose(-1,-2))
-        assert_close(X_skew, -X_skew.transpose(-1,-2))
+        assert_close(X_sym, X_sym.transpose(-1, -2))
+        assert_close(X_skew, -X_skew.transpose(-1, -2))
         assert_close(self.X, X_sym + X_skew)
-    
+
+
 # -------------
 # Vectorization
 # -------------
@@ -102,33 +96,25 @@ class TestVec(TestCase):
         self.n_matrices = 20
 
         # random batch of square matrices
-        self.X_square = torch.randn(
-            (self.n_matrices, self.n_rows, self.n_rows)
-        )
+        self.X_square = torch.randn((self.n_matrices, self.n_rows, self.n_rows))
 
         # random batch of rectangular matrices
-        self.X_rectangular = torch.randn(
-            (self.n_matrices, self.n_rows, self.n_columns)
-        )
+        self.X_rectangular = torch.randn((self.n_matrices, self.n_rows, self.n_columns))
 
         # random batch of n_rows*n_rows vectors
-        self.X_square_vec = torch.randn(
-            (self.n_matrices, self.n_rows * self.n_rows)
-        )
+        self.X_square_vec = torch.randn((self.n_matrices, self.n_rows * self.n_rows))
 
         # random batch of n_rows*n_columns vectors
         self.X_rectangular_vec = torch.randn(
             (self.n_matrices, self.n_rows * self.n_columns)
         )
-    
+
     def test_vec_square(self):
         X_vec = spd.vec_batch(self.X_square)
         assert X_vec.dim() == self.X_square.dim() - 1
         assert X_vec.shape[0] == self.n_matrices
         assert X_vec.shape[1] == self.n_rows * self.n_rows
-        assert_close(
-            spd.unvec_batch(X_vec, self.n_rows), self.X_square
-        )
+        assert_close(spd.unvec_batch(X_vec, self.n_rows), self.X_square)
 
     def test_unvec_square(self):
         X_unvec = spd.unvec_batch(self.X_square_vec, self.n_rows)
@@ -137,16 +123,14 @@ class TestVec(TestCase):
         assert X_unvec.shape[1] == self.n_rows
         assert X_unvec.shape[2] == self.n_rows
         assert_close(spd.vec_batch(X_unvec), self.X_square_vec)
-    
+
     def test_vec_rectangular(self):
         X_vec = spd.vec_batch(self.X_rectangular)
         assert X_vec.dim() == self.X_rectangular.dim() - 1
         assert X_vec.shape[0] == self.n_matrices
         assert X_vec.shape[1] == self.n_rows * self.n_columns
-        assert_close(
-            spd.unvec_batch(X_vec, self.n_rows), self.X_rectangular
-        )
-    
+        assert_close(spd.unvec_batch(X_vec, self.n_rows), self.X_rectangular)
+
     def test_unvec_rectangular(self):
         X_unvec = spd.unvec_batch(self.X_rectangular_vec, self.n_rows)
         assert X_unvec.dim() == self.X_rectangular_vec.dim() + 1
@@ -163,18 +147,16 @@ class TestVech(TestCase):
 
     def setUp(self):
         self.n_features = 50
-        self.dim = self.n_features * (self.n_features+1) // 2
+        self.dim = self.n_features * (self.n_features + 1) // 2
         self.n_matrices = 20
 
         # random batch of symmetric matrices
-        self.X = spd.symmetrize(torch.randn(
-            (self.n_matrices, self.n_features, self.n_features)
-        ))
+        self.X = spd.symmetrize(
+            torch.randn((self.n_matrices, self.n_features, self.n_features))
+        )
 
         # random batch of dim vectors
-        self.X_vech = torch.randn(
-            (self.n_matrices, self.dim)
-        )
+        self.X_vech = torch.randn((self.n_matrices, self.dim))
 
     def test_vech(self):
         X_vech = spd.vech_batch(self.X)
@@ -182,7 +164,7 @@ class TestVech(TestCase):
         assert X_vech.shape[0] == self.n_matrices
         assert X_vech.shape[1] == self.dim
         assert_close(spd.unvech_batch(X_vech), self.X)
-    
+
     def test_unvech(self):
         X_unvech = spd.unvech_batch(self.X_vech)
         assert X_unvech.dim() == self.X_vech.dim() + 1
@@ -192,10 +174,9 @@ class TestVech(TestCase):
         assert_close(spd.vech_batch(X_unvech), self.X_vech)
 
 
-
-#----------------------------------------------------------
-# Remark: 
-# No testing of eigh_operation and eigh_operation_grad, 
+# ----------------------------------------------------------
+# Remark:
+# No testing of eigh_operation and eigh_operation_grad,
 # it is done indirectly when testing sqrtm, inv_sqrtm, etc.
 # ---------------------------------------------------------
 
@@ -204,7 +185,7 @@ class TestVech(TestCase):
 # Solve Sylvester SPD
 # -------------------
 class TestSylvesterSPD(TestCase):
-    """ 
+    """
     Test of solve_sylvester_SPD function
     """
 
@@ -216,9 +197,9 @@ class TestSylvesterSPD(TestCase):
         self.A = spd.random_SPD(self.n_features, self.n_matrices, cond=100)
 
         # Generate random symmetric matrices
-        self.Q = spd.symmetrize(torch.randn(
-            (self.n_matrices, self.n_features, self.n_features)
-        ))
+        self.Q = spd.symmetrize(
+            torch.randn((self.n_matrices, self.n_features, self.n_features))
+        )
 
     def test_sylvester_SPD_2D(self):
         A = self.A[0]
@@ -235,23 +216,24 @@ class TestSylvesterSPD(TestCase):
         assert X.shape == self.A.shape
         assert is_symmetric(X)
         assert_close(self.A @ X + X @ self.A, self.Q)
-    
+
     def test_scipy_comparison(self):
         eigvals, eigvecs = torch.linalg.eigh(self.A)
         X = spd.solve_sylvester_SPD(eigvals, eigvecs, self.Q)
         X_scipy = torch.zeros(
-            (self.n_matrices, self.n_features, self.n_features),
-            dtype=self.A.dtype
+            (self.n_matrices, self.n_features, self.n_features), dtype=self.A.dtype
         )
         for i in range(self.n_matrices):
-            X_scipy[i] = torch.tensor(solve_sylvester(
-                self.A[i].detach().numpy(), 
-                self.A[i].detach().numpy(),
-                self.Q[i].detach().numpy()
-            ), dtype=self.A.dtype)
+            X_scipy[i] = torch.tensor(
+                solve_sylvester(
+                    self.A[i].detach().numpy(),
+                    self.A[i].detach().numpy(),
+                    self.Q[i].detach().numpy(),
+                ),
+                dtype=self.A.dtype,
+            )
         # assert_close(self.A @ X_scipy + X_scipy @ self.A, self.Q)
         assert_close(X, X_scipy)
-
 
 
 # ---------
@@ -268,7 +250,7 @@ class TestSqrtmSPD(TestCase):
 
         # Generate random SPD matrices
         self.X = spd.random_SPD(self.n_features, self.n_matrices, cond=100)
-    
+
     def test_SqrtmSPD_2D(self):
         X = self.X[0]
         X_Sqrtm = spd.SqrtmSPD.apply(X)
@@ -291,21 +273,23 @@ class TestSqrtmSPD(TestCase):
         assert is_spd(X_Sqrtm)
         assert_close(X_Sqrtm @ X_Sqrtm, self.X)
         assert_close(X_Sqrtm, X_sqrtm)
-    
+
     def test_scipy_comparison(self):
         X_Sqrtm = spd.SqrtmSPD.apply(self.X)
         X_sqrtm = spd.sqrtm_SPD(self.X)
         X_sqrtm_scipy = torch.zeros(
-            (self.n_matrices, self.n_features, self.n_features),
-            dtype=self.X.dtype
+            (self.n_matrices, self.n_features, self.n_features), dtype=self.X.dtype
         )
         for i in range(self.n_matrices):
-            X_sqrtm_scipy[i] = torch.tensor(sqrtm(
-                self.X[i].detach().numpy(),
-            ), dtype=self.X.dtype)
+            X_sqrtm_scipy[i] = torch.tensor(
+                sqrtm(
+                    self.X[i].detach().numpy(),
+                ),
+                dtype=self.X.dtype,
+            )
         assert_close(X_Sqrtm, X_sqrtm_scipy)
         assert_close(X_sqrtm, X_sqrtm_scipy)
-    
+
     def test_SqrtmSPD_backward(self):
         X_manual = self.X.clone().detach()
         X_manual.requires_grad = True
@@ -347,17 +331,15 @@ class TestInvSqrtmSPD(TestCase):
         assert X_InvSqrtm.shape == X.shape
         assert is_spd(X_InvSqrtm)
         assert_close(
-            X_InvSqrtm @ X_InvSqrtm,
-            torch.cholesky_inverse(torch.linalg.cholesky(X))
+            X_InvSqrtm @ X_InvSqrtm, torch.cholesky_inverse(torch.linalg.cholesky(X))
         )
         assert X_inv_sqrtm.shape == X.shape
         assert is_spd(X_inv_sqrtm)
         assert_close(
-            X_inv_sqrtm @ X_inv_sqrtm,
-            torch.cholesky_inverse(torch.linalg.cholesky(X))
+            X_inv_sqrtm @ X_inv_sqrtm, torch.cholesky_inverse(torch.linalg.cholesky(X))
         )
         assert_close(X_InvSqrtm, X_inv_sqrtm)
-    
+
     def test_InvSqrtmSPD(self):
         X_InvSqrtm = spd.InvSqrtmSPD.apply(self.X)
         X_inv_sqrtm = spd.inv_sqrtm_SPD(self.X)
@@ -365,16 +347,16 @@ class TestInvSqrtmSPD(TestCase):
         assert is_spd(X_inv_sqrtm)
         assert_close(
             X_inv_sqrtm @ X_inv_sqrtm,
-            torch.cholesky_inverse(torch.linalg.cholesky(self.X))
+            torch.cholesky_inverse(torch.linalg.cholesky(self.X)),
         )
         assert X_InvSqrtm.shape == self.X.shape
         assert is_spd(X_InvSqrtm)
         assert_close(
             X_InvSqrtm @ X_InvSqrtm,
-            torch.cholesky_inverse(torch.linalg.cholesky(self.X))
+            torch.cholesky_inverse(torch.linalg.cholesky(self.X)),
         )
         assert_close(X_InvSqrtm, X_inv_sqrtm)
-    
+
     def test_InvSqrtmSPD_backward(self):
         X_manual = self.X.clone().detach()
         X_manual.requires_grad = True
@@ -411,11 +393,10 @@ class TestLogmSPDExpmSymmetric(TestCase):
         self.X = spd.random_SPD(self.n_features, self.n_matrices, cond=100)
 
         # Generate random symmetric matrices
-        self.X_symmetric = spd.symmetrize(torch.randn(
-            (self.n_matrices, self.n_features, self.n_features)
-        ))
+        self.X_symmetric = spd.symmetrize(
+            torch.randn((self.n_matrices, self.n_features, self.n_features))
+        )
 
-    
     def test_LogmSPD(self):
         X_Logm = spd.LogmSPD.apply(self.X)
         X_logm = spd.logm_SPD(self.X)
@@ -428,7 +409,7 @@ class TestLogmSPDExpmSymmetric(TestCase):
         assert is_symmetric(X_logm)
         assert_close(spd.expm_symmetric(X_logm), self.X)
         assert_close(X_Logm, X_logm)
-    
+
     def test_ExpmSymmetric(self):
         X_Expm = spd.ExpmSymmetric.apply(self.X_symmetric)
         X_expm = spd.expm_symmetric(self.X_symmetric)
@@ -441,18 +422,20 @@ class TestLogmSPDExpmSymmetric(TestCase):
         assert is_spd(X_expm)
         assert_close(spd.logm_SPD(X_expm), self.X_symmetric)
         assert_close(X_Expm, X_expm)
-    
+
     def test_logm_scipy_comparison(self):
         X_Logm = spd.LogmSPD.apply(self.X)
         X_logm = spd.logm_SPD(self.X)
         X_logm_scipy = torch.zeros(
-            (self.n_matrices, self.n_features, self.n_features),
-            dtype=self.X.dtype
+            (self.n_matrices, self.n_features, self.n_features), dtype=self.X.dtype
         )
         for i in range(self.n_matrices):
-            X_logm_scipy[i] = torch.tensor(logm(
-                self.X[i].detach().numpy(),
-            ), dtype=self.X.dtype)
+            X_logm_scipy[i] = torch.tensor(
+                logm(
+                    self.X[i].detach().numpy(),
+                ),
+                dtype=self.X.dtype,
+            )
         assert_close(X_Logm, X_logm_scipy)
         assert_close(X_logm, X_logm_scipy)
 
@@ -461,15 +444,18 @@ class TestLogmSPDExpmSymmetric(TestCase):
         X_expm = spd.expm_symmetric(self.X_symmetric)
         X_expm_scipy = torch.zeros(
             (self.n_matrices, self.n_features, self.n_features),
-            dtype=self.X_symmetric.dtype
+            dtype=self.X_symmetric.dtype,
         )
         for i in range(self.n_matrices):
-            X_expm_scipy[i] = torch.tensor(expm(
-                self.X_symmetric[i].detach().numpy(),
-            ), dtype=self.X_symmetric.dtype)
+            X_expm_scipy[i] = torch.tensor(
+                expm(
+                    self.X_symmetric[i].detach().numpy(),
+                ),
+                dtype=self.X_symmetric.dtype,
+            )
         assert_close(X_Expm, X_expm_scipy)
         assert_close(X_expm, X_expm_scipy)
-    
+
     def test_logm_backward(self):
         X_manual = self.X.clone().detach()
         X_manual.requires_grad = True
@@ -487,7 +473,7 @@ class TestLogmSPDExpmSymmetric(TestCase):
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
-    
+
     def test_expm_backward(self):
         X_manual = self.X_symmetric.clone().detach()
         X_manual.requires_grad = True
@@ -505,7 +491,7 @@ class TestLogmSPDExpmSymmetric(TestCase):
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
-    
+
 
 # -----------
 # Congruences
@@ -543,7 +529,7 @@ class TestCongruenceSPD(TestCase):
         assert_close(Y, Z)
         assert_close(X_class, self.X)
         assert_close(X_function, self.X)
-    
+
     def test_backward(self):
         X_manual = self.X.clone().detach()
         X_manual.requires_grad = True
@@ -586,7 +572,7 @@ class TestWhitening(TestCase):
 
         # Generate random SPD matrix
         self.G = spd.random_SPD(self.n_features, 1, cond=100)
-    
+
     def test_Whitening(self):
         Y = spd.Whitening.apply(self.X, self.G)
         Z = spd.whitening(self.X, self.G)
@@ -651,7 +637,7 @@ class TestCongruenceRectangular(TestCase):
         # Generate random Stiefel matrix
         self.W = torch.empty((self.n_out, self.n_in))
         _init_weights_stiefel(self.W)
-    
+
     def test_CongruenceRectangular(self):
         Y = spd.CongruenceRectangular.apply(self.X, self.W)
         Z = spd.CongruenceRectangular.apply(self.X, self.W)
@@ -693,7 +679,7 @@ class TestCongruenceRectangular(TestCase):
         assert_close(X_manual.grad, X_auto.grad)
 
         assert W_manual.grad.shape == W_manual.shape
-        assert_close(W_manual.grad, W_auto.grad)        
+        assert_close(W_manual.grad, W_auto.grad)
 
 
 class TestEighReLu(TestCase):
@@ -707,30 +693,30 @@ class TestEighReLu(TestCase):
         self.n_matrices = 20
 
         # Generate random SPD matrices with some small enough eigenvalues
-        U, _, _ = torch.svd(torch.randn(
-            (self.n_matrices, self.n_features, self.n_features)
-        ))
+        U, _, _ = torch.svd(
+            torch.randn((self.n_matrices, self.n_features, self.n_features))
+        )
 
-        l = torch.randn((self.n_matrices, self.n_features))**2
-        l[:,:self.n_small_eigvals] = 1e-6
+        L = torch.randn((self.n_matrices, self.n_features)) ** 2
+        L[:, : self.n_small_eigvals] = 1e-6
 
-        self.X = (U*l.unsqueeze(-2))@U.transpose(-1,-2)
+        self.X = (U * L.unsqueeze(-2)) @ U.transpose(-1, -2)
 
         self.eps = 1e-4
         # to account for numerical errors in eigvalsh
-        self.tol = self.eps/10
-    
+        self.tol = self.eps / 10
+
     def test_EighReLu(self):
         Y = spd.EighReLu.apply(self.X, self.eps)
         Z = spd.eigh_relu(self.X, self.eps)
 
         assert Y.shape == self.X.shape
         assert is_spd(Y)
-        assert bool((torch.linalg.eigvalsh(Y) >= self.eps-self.tol).all())
+        assert bool((torch.linalg.eigvalsh(Y) >= self.eps - self.tol).all())
 
         assert Z.shape == self.X.shape
         assert is_spd(Z)
-        assert bool((torch.linalg.eigvalsh(Z) >= self.eps-self.tol).all())
+        assert bool((torch.linalg.eigvalsh(Z) >= self.eps - self.tol).all())
 
     def test_backward(self):
         X_manual = self.X.clone().detach()

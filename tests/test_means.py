@@ -1,11 +1,5 @@
-from unittest import TestCase
-
 import torch
-from torch.testing import assert_close
 
-
-import yetanotherspdnet.spd as spd
-import yetanotherspdnet.means as means
 
 seed = 777
 torch.manual_seed(seed)
