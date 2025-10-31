@@ -1,0 +1,248 @@
+import torch
+from torch.autograd import Function
+
+from ..spd_linalg import (
+    eigh_operation,
+    eigh_operation_grad,
+    expm_symmetric,
+    logm_SPD,
+    solve_sylvester_SPD,
+)
+from .kullback_leibler import arithmetic_mean
+
+
+# --------------
+# Geometric mean
+# --------------
+class GeometricMeanIteration(Function):
+    """
+    One iteration of the fixed-point algorithm computing the geometric mean
+    """
+
+    @staticmethod
+    def forward(ctx, mean_iterate: torch.Tensor, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of one iteration of the fixed-point algorithm for the geometric mean
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        mean_iterate : torch.Tensor of shape (n_features, n_features)
+            Current iterate of the geometric mean
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices. The mean is computed along ... axes
+
+        Returns
+        -------
+        mean_iterate_new : torch.Tensor of shape (n_features, n_features)
+            New iterate of the geometric mean
+        """
+        ctx.shape = data.shape
+        eigvals_mean_iterate, eigvecs_mean_iterate = torch.linalg.eigh(mean_iterate)
+        mean_iterate_sqrtm = eigh_operation(
+            eigvals_mean_iterate, eigvecs_mean_iterate, torch.sqrt
+        )
+        inv_sqrt = lambda x: 1 / torch.sqrt(x)
+        mean_iterate_inv_sqrtm = eigh_operation(
+            eigvals_mean_iterate, eigvecs_mean_iterate, inv_sqrt
+        )
+        transformed_data = mean_iterate_inv_sqrtm @ data @ mean_iterate_inv_sqrtm
+        eigvals_transformed_data, eigvecs_transformed_data = torch.linalg.eigh(
+            transformed_data
+        )
+        log_transformed_data = eigh_operation(
+            eigvals_transformed_data, eigvecs_transformed_data, torch.log
+        )
+        log_mean = arithmetic_mean(log_transformed_data)
+        eigvals_log_mean, eigvecs_log_mean = torch.linalg.eigh(log_mean)
+        exp_log_mean = eigh_operation(eigvals_log_mean, eigvecs_log_mean, torch.exp)
+        ctx.save_for_backward(
+            eigvals_mean_iterate,
+            eigvecs_mean_iterate,
+            data,
+            mean_iterate_sqrtm,
+            mean_iterate_inv_sqrtm,
+            eigvals_transformed_data,
+            eigvecs_transformed_data,
+            eigvals_log_mean,
+            eigvecs_log_mean,
+            exp_log_mean,
+        )
+        return mean_iterate_sqrtm @ exp_log_mean @ mean_iterate_sqrtm
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Backward pass of one iteration of the fixed-point algorithm for the geometric mean
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (nfeatures, nfeatures)
+            Gradient of the loss with respect to the new iterate of the geometric mean
+
+        Returns
+        -------
+        grad_input_mean : torch.Tensor of shape (nfeatures, nfeatures)
+            Gradient of the loss with respect to the current iterate of the geometric mean
+
+        grad_input_data : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the data at the current iterate
+        """
+        shape = ctx.shape
+        n_matrices = torch.prod(torch.tensor(shape[:-2]))
+        (
+            eigvals_mean_iterate,
+            eigvecs_mean_iterate,
+            data,
+            mean_iterate_sqrtm,
+            mean_iterate_inv_sqrtm,
+            eigvals_transformed_data,
+            eigvecs_transformed_data,
+            eigvals_log_mean,
+            eigvecs_log_mean,
+            exp_log_mean,
+        ) = ctx.saved_tensors
+
+        diff_exp = eigh_operation_grad(
+            mean_iterate_sqrtm @ grad_output @ mean_iterate_sqrtm,
+            eigvals_log_mean,
+            eigvecs_log_mean,
+            torch.exp,
+            torch.exp,
+        )
+        inv = lambda x: 1 / x
+        diff_log_data = eigh_operation_grad(
+            diff_exp.expand(shape),
+            eigvals_transformed_data,
+            eigvecs_transformed_data,
+            torch.log,
+            inv,
+        )
+
+        syl2_right = data @ mean_iterate_inv_sqrtm @ diff_log_data
+        syl2_right = arithmetic_mean(syl2_right + syl2_right.transpose(-1, -2))
+        syl2_sol = solve_sylvester_SPD(
+            1 / torch.sqrt(eigvals_mean_iterate), eigvecs_mean_iterate, syl2_right
+        )
+
+        syl1_right = exp_log_mean @ mean_iterate_sqrtm @ grad_output
+        syl1_right = syl1_right + syl1_right.transpose(-1, -2)
+        syl1_sol = solve_sylvester_SPD(
+            torch.sqrt(eigvals_mean_iterate), eigvecs_mean_iterate, syl1_right
+        )
+
+        mean_iterate_inv = eigh_operation(
+            eigvals_mean_iterate, eigvecs_mean_iterate, inv
+        )
+
+        return (
+            syl1_sol - mean_iterate_inv @ syl2_sol @ mean_iterate_inv,
+            mean_iterate_inv_sqrtm
+            @ diff_log_data
+            @ mean_iterate_inv_sqrtm
+            / n_matrices,
+        )
+
+
+def GeometricMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
+    """
+    Geometric mean computed with fixed-point algorithm
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices. The mean is computed along ... axes
+
+    n_iterations : int
+        Number of iterations to perform to estimate the geometric mean.
+        Default is 10
+
+    Returns
+    -------
+    mean : torch.Tensor of shape (n_features, n_features)
+        Geometric mean
+    """
+    n_features = data.shape[-1]
+    mean = torch.eye(n_features, dtype=data.dtype, device=data.device)
+    for _ in range(n_iterations):
+        mean = GeometricMeanIteration.apply(mean, data)
+    return mean
+
+
+def geometric_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
+    """
+    Geometric mean computed with fixed-point algorithm
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices. The mean is computed along ... axes
+
+    n_iterations : int
+        Number of iterations to perform to estimate the geometric mean, by default 10
+
+    Returns
+    -------
+    mean : torch.Tensor of shape (n_features, n_features)
+        Geometric mean
+    """
+    n_features = data.shape[-1]
+    mean = torch.eye(
+        n_features, dtype=data.dtype, device=data.device
+    )  # initialize with identity to ensure correct manual backpropagation
+    for _ in range(n_iterations):
+        # sqrtm and inverse sqrtm of mean
+        eigvals_mean, eigvecs_mean = torch.linalg.eigh(mean)
+        mean_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, torch.sqrt)
+        inv_sqrt = lambda x: 1 / torch.sqrt(x)
+        mean_inv_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, inv_sqrt)
+        # transform data
+        transformed_data = mean_inv_sqrtm @ data @ mean_inv_sqrtm
+        # compute descent direction
+        logm_transformed_data = logm_SPD(transformed_data)
+        logm_mean = arithmetic_mean(logm_transformed_data)
+        # compute new iterate
+        expm_logm_mean = expm_symmetric(logm_mean)
+        mean = mean_sqrtm @ expm_logm_mean @ mean_sqrtm
+    return mean
+
+
+def adaptive_update_geometric(
+    point1: torch.Tensor, point2: torch.Tensor, t: int
+) -> torch.Tensor:
+    """
+    Path for adaptive geometric mean computation:
+    point1^{1/2} ( point1^{-1/2} point2 point1^{-1/2} )^t point1^{-1/2}
+
+    Parameters
+    ----------
+    point1 : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    point2 : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    t : int
+        parameter on the path, should be in [0,1]
+
+    Returns
+    -------
+    point : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+    """
+    eigvals1, eigvecs1 = torch.linalg.eigh(point1)
+    point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
+    inv_sqrt = lambda x: 1 / torch.sqrt(x)
+    point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
+    eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
+        point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
+    )
+    pow_t = lambda x: torch.pow(x, t)
+    middle_term1 = eigh_operation(eigvals_middle_term1, eigvecs_middle_term1, pow_t)
+    return point1_sqrtm @ middle_term1 @ point1_sqrtm

@@ -4,8 +4,12 @@ import torch
 from scipy.linalg import expm, logm, solve_sylvester, sqrtm
 from torch.testing import assert_close
 
-import yetanotherspdnet.spd as spd
-from yetanotherspdnet.stiefel import _init_weights_stiefel
+import yetanotherspdnet.functions.spd_linalg as spd
+from yetanotherspdnet.random.spd import random_SPD
+from yetanotherspdnet.random.stiefel import _init_weights_stiefel
+
+# Add random_SPD to spd namespace for backward compatibility in tests
+spd.random_SPD = random_SPD
 
 
 seed = 777
