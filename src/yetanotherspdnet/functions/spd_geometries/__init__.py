@@ -23,6 +23,7 @@ from .log_euclidean import (
     logEuclidean_mean,
 )
 
+
 __all__ = [
     # Affine-invariant geometry
     "GeometricMean",

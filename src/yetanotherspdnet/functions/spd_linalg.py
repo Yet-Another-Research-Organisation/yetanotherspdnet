@@ -398,7 +398,7 @@ class InvSqrtmSPD(Function):
         """
         inv_sqrtm_data, eigvals, eigvecs = inv_sqrtm_SPD(data)
         ctx.save_for_backward(eigvals, eigvecs)
-        return inv_sqrtm_data 
+        return inv_sqrtm_data
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
@@ -479,7 +479,7 @@ class LogmSPD(Function):
         """
         logm_data, eigvals, eigvecs = logm_SPD(data)
         ctx.save_for_backward(eigvals, eigvecs)
-        return logm_data 
+        return logm_data
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
@@ -559,7 +559,7 @@ class ExpmSymmetric(Function):
         """
         expm_data, eigvals, eigvecs = expm_symmetric(data)
         ctx.save_for_backward(eigvals, eigvecs)
-        return expm_data 
+        return expm_data
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
@@ -643,7 +643,7 @@ class EighReLu(Function):
         data_transformed, eigvals, eigvecs = eigh_relu(data,eps)
         ctx.save_for_backward(eigvals, eigvecs)
         ctx.eps = eps
-        return data_transformed 
+        return data_transformed
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
@@ -726,7 +726,7 @@ class CongruenceSPD(Function):
             Transformed batch of SPD matrices
         """
         ctx.save_for_backward(data, matrix)
-        return congruence_SPD(data, matrix) 
+        return congruence_SPD(data, matrix)
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -807,7 +807,7 @@ class Whitening(Function):
         """
         inv_sqrtm_matrix, eigvals_matrix, eigvecs_matrix = inv_sqrtm_SPD(matrix)
         ctx.save_for_backward(data, eigvals_matrix, eigvecs_matrix, inv_sqrtm_matrix)
-        return congruence_SPD(data, inv_sqrtm_matrix) 
+        return congruence_SPD(data, inv_sqrtm_matrix)
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

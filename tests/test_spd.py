@@ -1,9 +1,7 @@
 import pytest
-
 import torch
-from torch.testing import assert_close
-
 from scipy.linalg import expm, logm, solve_sylvester, sqrtm
+from torch.testing import assert_close
 
 import yetanotherspdnet.functions.spd_linalg as spd_linalg
 from yetanotherspdnet.random.spd import random_SPD
@@ -257,7 +255,7 @@ def test_SqrtmSPD_backward(n_matrices, n_features, cond, device, dtype, generato
 @pytest.mark.parametrize("n_matrices, n_features, cond", [(1,100,1000), (50,100,1000)])
 def test_InvSqrtmSPD(n_matrices, n_features, cond, device, dtype, generator):
     """
-    Test of inv_sqrtm_SPD function and forward of InvSqrtmSPD Function class 
+    Test of inv_sqrtm_SPD function and forward of InvSqrtmSPD Function class
     """
     X = random_SPD(n_features, n_matrices, cond=cond, device=device, dtype=dtype, generator=generator)
     X_inv_sqrtm, _, _ = spd_linalg.inv_sqrtm_SPD(X)
@@ -587,7 +585,7 @@ def test_Whitening_backward(n_matrices, n_features, cond, device, dtype, generat
     """
     X = random_SPD(n_features, n_matrices, cond=cond, device=device, dtype=dtype, generator=generator)
     G = random_SPD(n_features, 1, cond=cond, device=device, dtype=dtype, generator=generator)
-    
+
     X_manual = X.clone().detach()
     X_manual.requires_grad = True
     X_auto = X.clone().detach()
@@ -654,7 +652,7 @@ def test_CongruenceRectangular_backward(n_matrices, n_in, n_out, cond, device, d
     # Generate random Stiefel matrix
     W = torch.empty((n_out, n_in), device=device, dtype=dtype)
     _init_weights_stiefel(W, generator=generator)
-    
+
     X_manual = X.clone().detach()
     X_manual.requires_grad = True
     X_auto = X.clone().detach()
