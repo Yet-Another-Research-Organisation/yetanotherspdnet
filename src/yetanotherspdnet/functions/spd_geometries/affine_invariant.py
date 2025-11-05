@@ -218,7 +218,7 @@ def adaptive_update_geometric(
 ) -> torch.Tensor:
     """
     Path for adaptive geometric mean computation:
-    point1^{1/2} ( point1^{-1/2} point2 point1^{-1/2} )^t point1^{-1/2}
+    point1^{1/2} ( point1^{-1/2} point2 point1^{-1/2} )^t point1^{1/2}
 
     Parameters
     ----------

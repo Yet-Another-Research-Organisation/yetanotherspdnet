@@ -726,7 +726,7 @@ class CongruenceSPD(Function):
             Transformed batch of SPD matrices
         """
         ctx.save_for_backward(data, matrix)
-        return congruence_SPD(data, matrix)
+        return congruence_SPD(data, matrix) 
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -750,10 +750,13 @@ class CongruenceSPD(Function):
             Gradient of the loss with respect to the SPD matrix used for congruence
         """
         data, matrix = ctx.saved_tensors
-        return matrix @ grad_output @ matrix, torch.sum(
-            2 * symmetrize(grad_output @ matrix @ data), dim=tuple(range(data.ndim - 2))
+        #return matrix @ grad_output @ matrix, torch.sum(
+        #    2 * symmetrize(grad_output @ matrix @ data), dim=tuple(range(data.ndim - 2))
+        #)
+        return (
+            matrix @ grad_output @ matrix,
+            2 * symmetrize( torch.einsum('...ik,kl,...lj->ij', grad_output, matrix, data) )
         )
-
 
 def whitening(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
     """
@@ -829,9 +832,12 @@ class Whitening(Function):
         """
         data, eigvals_matrix, eigvecs_matrix, inv_sqrtm_matrix = ctx.saved_tensors
         grad_input_data = inv_sqrtm_matrix @ grad_output @ inv_sqrtm_matrix
-        syl_right = -torch.sum(
-            2 * symmetrize(grad_input_data @ data @ inv_sqrtm_matrix),
-            dim=tuple(range(data.ndim - 2)),
+        #syl_right = -torch.sum(
+        #    2 * symmetrize(grad_input_data @ data @ inv_sqrtm_matrix),
+        #    dim=tuple(range(data.ndim - 2)),
+        #)
+        syl_right = -2 * symmetrize(
+            torch.einsum('...ik,...kl,lj->ij', grad_input_data, data, inv_sqrtm_matrix)
         )
         grad_input_matrix = solve_sylvester_SPD(
             torch.sqrt(eigvals_matrix), eigvecs_matrix, syl_right
@@ -916,9 +922,10 @@ class CongruenceRectangular(Function):
         """
         data, W = ctx.saved_tensors
         grad_input_data = W.transpose(-1, -2) @ grad_output @ W
-        grad_input_W = 2 * torch.sum(
-            grad_output @ W @ data, dim=tuple(range(data.ndim - 2))
-        )
+        #grad_input_W = 2 * torch.sum(
+        #    grad_output @ W @ data, dim=tuple(range(data.ndim - 2))
+        #)
+        grad_input_W = 2 * torch.einsum('...ik,kl,...lj->ij', grad_output, W, data)
         return grad_input_data, grad_input_W
 
 
