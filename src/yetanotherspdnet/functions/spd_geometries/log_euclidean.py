@@ -1,7 +1,11 @@
 import torch
 
 from ..spd_linalg import ExpmSymmetric, LogmSPD, expm_symmetric, logm_SPD
-from .kullback_leibler import ArithmeticMean, adaptive_update_arithmetic, arithmetic_mean
+from .kullback_leibler import (
+    ArithmeticMean,
+    adaptive_update_arithmetic,
+    arithmetic_mean,
+)
 
 
 # ------------------
