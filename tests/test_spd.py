@@ -298,6 +298,70 @@ def test_InvSqrtmSPD_backward(n_matrices, n_features, cond, device, dtype, gener
     assert is_symmetric(X_auto.grad)
     assert_close(X_manual.grad, X_auto.grad)
 
+# --------
+# Powm SPD
+# --------
+@pytest.mark.parametrize("n_matrices, n_features, cond", [(1,100,1000), (50,100,1000)])
+def test_PowmSPD(n_matrices, n_features, cond, device, dtype, generator):
+    """
+    Test of powm_spd function and forward of PowmSPD Function class
+    """
+    X = random_SPD(n_features, n_matrices, cond=cond, device=device, dtype=dtype, generator=generator)
+    exponent = torch.randn(1, device=device, dtype=dtype, generator=generator)
+
+    X_powm, _, _ = spd_linalg.powm_SPD(X, exponent)
+    X_Powm = spd_linalg.PowmSPD.apply(X, exponent)
+
+    X_orig, _, _ = spd_linalg.powm_SPD(X_powm, 1/exponent)
+    X_Orig = spd_linalg.PowmSPD.apply(X_Powm, 1/exponent)
+
+    assert X_powm.shape == X.shape
+    assert is_spd(X_powm)
+    assert_close(X_orig, X)
+    assert X_Powm.shape == X.shape
+    assert is_spd(X_Powm)
+    assert_close(X_Orig, X)
+    assert_close(X_Powm, X_powm)
+
+    # compare with some specific powers
+    assert_close(spd_linalg.powm_SPD(X,2)[0], X@X)
+    assert_close(spd_linalg.PowmSPD.apply(X,2), X@X)
+    assert_close(spd_linalg.powm_SPD(X,-1)[0], torch.cholesky_inverse(torch.linalg.cholesky(X)))
+    assert_close(spd_linalg.PowmSPD.apply(X,-1), torch.cholesky_inverse(torch.linalg.cholesky(X)))
+    assert_close(spd_linalg.powm_SPD(X,0.5)[0], spd_linalg.sqrtm_SPD(X)[0])
+    assert_close(spd_linalg.PowmSPD.apply(X,0.5), spd_linalg.sqrtm_SPD(X)[0])
+
+
+@pytest.mark.parametrize("n_matrices, n_features, cond", [(1,100,1000), (50,100,1000)])
+def test_PowmSPD_backward(n_matrices, n_features, cond, device, dtype, generator):
+    """
+    Test of backward of PowmSPD Function class
+    """
+    X = random_SPD(n_features, n_matrices, cond=cond, device=device, dtype=dtype, generator=generator)
+    X_manual = X.clone().detach()
+    X_manual.requires_grad = True
+    X_auto = X.clone().detach()
+    X_auto.requires_grad = True
+
+    #exponent = torch.tensor(0.05)
+    exponent = torch.randn(1, device=device, dtype=dtype, generator=generator)
+    exponent_manual = exponent.clone().detach()
+    exponent_manual.requires_grad = True
+    exponent_auto = exponent.clone().detach()
+    exponent_auto.requires_grad = True
+
+    X_manual_powm = spd_linalg.PowmSPD.apply(X_manual, exponent_manual)
+    X_auto_powm, _, _ = spd_linalg.powm_SPD(X_auto, exponent_auto)
+
+    loss_manual = torch.norm(X_manual_powm)
+    loss_manual.backward()
+    loss_auto = torch.norm(X_auto_powm)
+    loss_auto.backward()
+
+    assert is_symmetric(X_manual.grad)
+    assert is_symmetric(X_auto.grad)
+    assert_close(X_manual.grad, X_auto.grad)
+
 
 # --------
 # Logm SPD

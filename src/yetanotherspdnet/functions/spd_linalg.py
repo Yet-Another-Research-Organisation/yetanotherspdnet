@@ -426,6 +426,98 @@ class InvSqrtmSPD(Function):
         )
 
 
+# ----------------
+# SPD matrix power
+# ----------------
+def powm_SPD(data: torch.Tensor, exponent: torch.float) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Matrix power of a batch of SPD matrices
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+    
+    exponent : torch.float
+        Power exponent
+
+    Returns
+    -------
+    powm_data : torch.Tensor of shape (..., n_features, n_features)
+        Matrix powers of the input batch of SPD matrices
+
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues of matrices in data
+
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors of matrices in data
+    """
+    eigvals, eigvecs = torch.linalg.eigh(data)
+    pow_fun = lambda x: torch.pow(x, exponent)
+    return eigh_operation(eigvals, eigvecs, pow_fun), eigvals, eigvecs
+
+
+class PowmSPD(Function):
+    """
+    Matrix power of a batch of SPD matrices
+    (relies on eigenvalue decomposition)
+    """
+    @staticmethod
+    def forward(ctx, data: torch.Tensor, exponent: torch.float) -> torch.Tensor:
+        """
+        Forward pass of the matrix power of a batch of SPD matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        exponent : torch.float
+            Power exponent
+
+        Returns
+        -------
+        powm_data : torch.Tensor of shape (..., n_features, n_features)
+            Matrix powers of the input batch of SPD matrices
+        """
+        powm_data, eigvals, eigvecs = powm_SPD(data, exponent)
+        ctx.save_for_backward(eigvals, eigvecs, exponent)
+        return powm_data
+
+    @staticmethod
+    def backward(ctx, grad_output : torch.Tensor) -> tuple[torch.Tensor, torch.float]:
+        """
+        Backward pass of the matrix power of a batch of SPD matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to matrix powers of the input batch of SPD matrices
+
+        Returns
+        -------
+        grad_input_data : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input batch of SPD matrices
+
+        grad_input_exponent : torch.float
+            Gradient of the loss with respect to the power exponent
+        """
+        eigvals, eigvecs, exponent = ctx.saved_tensors
+        pow_fun = lambda x: torch.pow(x, exponent)
+        pow_deriv = lambda x: exponent * torch.pow(x, exponent - 1)
+        exponent_deriv_fun = lambda x: torch.pow(x, exponent) * torch.log(x)
+        return (
+            eigh_operation_grad(grad_output, eigvals, eigvecs, pow_fun, pow_deriv),
+            (grad_output @ eigh_operation(eigvals, eigvecs, exponent_deriv_fun)).diagonal(offset=0, dim1=-1, dim2=-2).sum().reshape(exponent.shape)
+        )
+
+
 # --------------------
 # SPD matrix logarithm
 # --------------------
