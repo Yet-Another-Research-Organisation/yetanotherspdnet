@@ -198,7 +198,7 @@ class ReEig(nn.Module):
         self.use_autograd = use_autograd
         self.dim = dim
 
-        self.reeig_fun = eigh_relu if self.use_autograd else EighReLu.apply
+        self.reeig_fun = (lambda data: eigh_relu(data)[0]) if self.use_autograd else EighReLu.apply
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -252,7 +252,7 @@ class LogEig(nn.Module):
         """
         super().__init__()
         self.use_autograd = use_autograd
-        self.logmSPD = logm_SPD if self.use_autograd else LogmSPD.apply
+        self.logmSPD = (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
