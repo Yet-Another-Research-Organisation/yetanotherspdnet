@@ -702,7 +702,7 @@ def eigh_relu(data: torch.Tensor, eps: float) -> tuple[torch.Tensor, torch.Tenso
         Eigenvectors of matrices in data
     """
     eigvals, eigvecs = torch.linalg.eigh(data)
-    operation = lambda x: torch.nn.functional.threshold(x, eps, eps)
+    operation = lambda x: torch.clamp(x, min=eps)
     return eigh_operation(eigvals, eigvecs, operation), eigvals, eigvecs
 
 
@@ -757,9 +757,8 @@ class EighReLu(Function):
         """
         eps = ctx.eps
         eigvals, eigvecs = ctx.saved_tensors
-        operation = lambda x: torch.nn.functional.threshold(x, eps, eps)
+        operation = lambda x: torch.clamp(x, min=eps)
         operation_deriv = lambda x: (x > eps).type(x.dtype)
-
         return (
             eigh_operation_grad(
                 grad_output, eigvals, eigvecs, operation, operation_deriv

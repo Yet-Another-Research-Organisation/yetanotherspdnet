@@ -1,7 +1,9 @@
 import pytest
 import torch
-from scipy.linalg import expm, logm, solve_sylvester, sqrtm
 from torch.testing import assert_close
+from torch.autograd import gradgradcheck
+
+from scipy.linalg import expm, logm, solve_sylvester, sqrtm
 
 import yetanotherspdnet.functions.spd_linalg as spd_linalg
 from yetanotherspdnet.random.spd import random_SPD
@@ -134,7 +136,7 @@ class TestSylvesterSPD:
     @pytest.mark.parametrize("n_features, cond", [(100,1000)])
     def test_solve(self, n_matrices, n_features, cond, device, dtype, generator):
         """
-        Test of solve_sylvester_SPD function
+        Test of solve_sylvester_SPD function with symmetric matrices
         """
         A = random_SPD(n_features, n_matrices, cond=cond, device=device, dtype=dtype, generator=generator)
         Q = spd_linalg.symmetrize(
@@ -151,18 +153,65 @@ class TestSylvesterSPD:
         """
         Comparison of solve_sylvester_SPD and scipy.linalg.solve_sylvester
         """
+        if device.type != "cpu" or dtype != torch.float64:
+            pytest.skip("Scipy comparison only valid on CPU with float64")
+        
         A = random_SPD(n_features, cond=cond, device=device, dtype=dtype, generator=generator)
         Q = spd_linalg.symmetrize(
             torch.randn((n_features, n_features), device=device, dtype=dtype, generator=generator)
         )
         eigvals, eigvecs = torch.linalg.eigh(A)
         X = spd_linalg.solve_sylvester_SPD(eigvals, eigvecs, Q)
-        X_scipy = torch.tensor(
-            solve_sylvester(A.detach().numpy(), A.detach().numpy(), Q.detach().numpy()),
-            dtype = A.dtype
-        )
+        X_scipy = torch.from_numpy(
+            solve_sylvester(A.numpy(), A.numpy(), Q.numpy()),
+        ).to(dtype=dtype)
         assert_close(X, X_scipy)
 
+    @pytest.mark.parametrize("n_features", [100])
+    def test_identity_matrix(self, n_features, device, dtype):
+        """
+        Test with identity matrix
+        """
+        I = torch.eye(n_features, device=device, dtype=dtype)
+        Q = spd_linalg.symmetrize(
+            torch.randn((n_features, n_features), device=device, dtype=dtype)
+        )
+        
+        eigvals, eigvecs = torch.linalg.eigh(I)
+        X = spd_linalg.solve_sylvester_SPD(eigvals, eigvecs, Q)
+        
+        # For A=I: IX + XI = 2X = Q, so X = Q/2
+        expected = Q / 2
+        assert_close(X, expected, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100,1000)])
+    def test_solve_skew_symmetric(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of solve_sylvester_SPD function with skew-symmetric matrices
+        """
+        A = random_SPD(n_features, n_matrices, cond=cond, device=device, dtype=dtype, generator=generator)
+        
+        # Create skew-symmetric matrix
+        Q = torch.squeeze(torch.randn((n_matrices, n_features, n_features), device=device, dtype=dtype, generator=generator))
+        Q = Q - spd_linalg.symmetrize(Q)
+        
+        eigvals, eigvecs = torch.linalg.eigh(A)
+        X = spd_linalg.solve_sylvester_SPD(eigvals, eigvecs, Q)
+        
+        assert X.shape == A.shape
+        # Check skew-symmetry
+        assert_close(X, -X.transpose(-1,-2))
+        assert_close(A @ X + X @ A, Q)
+
+
+# --------------------------------------------------------------------------
+# Remark
+# ------
+# In the following, on all operations that rely on eignevalue decomposition,
+# no use of torch.autograd.gradcheck performed because it is unstable in the
+# case of an eigenvalue decomposition.
+# --------------------------------------------------------------------------
 
 # ---------
 # Sqrtm SPD
@@ -193,13 +242,49 @@ class TestSqrtmSPD:
         """
         Comparison of SqrtmSPD and scipy.linalg.sqrtm
         """
+        if device.type != "cpu" or dtype != torch.float64:
+            pytest.skip("Scipy comparison only valid on CPU with float64")
+
         X = random_SPD(n_features, cond=cond, device=device, dtype=dtype, generator=generator)
         X_Sqrtm = spd_linalg.SqrtmSPD.apply(X)
-        X_sqrtm_scipy = torch.tensor(
-            sqrtm(X.detach().numpy()),
-            dtype = X.dtype
-        )
+        X_sqrtm_scipy = torch.from_numpy(
+            sqrtm(X.numpy()),
+        ).to(dtype=dtype)
         assert_close(X_Sqrtm, X_sqrtm_scipy)
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_identity_matrix(self, n_features, device, dtype):
+        """
+        Test that the matrix square root of the identity is the identity
+        """
+        I = torch.eye(n_features, device=device, dtype=dtype)
+        I_Sqrtm = spd_linalg.SqrtmSPD.apply(I)
+        assert_close(I_Sqrtm, I)
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_diagonal_matrix(self, n_features, device, dtype, generator):
+        """
+        Test matrix square root of diagonal matrix
+        """
+        diag_vals = torch.randn((n_features,), device=device, dtype=dtype, generator=generator)**2 
+        D = torch.diag(diag_vals)
+        D_Sqrtm = spd_linalg.SqrtmSPD.apply(D)
+        expected = torch.diag(torch.sqrt(diag_vals))
+        assert_close(D_Sqrtm, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100,1000)])
+    def test_eigenvalues(self, n_features, cond, device, dtype, generator):
+        """
+        Test that eigenvalues of the matrix square root of X are the square root of the eigenvalues of X
+        """
+        X = random_SPD(n_features, cond=cond, device=device, dtype=dtype, generator=generator)
+        eigvals_X = torch.linalg.eigvalsh(X)
+        X_Sqrtm = spd_linalg.SqrtmSPD.apply(X)
+        eigvals_X_Sqrtm = torch.linalg.eigvalsh(X_Sqrtm)
+        # Sort for comparison (probably not needed)
+        expected = torch.sqrt(eigvals_X).sort()[0]
+        actual = eigvals_X_Sqrtm.sort()[0]
+        assert_close(actual, expected)
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features, cond", [(100,1000)])
@@ -256,6 +341,39 @@ class TestInvSqrtmSPD:
         )
         assert_close(X_InvSqrtm, X_inv_sqrtm)
 
+    @pytest.mark.parametrize("n_features", [100])
+    def test_identity_matrix(self, n_features, device, dtype):
+        """
+        Test that the matrix inverse square root of the identity is the identity
+        """
+        I = torch.eye(n_features, device=device, dtype=dtype)
+        I_InvSqrtm = spd_linalg.InvSqrtmSPD.apply(I)
+        assert_close(I_InvSqrtm, I)
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_diagonal_matrix(self, n_features, device, dtype, generator):
+        """
+        Test of the matrix inverse square root of a diagonal matrix
+        """
+        diag_vals = torch.randn((n_features,), device=device, dtype=dtype, generator=generator)**2 
+        D = torch.diag(diag_vals)
+        D_InvSqrtm = spd_linalg.InvSqrtmSPD.apply(D)
+        expected = torch.diag(1/torch.sqrt(diag_vals))
+        assert_close(D_InvSqrtm, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100,1000)])
+    def test_eigenvalues(self, n_features, cond, device, dtype, generator):
+        """
+        Test that eigenvalues of the matrix inverse square root of X are the inverse square root of the eigenvalues of X
+        """
+        X = random_SPD(n_features, cond=cond, device=device, dtype=dtype, generator=generator)
+        eigvals_X = torch.linalg.eigvalsh(X)
+        X_InvSqrtm = spd_linalg.InvSqrtmSPD.apply(X)
+        eigvals_X_InvSqrtm = torch.linalg.eigvalsh(X_InvSqrtm)
+        # Sort for comparison
+        expected = (1/torch.sqrt(eigvals_X)).sort()[0]
+        actual = eigvals_X_InvSqrtm.sort()[0]
+        assert_close(actual, expected)
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features, cond", [(100,1000)])
@@ -319,6 +437,42 @@ class TestPowmSPD:
         assert_close(spd_linalg.powm_SPD(X,0.5)[0], spd_linalg.sqrtm_SPD(X)[0])
         assert_close(spd_linalg.PowmSPD.apply(X,0.5), spd_linalg.sqrtm_SPD(X)[0])
 
+    @pytest.mark.parametrize("n_features", [100])
+    def test_identity_matrix(self, n_features, device, dtype, generator):
+        """
+        Test that the matrix power of the identity is the identity
+        """
+        I = torch.eye(n_features, device=device, dtype=dtype)
+        exponent = torch.randn(1, device=device, dtype=dtype, generator=generator)
+        I_Powm = spd_linalg.PowmSPD.apply(I, exponent)
+        assert_close(I_Powm, I)
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_diagonal_matrix(self, n_features, device, dtype, generator):
+        """
+        Test of the matrix power of a diagonal matrix
+        """
+        diag_vals = torch.randn((n_features,), device=device, dtype=dtype, generator=generator)**2 
+        D = torch.diag(diag_vals)
+        exponent = torch.randn(1, device=device, dtype=dtype, generator=generator)
+        D_Powm = spd_linalg.PowmSPD.apply(D, exponent)
+        expected = torch.diag(torch.pow(diag_vals, exponent))
+        assert_close(D_Powm, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100,1000)])
+    def test_eigenvalues(self, n_features, cond, device, dtype, generator):
+        """
+        Test that eigenvalues of the matrix power of X are the power of the eigenvalues of X
+        """
+        X = random_SPD(n_features, cond=cond, device=device, dtype=dtype, generator=generator)
+        eigvals_X = torch.linalg.eigvalsh(X)
+        exponent = torch.randn(1, device=device, dtype=dtype, generator=generator)
+        X_Powm = spd_linalg.PowmSPD.apply(X, exponent)
+        eigvals_X_Powm = torch.linalg.eigvalsh(X_Powm)
+        # Sort for comparison
+        expected = torch.pow(eigvals_X, exponent).sort()[0]
+        actual = eigvals_X_Powm.sort()[0]
+        assert_close(actual, expected)
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features, cond", [(100,1000)])
@@ -384,14 +538,49 @@ class TestLogmSPD:
         """
         Comparison of LogmSPD with scipy.linalg.logm
         """
+        if device.type != "cpu" or dtype != torch.float64:
+            pytest.skip("Scipy comparison only valid on CPU with float64")
+
         X = random_SPD(n_features, cond=cond, device=device, dtype=dtype, generator=generator)
         X_Logm = spd_linalg.LogmSPD.apply(X)
-        X_logm_scipy = torch.tensor(
-            logm(X.detach().numpy()),
-            dtype=X.dtype
-        )
+        X_logm_scipy = torch.from_numpy(
+            logm(X.numpy()),
+        ).to(dtype=dtype)
         assert_close(X_Logm, X_logm_scipy)
 
+    @pytest.mark.parametrize("n_features", [100])
+    def test_identity_matrix(self, n_features, device, dtype):
+        """
+        Test that the matrix logarithm of the identity is the identity
+        """
+        I = torch.eye(n_features, device=device, dtype=dtype)
+        I_Logm = spd_linalg.LogmSPD.apply(I)
+        assert_close(I_Logm, torch.zeros_like(I))
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_diagonal_matrix(self, n_features, device, dtype, generator):
+        """
+        Test of the matrix logarithm of a diagonal matrix
+        """
+        diag_vals = torch.randn((n_features,), device=device, dtype=dtype, generator=generator)**2 
+        D = torch.diag(diag_vals)
+        D_Logm = spd_linalg.LogmSPD.apply(D)
+        expected = torch.diag(torch.log(diag_vals))
+        assert_close(D_Logm, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100,1000)])
+    def test_eigenvalues(self, n_features, cond, device, dtype, generator):
+        """
+        Test that eigenvalues of the matrix logarithm of X are the logarithm of the eigenvalues of X
+        """
+        X = random_SPD(n_features, cond=cond, device=device, dtype=dtype, generator=generator)
+        eigvals_X = torch.linalg.eigvalsh(X)
+        X_Logm = spd_linalg.LogmSPD.apply(X)
+        eigvals_X_Logm = torch.linalg.eigvalsh(X_Logm)
+        # Sort for comparison
+        expected = (torch.log(eigvals_X)).sort()[0]
+        actual = eigvals_X_Logm.sort()[0]
+        assert_close(actual, expected)
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features, cond", [(100,1000)])
@@ -451,16 +640,53 @@ class TestExpmSymmetric:
         """
         Comparison of ExpmSymmetric with scipy.linalg.expm
         """
+        if device.type != "cpu" or dtype != torch.float64:
+            pytest.skip("Scipy comparison only valid on CPU with float64")
+
         X_symmetric = spd_linalg.symmetrize(
             torch.squeeze(torch.randn((n_features, n_features), device=device, dtype=dtype, generator=generator))
         )
         X_Expm = spd_linalg.ExpmSymmetric.apply(X_symmetric)
-        X_expm_scipy = torch.tensor(
-            expm(X_symmetric.detach().numpy()),
-            dtype=X_symmetric.dtype
-        )
+        X_expm_scipy = torch.from_numpy(
+            expm(X_symmetric.numpy()),
+        ).to(dtype=dtype)
         assert_close(X_Expm, X_expm_scipy)
 
+    @pytest.mark.parametrize("n_features", [100])
+    def test_identity_matrix(self, n_features, device, dtype):
+        """
+        Test that the matrix exponential of the identity is the identity
+        """
+        I = torch.eye(n_features, device=device, dtype=dtype)
+        I_Expm = spd_linalg.ExpmSymmetric.apply(I)
+        assert_close(I_Expm, torch.diag(torch.exp(torch.ones((n_features,), device=device, dtype=dtype))))
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_diagonal_matrix(self, n_features, device, dtype, generator):
+        """
+        Test of the matrix exponential of a diagonal matrix
+        """
+        diag_vals = torch.randn((n_features,), device=device, dtype=dtype, generator=generator)**2 
+        D = torch.diag(diag_vals)
+        D_Expm = spd_linalg.ExpmSymmetric.apply(D)
+        expected = torch.diag(torch.exp(diag_vals))
+        assert_close(D_Expm, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100,1000)])
+    def test_eigenvalues(self, n_features, cond, device, dtype, generator):
+        """
+        Test that eigenvalues of the matrix exponential of X are the exponential of the eigenvalues of X
+        """
+        X = spd_linalg.symmetrize(
+            torch.squeeze(torch.randn((n_features, n_features), device=device, dtype=dtype, generator=generator))
+        )
+        eigvals_X = torch.linalg.eigvalsh(X)
+        X_Expm = spd_linalg.ExpmSymmetric.apply(X)
+        eigvals_X_Expm = torch.linalg.eigvalsh(X_Expm)
+        # Sort for comparison
+        expected = (torch.exp(eigvals_X)).sort()[0]
+        actual = eigvals_X_Expm.sort()[0]
+        assert_close(actual, expected)
 
     @pytest.mark.parametrize("n_matrices, n_features", [(1,100), (50,100)])
     def test_backward(self, n_matrices, n_features, device, dtype, generator):
@@ -520,6 +746,67 @@ class TestEighReLu:
         assert is_spd(Y)
         assert bool((torch.linalg.eigvalsh(Y) >= eps - eps / 10).all())
 
+    @pytest.mark.parametrize("n_features, n_small_eigvals, eps", [(100,30, 1e-4)])
+    def test_rectification_diagonal(self, n_features, n_small_eigvals, eps, device, dtype, generator):
+        """
+        Test that values of diagonal matrix below eps are actually set to eps
+        """
+        diag_vals = torch.randn((n_features,), device=device, dtype=dtype, generator=generator) ** 2
+        diag_vals[: n_small_eigvals] = eps / 100
+        diag_vals = diag_vals[torch.randperm(n_features)]
+        D = torch.diag(diag_vals)
+        Z = spd_linalg.EighReLu.apply(D, eps)
+        eigvals_out = torch.linalg.eigvalsh(Z)
+        expected = torch.clamp(diag_vals, min=eps)
+        assert_close(eigvals_out.sort()[0], expected.sort()[0])
+
+    @pytest.mark.parametrize("n_features, n_small_eigvals, eps", [(100,30, 1e-4)])
+    def test_rectification_eigenvalues(self, n_features, n_small_eigvals, eps, device, dtype, generator):
+        """
+        Test that eigenvalues below eps are actually set to eps
+        """
+        U, _, _ = torch.svd(
+            torch.randn((n_features, n_features), device=device, dtype=dtype, generator=generator)
+        )
+        eigvals = torch.randn((n_features,), device=device, dtype=dtype, generator=generator) ** 2
+        eigvals[: n_small_eigvals] = eps / 100
+        eigvals = eigvals[torch.randperm(n_features)]
+        X = (U * eigvals.unsqueeze(-2)) @ U.transpose(-1, -2)
+        Z = spd_linalg.EighReLu.apply(X, eps)
+        eigvals_out = torch.linalg.eigvalsh(Z)
+        expected = torch.clamp(eigvals, min=eps)
+        assert_close(eigvals_out.sort()[0], expected.sort()[0])
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_no_rectification_needed(self, n_features, device, dtype, generator):
+        """
+        Test when all eigenvalues are already above eps
+        """
+        # selection of eps and cond ensures eigenvalues are all above eps
+        # one needs 1/sqrt(cond) > eps
+        eps = 1e-4
+        X = random_SPD(n_features, cond=100, device=device, dtype=dtype, generator=generator)
+        # Ensure all eigenvalues > eps
+        eigvals_before = torch.linalg.eigvalsh(X)
+        if eigvals_before.min() < eps:
+            pytest.skip("Generated matrix has eigenvalues below eps")
+        # apply EighReLu
+        Z = spd_linalg.EighReLu.apply(X, eps)
+        # Output should be identical to input
+        assert_close(Z, X)
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_all_eigenvalues_below_eps(self, n_features, device, dtype, generator):
+        """
+        Test when all eigenvalues need rectification
+        """
+        eps = 20.0  # Large threshold
+        X = random_SPD(n_features, cond=100, device=device, dtype=dtype, generator=generator)
+        # Apply EighReLu
+        Z = spd_linalg.EighReLu.apply(X, eps)
+        # Z should be eps * I
+        I = torch.eye(n_features, device=device, dtype=dtype)
+        assert_close(Z, eps * I)
 
     @pytest.mark.parametrize("n_matrices",[1, 50])
     @pytest.mark.parametrize("n_features, n_small_eigvals, eps", [(100,30, 1e-4)])
