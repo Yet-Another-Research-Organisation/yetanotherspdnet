@@ -61,6 +61,50 @@ def unvec_batch(data_vec: torch.Tensor, n_rows: int) -> torch.Tensor:
     return data_vec.reshape(*data_vec.shape[:-1], n_rows, -1)
 
 
+class VecBatch(Function):
+    """
+    Vectorize a batch of matrices along last two dimensions
+    """
+    @staticmethod
+    def forward(ctx, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the vectorization of a batch of matrices
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data : torch.Tensor of shape (..., n_rows, n_columns)
+            Batch of SPD matrices
+
+        Returns
+        -------
+        vec_data : torch.Tensor of shape (..., n_rows * n_columns)
+        """
+        ctx.n_rows = data.shape[-2]
+        return vec_batch(data)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
+        """
+        Backward pass of the vectorization of a batch of matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_rows * n_columns)
+            Gradient of the loss with respect to vectorized input batch of matrices
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_rows, n_columns)
+            Gradient of the loss with respect to the input batch of matrices
+        """
+        return unvec_batch(grad_output, ctx.n_rows)
+
+
 def vech_batch(data: torch.Tensor) -> torch.Tensor:
     """
     Vectorize the lower triangular part of a batch of square matrices
@@ -79,7 +123,7 @@ def vech_batch(data: torch.Tensor) -> torch.Tensor:
     return data[..., indices[0], indices[1]]
 
 
-def unvech_batch(data_vech: torch.Tensor) -> torch.Tensor:
+def unvech_batch(data_vech: torch.Tensor, n_features: int) -> torch.Tensor:
     """
     Unvectorize a batch of tensors along last dimension,
     assuming that matrices are symmetric
@@ -89,13 +133,14 @@ def unvech_batch(data_vech: torch.Tensor) -> torch.Tensor:
     X_vech : torch.Tensor of shape (..., n_features*(n_features+1)//2)
         Batch of vectorized matrices
 
+    n_features : int
+        number of features
+
     Returns
     -------
     X : torch.Tensor of shape (..., n_features, n_features)
         Batch of symmetric matrices
     """
-    n_features = 0.5 * (-1 + torch.sqrt(torch.Tensor([1 + 8 * data_vech.shape[-1]])))
-    n_features = int(torch.round(n_features))
     indices_l = torch.tril_indices(n_features, n_features)
     indices_u = torch.triu_indices(n_features, n_features)
     data = torch.zeros(
@@ -113,6 +158,51 @@ def unvech_batch(data_vech: torch.Tensor) -> torch.Tensor:
     ]
     data = symmetrize(data)
     return data
+
+
+class VechBatch(Function):
+    """
+    Half vectorize a batch of symmetric matrices along last two dimensions
+    """
+    @staticmethod
+    def forward(ctx, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the half vectorization of a batch of matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        Returns
+        -------
+        vech_data : torch.Tensor of shape (..., n_features*(n_features+1) // 2)
+        """
+        ctx.n_features = data.shape[-1]
+        return vech_batch(data)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
+        """
+        Backward pass of the vectorization of a batch of matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features*(n_features+1) // 2)
+            Gradient of the loss with respect to half vectorized input batch of symmetric matrices
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input batch of symmetric matrices
+        """
+        return unvech_batch(grad_output, ctx.n_features)
 
 
 # -------------------------
@@ -296,7 +386,6 @@ class SqrtmSPD(Function):
     Matrix square root of a batch of SPD matrices
     (relies on eigenvalue decomposition)
     """
-
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
@@ -377,7 +466,6 @@ class InvSqrtmSPD(Function):
     Matrix inverse square root of a batch of SPD matrices
     (relies on eigenvalue decomposition)
     """
-
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
@@ -550,7 +638,6 @@ class LogmSPD(Function):
     Matrix logarithm of a batch of SPD matrices
     (relies on eigenvalue decomposition)
     """
-
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
@@ -630,7 +717,6 @@ class ExpmSymmetric(Function):
     Matrix exponential of a batch of symmetric matrices
     (relies on eigenvalue decomposition)
     """
-
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
@@ -710,7 +796,6 @@ class EighReLu(Function):
     """
     ReLu activation function on the eigenvalues of SPD matrices
     """
-
     @staticmethod
     def forward(ctx, data: torch.Tensor, eps: float) -> torch.Tensor:
         """
@@ -794,7 +879,6 @@ class CongruenceSPD(Function):
     """
     Congruence of a batch of SPD matrices with an SPD matrix
     """
-
     @staticmethod
     def forward(ctx, data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
         """
@@ -874,7 +958,6 @@ class Whitening(Function):
     """
     Whitening of a batch of SPD matrices with an SPD matrix
     """
-
     @staticmethod
     def forward(ctx, data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
         """
@@ -964,7 +1047,6 @@ class CongruenceRectangular(Function):
     """
     Congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
     """
-
     @staticmethod
     def forward(ctx, data: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
         """

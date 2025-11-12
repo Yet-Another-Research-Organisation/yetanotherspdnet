@@ -9,11 +9,12 @@ from ..functions.spd_linalg import (
     EighReLu,
     ExpmSymmetric,
     LogmSPD,
+    VecBatch,
+    VechBatch,
     congruence_rectangular,
     eigh_relu,
     logm_SPD,
     vec_batch,
-    vech_batch,
 )
 from ..random.stiefel import _init_weights_stiefel
 
@@ -161,7 +162,8 @@ class BiMap(nn.Module):
         )
 
     def __str__(self) -> str:
-        """String representation of the layer
+        """
+        String representation of the layer
 
         Returns
         -------
@@ -217,7 +219,8 @@ class ReEig(nn.Module):
         return self.reeig_fun(data, self.eps)
 
     def __repr__(self) -> str:
-        """Representation of the layer
+        """
+        Representation of the layer
 
         Returns
         -------
@@ -227,7 +230,8 @@ class ReEig(nn.Module):
         return f"ReEig(eps={self.eps},use_autograd={self.use_autograd})"
 
     def __str__(self) -> str:
-        """String representation of the layer
+        """
+        String representation of the layer
 
         Returns
         -------
@@ -271,7 +275,8 @@ class LogEig(nn.Module):
         return self.logmSPD(data)
 
     def __repr__(self) -> str:
-        """Representation of the layer
+        """
+        Representation of the layer
 
         Returns
         -------
@@ -281,7 +286,8 @@ class LogEig(nn.Module):
         return f"LogEig(use_autograd={self.use_autograd})"
 
     def __str__(self) -> str:
-        """String representation of the layer
+        """
+        String representation of the layer
 
         Returns
         -------
@@ -292,12 +298,20 @@ class LogEig(nn.Module):
 
 
 class Vec(nn.Module):
-    def __init__(self):
+    def __init__(self, use_autograd: bool = False):
         """
         Vectorization operator of a batch of matrices according to
         the last two dimensions
+
+        Parameters
+        ----------
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False.
         """
         super().__init__()
+        self.use_autograd = use_autograd
+        self.vecBatch = vec_batch if self.use_autograd else VecBatch.apply
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -313,17 +327,43 @@ class Vec(nn.Module):
         data_vec : torch.Tensor of shape (..., n_rows*n_columns)
             Batch of vectorized matrices
         """
-        return vec_batch(data)
+        return self.vecBatch(data)
+
+    def __repr__(self) -> str:
+        """Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"Vec(use_autograd={self.use_autograd})"
+
+    def __str__(self) -> str:
+        """String representation of the layer
+
+        Returns
+        -------
+        str
+            String representation of the layer
+        """
+        return self.__repr__()
 
 
 class Vech(nn.Module):
     def __init__(self) -> None:
-        """Vech operator of a batch of matrices according to the
-        last two dimensions"""
+        """
+        Vech operator of a batch of matrices according to the last two dimensions
+
+        WARNING : no automatic differentiation available here because it fails
+        """
         super().__init__()
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
-        """Forward pass of the Vech layer
+        """
+        Forward pass of the Vech layer
+
+        WARNING : no automatic differentiation available here because it fails
 
         Parameters
         ----------
@@ -335,7 +375,7 @@ class Vech(nn.Module):
         data_vech: torch.Tensor of shape (..., n_features*(n_features+1)//2)
             Batch of vech matrices
         """
-        return vech_batch(data)
+        return VechBatch.apply(data)
 
 
 class SPDLogEuclideanParametrization(torch.nn.Module):
@@ -345,7 +385,6 @@ class SPDLogEuclideanParametrization(torch.nn.Module):
     Output: exp(V) (guaranteed SPD) of shape (..., n, n)
     Works on both single matrices and batches.
     """
-
     def forward(self, symmetric_matrix):
         """
         Args:

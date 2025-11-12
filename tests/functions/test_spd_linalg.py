@@ -1,7 +1,6 @@
 import pytest
 import torch
 from torch.testing import assert_close
-from torch.autograd import gradgradcheck
 
 from scipy.linalg import expm, logm, solve_sylvester, sqrtm
 
@@ -46,14 +45,16 @@ def test_symmetrize(n_matrices, n_features, device, dtype, generator):
     assert_close(X_sym, X_sym.transpose(-1,-2))
     assert_close(X_skew, -X_skew.transpose(-1,-2))
     assert_close(X, X_sym+X_skew)
+    assert X_sym.device == X.device
+    assert X_sym.dtype == X.dtype
 
 
 # -------------
 # Vectorization
 # -------------
-class TestVectorization:
+class TestVec:
     """
-    Test suite for vectorization functions
+    Test suite for vectorization of batch of matrices
     """
     @pytest.mark.parametrize("n_matrices, n_rows, n_columns", [(1, 100, 100), (1, 100, 30), (50,100,100), (50, 100, 30)])
     def test_vec_batch(self, n_matrices, n_rows, n_columns, device, dtype, generator):
@@ -67,7 +68,8 @@ class TestVectorization:
             assert X_vec.shape[0] == n_matrices
         assert X_vec.shape[-1] == n_rows * n_columns
         assert_close(spd_linalg.unvec_batch(X_vec, n_rows), X)
-
+        assert X_vec.device == X.device
+        assert X_vec.dtype == X.dtype
 
     @pytest.mark.parametrize("n_matrices, n_rows, n_columns", [(1, 100, 100), (1, 100, 30), (50,100,100), (50, 100, 30)])
     def test_unvec_batch(self, n_matrices, n_rows, n_columns, device, dtype, generator):
@@ -82,8 +84,85 @@ class TestVectorization:
         assert X_unvec.shape[-2] == n_rows
         assert X_unvec.shape[-1] == n_columns
         assert_close(spd_linalg.vec_batch(X_unvec), X_vec)
+        assert X_unvec.device == X_vec.device
+        assert X_unvec.dtype == X_vec.dtype
+
+    @pytest.mark.parametrize("n_matrices, n_rows, n_columns", [(1, 100, 100), (1, 100, 30), (50,100,100), (50, 100, 30)])
+    def test_forward(self, n_matrices, n_rows, n_columns, device, dtype, generator):
+        """
+        Test forward of VecBatch Function class
+        """
+        X = torch.squeeze(torch.randn((n_matrices, n_rows, n_columns), device=device, dtype=dtype, generator=generator))
+        X_Vec = spd_linalg.VecBatch.apply(X)
+        assert X_Vec.dim() == X.dim() - 1
+        if n_matrices > 1 :
+            assert X_Vec.shape[0] == n_matrices
+        assert X_Vec.shape[-1] == n_rows * n_columns
+        assert_close(spd_linalg.unvec_batch(X_Vec, n_rows), X)
+        assert X_Vec.device == X.device
+        assert X_Vec.dtype == X.dtype
+
+    @pytest.mark.parametrize("n_matrices, n_rows, n_columns", [(1, 100, 100), (1, 100, 30), (50,100,100), (50, 100, 30)])
+    def test_backward(self, n_matrices, n_rows, n_columns, device, dtype, generator):
+        """
+        Test forward of VecBatch Function class
+        """
+        X = torch.squeeze(torch.randn((n_matrices, n_rows, n_columns), device=device, dtype=dtype, generator=generator))
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        X_manual_vec = spd_linalg.VecBatch.apply(X_manual)
+        X_auto_vec = spd_linalg.vec_batch(X_auto)
+
+        loss_manual = torch.norm(X_manual_vec)
+        loss_manual.backward()
+        loss_auto = torch.norm(X_auto_vec)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert_close(X_manual.grad, X_auto.grad)
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features", [100])
+    def test_backward_symmetric(self, n_matrices, n_features, device, dtype, generator):
+        """
+        Test of backward of VecBatch Function class for symmetric matrices
+        """
+        # random batch of symmetric matrices
+        X = spd_linalg.symmetrize(
+            torch.squeeze(torch.randn((n_matrices, n_features, n_features), device=device, dtype=dtype, generator=generator))
+        )
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        X_manual_vec = spd_linalg.VecBatch.apply(X_manual)
+        X_auto_vec = spd_linalg.vec_batch(X_auto)
+
+        loss_manual = torch.norm(X_manual_vec)
+        loss_manual.backward()
+        loss_auto = torch.norm(X_auto_vec)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
 
 
+class TestVech:
+    """
+    Test suite for half vectorization of a batch of symmetric matrices
+    """
     @pytest.mark.parametrize("n_matrices, n_features", [(1,100), (50,100)])
     def test_vech_batch(self, n_matrices, n_features, device, dtype, generator):
         """
@@ -98,8 +177,9 @@ class TestVectorization:
         if n_matrices > 1 :
             assert X_vech.shape[0] == n_matrices
         assert X_vech.shape[-1] == n_features * (n_features + 1) // 2
-        assert_close(spd_linalg.unvech_batch(X_vech), X)
-
+        assert_close(spd_linalg.unvech_batch(X_vech, n_features), X)
+        assert X_vech.device == X.device
+        assert X_vech.dtype == X.dtype
 
     @pytest.mark.parametrize("n_matrices, n_features", [(1,100), (50,100)])
     def test_unvech_batch(self, n_matrices, n_features, device, dtype, generator):
@@ -108,13 +188,54 @@ class TestVectorization:
         """
         dim = n_features * (n_features + 1) // 2
         X_vech = torch.squeeze(torch.randn((n_matrices, dim), device=device, dtype=dtype, generator=generator))
-        X_unvech = spd_linalg.unvech_batch(X_vech)
+        X_unvech = spd_linalg.unvech_batch(X_vech, n_features)
         assert X_unvech.dim() == X_vech.dim() + 1
         if n_matrices > 1 :
             assert X_unvech.shape[0] == n_matrices
         assert X_unvech.shape[-2] == n_features
         assert X_unvech.shape[-1] == n_features
         assert_close(spd_linalg.vech_batch(X_unvech), X_vech)
+        assert X_unvech.device == X_vech.device
+        assert X_unvech.dtype == X_vech.dtype
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(1,100), (50,100)])
+    def test_forward(self, n_matrices, n_features, device, dtype, generator):
+        """
+        Test forward of VechBatch Function class
+        """
+        # random batch of symmetric matrices
+        X = spd_linalg.symmetrize(
+            torch.squeeze(torch.randn((n_matrices, n_features, n_features), device=device, dtype=dtype, generator=generator))
+        )
+        X_Vech = spd_linalg.VechBatch.apply(X)
+        assert X_Vech.dim() == X.dim() - 1
+        if n_matrices > 1 :
+            assert X_Vech.shape[0] == n_matrices
+        assert X_Vech.shape[-1] == n_features * (n_features + 1) // 2
+        assert_close(spd_linalg.unvech_batch(X_Vech, n_features), X)
+        assert X_Vech.device == X.device
+        assert X_Vech.dtype == X.dtype
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(1,100), (50,100)])
+    def test_backward(self, n_matrices, n_features, device, dtype, generator):
+        """
+        Test backward of VechBatch Function class
+        Can't rely on automatic differentiation here because it's not working
+        due to the fact that we drop values in forward but still need gradient with respect to these
+        """
+        # random batch of symmetric matrices
+        X = spd_linalg.symmetrize(
+            torch.squeeze(torch.randn((n_matrices, n_features, n_features), device=device, dtype=dtype, generator=generator))
+        )
+        X.requires_grad = True
+        X_Vech = spd_linalg.VechBatch.apply(X)
+        # create random upstream gradient
+        grad_X_Vech = torch.squeeze(torch.randn((n_matrices, n_features*(n_features+1)//2), device=device, dtype=dtype, generator=generator))
+        # backward
+        X_Vech.backward(grad_X_Vech)
+        # we expect vech_batch(X.grad) == grad_X_Vech
+        expected_grad = spd_linalg.vech_batch(X.grad)
+        assert_close(expected_grad, grad_X_Vech)
 
 
 # ----------------------------------------------------------
@@ -145,6 +266,8 @@ class TestSylvesterSPD:
         eigvals, eigvecs = torch.linalg.eigh(A)
         X = spd_linalg.solve_sylvester_SPD(eigvals, eigvecs, Q)
         assert X.shape == A.shape
+        assert X.device == A.device
+        assert X.dtype == A.dtype
         assert is_symmetric(X)
         assert_close(A @ X + X @ A, Q)
 
@@ -200,6 +323,8 @@ class TestSylvesterSPD:
         X = spd_linalg.solve_sylvester_SPD(eigvals, eigvecs, Q)
         
         assert X.shape == A.shape
+        assert X.device == A.device
+        assert X.dtype == A.dtype
         # Check skew-symmetry
         assert_close(X, -X.transpose(-1,-2))
         assert_close(A @ X + X @ A, Q)
@@ -230,9 +355,13 @@ class TestSqrtmSPD:
         X_sqrtm, _, _ = spd_linalg.sqrtm_SPD(X)
         X_Sqrtm = spd_linalg.SqrtmSPD.apply(X)
         assert X_sqrtm.shape == X.shape
+        assert X_sqrtm.device == X.device
+        assert X_sqrtm.dtype == X.dtype
         assert is_spd(X_sqrtm)
         assert_close(X_sqrtm @ X_sqrtm, X)
         assert X_Sqrtm.shape == X.shape
+        assert X_Sqrtm.device == X.device
+        assert X_Sqrtm.dtype == X.dtype
         assert is_spd(X_Sqrtm)
         assert_close(X_Sqrtm @ X_Sqrtm, X)
         assert_close(X_Sqrtm, X_sqrtm)
@@ -306,6 +435,10 @@ class TestSqrtmSPD:
         loss_auto = torch.norm(X_auto_sqrtm)
         loss_auto.backward()
 
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
@@ -328,12 +461,16 @@ class TestInvSqrtmSPD:
         X_inv_sqrtm, _, _ = spd_linalg.inv_sqrtm_SPD(X)
         X_InvSqrtm = spd_linalg.InvSqrtmSPD.apply(X)
         assert X_inv_sqrtm.shape == X.shape
+        assert X_inv_sqrtm.device == X.device
+        assert X_inv_sqrtm.dtype == X.dtype
         assert is_spd(X_inv_sqrtm)
         assert_close(
             X_inv_sqrtm @ X_inv_sqrtm,
             torch.cholesky_inverse(torch.linalg.cholesky(X)),
         )
         assert X_InvSqrtm.shape == X.shape
+        assert X_InvSqrtm.device == X.device
+        assert X_InvSqrtm.dtype == X.dtype
         assert is_spd(X_InvSqrtm)
         assert_close(
             X_InvSqrtm @ X_InvSqrtm,
@@ -395,6 +532,10 @@ class TestInvSqrtmSPD:
         loss_auto = torch.norm(X_auto_inv_sqrtm)
         loss_auto.backward()
 
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
@@ -422,9 +563,13 @@ class TestPowmSPD:
         X_Orig = spd_linalg.PowmSPD.apply(X_Powm, 1/exponent)
 
         assert X_powm.shape == X.shape
+        assert X_powm.device == X.device
+        assert X_powm.dtype == X.dtype
         assert is_spd(X_powm)
         assert_close(X_orig, X)
         assert X_Powm.shape == X.shape
+        assert X_Powm.device == X.device
+        assert X_Powm.dtype == X.dtype
         assert is_spd(X_Powm)
         assert_close(X_Orig, X)
         assert_close(X_Powm, X_powm)
@@ -501,6 +646,10 @@ class TestPowmSPD:
         loss_auto = torch.norm(X_auto_powm)
         loss_auto.backward()
 
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
@@ -524,10 +673,14 @@ class TestLogmSPD:
         X_logm, _, _ = spd_linalg.logm_SPD(X)
 
         assert X_Logm.shape == X.shape
+        assert X_Logm.device == X.device
+        assert X_Logm.dtype == X.dtype
         assert is_symmetric(X_Logm)
         assert_close(spd_linalg.expm_symmetric(X_Logm)[0], X)
 
         assert X_logm.shape == X.shape
+        assert X_logm.device == X.device
+        assert X_logm.dtype == X.dtype
         assert is_symmetric(X_logm)
         assert_close(spd_linalg.expm_symmetric(X_logm)[0], X)
         assert_close(X_Logm, X_logm)
@@ -602,6 +755,10 @@ class TestLogmSPD:
         loss_auto = torch.norm(X_auto_logm)
         loss_auto.backward()
 
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
@@ -626,10 +783,14 @@ class TestExpmSymmetric:
         X_Expm = spd_linalg.ExpmSymmetric.apply(X_symmetric)
 
         assert X_expm.shape == X_symmetric.shape
+        assert X_expm.device == X_symmetric.device
+        assert X_expm.dtype == X_symmetric.dtype
         assert is_spd(X_expm)
         assert_close(spd_linalg.logm_SPD(X_expm)[0], X_symmetric, atol=1e-5, rtol=1e-6)
 
         assert X_Expm.shape == X_symmetric.shape
+        assert X_Expm.device == X_symmetric.device
+        assert X_Expm.dtype == X_symmetric.dtype
         assert is_spd(X_Expm)
         assert_close(spd_linalg.logm_SPD(X_Expm)[0], X_symmetric, atol=1e-5, rtol=1e-6)
         assert_close(X_Expm, X_expm)
@@ -709,6 +870,10 @@ class TestExpmSymmetric:
         loss_auto = torch.norm(X_auto_expm)
         loss_auto.backward()
 
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
@@ -739,10 +904,14 @@ class TestEighReLu:
         Y = spd_linalg.EighReLu.apply(X, eps)
 
         assert Z.shape == X.shape
+        assert Z.device == X.device
+        assert Z.dtype == X.dtype
         assert is_spd(Z)
         assert bool((torch.linalg.eigvalsh(Z) >= eps - eps / 10).all())
 
         assert Y.shape == X.shape
+        assert Y.device == X.device
+        assert Y.dtype == X.dtype
         assert is_spd(Y)
         assert bool((torch.linalg.eigvalsh(Y) >= eps - eps / 10).all())
 
@@ -835,7 +1004,10 @@ class TestEighReLu:
         loss_auto = torch.norm(Y_auto)
         loss_auto.backward()
 
-        assert X_manual.grad.shape == X_manual.shape
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         # need to lower tolerances to get True
@@ -869,7 +1041,11 @@ class TestCongruenceSPD:
         )
 
         assert Y.shape == X.shape
+        assert Y.device == X.device
+        assert Y.dtype == X.dtype
         assert Z.shape == X.shape
+        assert Z.device == X.device
+        assert Z.dtype == X.dtype
         assert is_spd(Y)
         assert is_spd(Z)
         assert_close(Y, Z)
@@ -903,10 +1079,18 @@ class TestCongruenceSPD:
         loss_auto = torch.norm(X_auto_cong)
         loss_auto.backward()
 
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
 
+        assert G_manual.grad is not None
+        assert G_auto.grad is not None
+        assert torch.isfinite(G_manual.grad).all()
+        assert torch.isfinite(G_auto.grad).all()
         assert is_symmetric(G_manual.grad)
         assert is_symmetric(G_auto.grad)
         assert_close(G_manual.grad, G_auto.grad)
@@ -936,7 +1120,11 @@ class TestWhitening:
         )
 
         assert Y.shape == X.shape
+        assert Y.device == X.device
+        assert Y.dtype == X.dtype
         assert Z.shape == X.shape
+        assert Z.device == X.device
+        assert Z.dtype == X.dtype
         assert is_spd(Y)
         assert is_spd(Z)
         assert_close(Y, Z)
@@ -971,10 +1159,18 @@ class TestWhitening:
         loss_auto = torch.norm(X_auto_white)
         loss_auto.backward()
 
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
 
+        assert G_manual.grad is not None
+        assert G_auto.grad is not None
+        assert torch.isfinite(G_manual.grad).all()
+        assert torch.isfinite(G_auto.grad).all()
         assert is_symmetric(G_manual.grad)
         assert is_symmetric(G_auto.grad)
         assert_close(G_manual.grad, G_auto.grad)
@@ -1003,6 +1199,8 @@ class TestCongruenceRectangular:
             assert Y.shape[0] == X.shape[0]
         assert Y.shape[-2] == n_out
         assert Y.shape[-1] == n_out
+        assert Y.device == X.device
+        assert Y.dtype == X.dtype
         assert is_spd(Y)
 
         assert Z.dim() == X.dim()
@@ -1010,6 +1208,8 @@ class TestCongruenceRectangular:
             assert Z.shape[0] == X.shape[0]
         assert Z.shape[-2] == n_out
         assert Z.shape[-1] == n_out
+        assert Z.device == X.device
+        assert Z.dtype == X.dtype
         assert is_spd(Z)
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
@@ -1042,12 +1242,18 @@ class TestCongruenceRectangular:
         loss_auto = torch.norm(X_auto_cong)
         loss_auto.backward()
 
-        assert X_manual.grad.shape == X_manual.shape
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
 
-        assert W_manual.grad.shape == W_manual.shape
+        assert W_manual.grad is not None
+        assert W_auto.grad is not None
+        assert torch.isfinite(W_manual.grad).all()
+        assert torch.isfinite(W_auto.grad).all()
         assert_close(W_manual.grad, W_auto.grad)
 
 
