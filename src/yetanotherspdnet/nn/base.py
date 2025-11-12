@@ -173,7 +173,7 @@ class BiMap(nn.Module):
 
 class ReEig(nn.Module):
     def __init__(
-        self, eps: float = 1e-2, use_autograd: bool = False, dim: int | None = None
+        self, eps: float = 1e-4, use_autograd: bool = False, dim: int | None = None
     ) -> None:
         """
         ReEig layer in a SPDnet layer according to the paper:
@@ -198,7 +198,7 @@ class ReEig(nn.Module):
         self.use_autograd = use_autograd
         self.dim = dim
 
-        self.reeig_fun = (lambda data: eigh_relu(data)[0]) if self.use_autograd else EighReLu.apply
+        self.reeig_fun = (lambda data, eps: eigh_relu(data, eps)[0]) if self.use_autograd else EighReLu.apply
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
