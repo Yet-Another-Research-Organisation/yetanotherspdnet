@@ -278,7 +278,7 @@ class TestSylvesterSPD:
         """
         if device.type != "cpu" or dtype != torch.float64:
             pytest.skip("Scipy comparison only valid on CPU with float64")
-        
+
         A = random_SPD(n_features, cond=cond, device=device, dtype=dtype, generator=generator)
         Q = spd_linalg.symmetrize(
             torch.randn((n_features, n_features), device=device, dtype=dtype, generator=generator)
@@ -299,13 +299,13 @@ class TestSylvesterSPD:
         Q = spd_linalg.symmetrize(
             torch.randn((n_features, n_features), device=device, dtype=dtype)
         )
-        
+
         eigvals, eigvecs = torch.linalg.eigh(I)
         X = spd_linalg.solve_sylvester_SPD(eigvals, eigvecs, Q)
-        
+
         # For A=I: IX + XI = 2X = Q, so X = Q/2
         expected = Q / 2
-        assert_close(X, expected, rtol=1e-5, atol=1e-5)
+        assert_close(X, expected)
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features, cond", [(100,1000)])
@@ -314,14 +314,14 @@ class TestSylvesterSPD:
         Test of solve_sylvester_SPD function with skew-symmetric matrices
         """
         A = random_SPD(n_features, n_matrices, cond=cond, device=device, dtype=dtype, generator=generator)
-        
+
         # Create skew-symmetric matrix
         Q = torch.squeeze(torch.randn((n_matrices, n_features, n_features), device=device, dtype=dtype, generator=generator))
         Q = Q - spd_linalg.symmetrize(Q)
-        
+
         eigvals, eigvecs = torch.linalg.eigh(A)
         X = spd_linalg.solve_sylvester_SPD(eigvals, eigvecs, Q)
-        
+
         assert X.shape == A.shape
         assert X.device == A.device
         assert X.dtype == A.dtype

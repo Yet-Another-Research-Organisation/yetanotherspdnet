@@ -17,7 +17,119 @@ from ..functions.spd_linalg import (
     expm_symmetric,
     vec_batch,
 )
+from ..functions.stiefel import (
+    ProjectionStiefel,
+    projection_stiefel,
+)
 from ..random.stiefel import _init_weights_stiefel
+
+
+class SPDLogEuclideanParametrization(nn.Module):
+    def __init__(self, use_autograd: bool = False):
+        """
+        SPD parametrization using the log-Euclidean exponential mapping
+
+        Parameters
+        ----------
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False.
+        """
+        super().__init__()
+        self.use_autograd = use_autograd
+        self.expmSymmetric = (lambda data: expm_symmetric(data)[0]) if self.use_autograd else ExpmSymmetric.apply
+
+    def forward(self, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the SPDLogEuclideanParametrization layer
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        Returns
+        -------
+        data_expm : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+        """
+        return self.expmSymmetric(data)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"SPDLogEuclideanParametrization(use_autograd={self.use_autograd})"
+
+    def __str__(self) -> str:
+        """
+        String representation of the layer
+
+        Returns
+        -------
+        str
+            String representation of the layer
+        """
+        return self.__repr__()
+
+
+class StiefelProjectionParametrization(nn.Module):
+    def __init__(self, use_autograd: bool = False):
+        """
+        Stiefel parametrization using the projection based on the polar decomposition
+
+        Parameters
+        ----------
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False.
+        """
+        super().__init__()
+        self.use_autograd = use_autograd
+        self.projectionStiefel = projection_stiefel if self.use_autograd else ProjectionStiefel.apply
+
+    def forward(self, weight: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the StiefelProjectionParametrization layer
+
+        Parameters
+        ----------
+        weight : torch.Tensor of shape (n_out, n_in)
+            Rectangular matrix
+
+        Returns
+        -------
+        projected_weight : torch.Tensor (n_out, n_in)
+            Orthogonal matrix
+        """
+        return self.projectionStiefel(weight)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"StiefelProjectionParametrization(use_autograd={self.use_autograd})"
+
+    def __str__(self) -> str:
+        """
+        String representation of the layer
+
+        Returns
+        -------
+        str
+            String representation of the layer
+        """
+        return self.__repr__()
 
 
 class BiMap(nn.Module):
@@ -373,55 +485,4 @@ class Vech(nn.Module):
         """
         return VechBatch.apply(data)
 
-
-class SPDLogEuclideanParametrization(nn.Module):
-    def __init__(self, use_autograd: bool = False):
-        """
-        SPD parametrization using the log-Euclidean exponential mapping.
-
-        Parameters
-        ----------
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula. Default is False.
-        """
-        super().__init__()
-        self.use_autograd = use_autograd
-        self.expmSymmetric = (lambda data: expm_symmetric(data)[0]) if self.use_autograd else ExpmSymmetric.apply
-
-    def forward(self, data: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the SPDLogEuclideanParametrization layer
-
-        Parameters
-        ----------
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of symmetric matrices
-
-        Returns
-        -------
-        data_expm : torch.Tensor of shape (..., n_features, n_features)
-            Batch of SPD matrices
-        """
-        return self.expmSymmetric(data)
-
-    def __repr__(self) -> str:
-        """Representation of the layer
-
-        Returns
-        -------
-        str
-            Representation of the layer
-        """
-        return f"SPDLogEuclideanParametrization(use_autograd={self.use_autograd})"
-
-    def __str__(self) -> str:
-        """String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
 

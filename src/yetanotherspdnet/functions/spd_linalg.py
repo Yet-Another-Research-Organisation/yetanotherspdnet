@@ -69,6 +69,7 @@ class VecBatch(Function):
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the vectorization of a batch of matrices
+
         Parameters
         ----------
         ctx : torch.autograd.function._ContextMethodMixin
