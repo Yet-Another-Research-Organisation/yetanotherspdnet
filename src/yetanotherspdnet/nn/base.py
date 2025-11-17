@@ -3,6 +3,7 @@ from collections.abc import Callable
 import torch
 from torch import nn
 from torch.nn.utils import parametrizations
+from torch.nn.utils.parametrize import register_parametrization
 
 from ..functions.spd_linalg import (
     CongruenceRectangular,
@@ -16,10 +17,12 @@ from ..functions.spd_linalg import (
     logm_SPD,
     expm_symmetric,
     vec_batch,
+    inv_sqrtm_SPD,
+    InvSqrtmSPD
 )
 from ..functions.stiefel import (
-    ProjectionStiefel,
-    projection_stiefel,
+    ProjectionStiefelPolar,
+    projection_stiefel_polar,
 )
 from ..random.stiefel import _init_weights_stiefel
 
@@ -91,7 +94,7 @@ class StiefelProjectionParametrization(nn.Module):
         """
         super().__init__()
         self.use_autograd = use_autograd
-        self.projectionStiefel = projection_stiefel if self.use_autograd else ProjectionStiefel.apply
+        self.projectionStiefel = projection_stiefel_polar if self.use_autograd else ProjectionStiefelPolar.apply
 
     def forward(self, weight: torch.Tensor) -> torch.Tensor:
         """
@@ -107,7 +110,12 @@ class StiefelProjectionParametrization(nn.Module):
         projected_weight : torch.Tensor (n_out, n_in)
             Orthogonal matrix
         """
-        return self.projectionStiefel(weight)
+        # return weight
+        #U, _, Vh = torch.linalg.svd(weight, full_matrices=False)
+        #return U @ Vh
+        #return self.projectionStiefel(weight)
+        Q,R = torch.linalg.qr(weight.transpose(-2,-1))
+        return Q.transpose(-2,-1)
 
     def __repr__(self) -> str:
         """
@@ -138,7 +146,7 @@ class BiMap(nn.Module):
         n_in: int,
         n_out: int,
         parametrized: bool = True,
-        parametrization: Callable = parametrizations.orthogonal,
+        parametrization: type[nn.Module] | Callable = StiefelProjectionParametrization,
         parametrization_options: dict | None = None,
         init_method: Callable = _init_weights_stiefel,
         init_options: dict | None = None,
@@ -164,9 +172,10 @@ class BiMap(nn.Module):
             Whether to apply parametrization to enforce manifold constraints.
             Default is True
 
-        parametrization : Callable, optional
+        parametrization : nn.Module or Callable, optional
             Parametrization to apply if parametrized is True.
-            Default is parametrizations.orthogonal
+            If not nn.Module, only parametrization.orthogonal is supported.
+            Default is StiefelProjectionParametrization
 
         parametrization_options : dict, optional
             Options for the parametrization function.
@@ -224,11 +233,27 @@ class BiMap(nn.Module):
                 )
 
         if self.parametrized:
-            if self.parametrization_options is None:
-                self.parametrization(module=self, name="weight")
+            if (self.parametrization is StiefelProjectionParametrization) and (self.parametrization_options is None):
+                self.parametrization_options = {'use_autograd': self.use_autograd}
+            # check if self.parametrization is a class (type) that subclasses nn.Module
+            if isinstance(self.parametrization, type) and issubclass(self.parametrization, nn.Module):
+                register_parametrization(
+                    self,
+                    "weight",
+                    StiefelProjectionParametrization(use_autograd = True)
+                    #self.parametrization(**self.parametrization_options)
+                )
+            elif self.parametrization is parametrizations.orthogonal:
+                if self.parametrization_options is None:
+                    self.parametrization(module=self, name="weight")
+                else:
+                    self.parametrization(
+                        module=self, name="weight", **self.parametrization_options
+                    )
             else:
-                self.parametrization(
-                    module=self, name="weight", **self.parametrization_options
+                 raise TypeError(
+                    f"parametrization must be a nn.Module class or parametrization.orthogonal "
+                    f"got {type(self.parametrization)}"
                 )
 
         self.bimap_fun = (

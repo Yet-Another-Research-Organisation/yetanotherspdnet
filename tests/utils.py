@@ -50,8 +50,8 @@ def is_orthogonal(W: torch.Tensor) -> bool:
 
     Parameters
     ----------
-    W : torch.Tensor of shape (n_out, n_in)
-        Rectangular matrix (n_out < n_in)
+    W : torch.Tensor of shape (n_in, n_out)
+        Rectangular matrix (n_out <= n_in)
 
     Returns
     -------
@@ -59,7 +59,7 @@ def is_orthogonal(W: torch.Tensor) -> bool:
         boolean
     """
     assert W.dim() == 2
-    assert W.shape[0] < W.shape[1]
-    WWT = W @ W.transpose(-1,-2)
-    I = torch.eye(W.shape[0], device=W.device, dtype=W.dtype)
+    assert W.shape[1] <= W.shape[0]
+    WWT = W.transpose(-1,-2) @ W
+    I = torch.eye(W.shape[1], device=W.device, dtype=W.dtype)
     return bool(torch.allclose(WWT, I))
