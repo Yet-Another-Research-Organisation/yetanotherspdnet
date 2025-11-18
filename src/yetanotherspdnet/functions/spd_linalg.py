@@ -1029,7 +1029,7 @@ def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Te
     data : torch.Tensor of shape (..., n_in, n_in)
         Batch of SPD matrices
 
-    weight : torch.Tensor of shape (n_out, n_in)
+    weight : torch.Tensor of shape (n_in, n_out)
         Rectangular matrix (e.g., weights),
         n_in > n_out is expected
 
@@ -1038,10 +1038,10 @@ def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Te
     data_transformed : torch.Tensor of shape (..., n_out, n_out)
         Transformed batch of SPD matrices
     """
-    assert weight.shape[-1] > weight.shape[-2], (
-        "weight must reduce the dimension of data, i.e., n_in > n_out"
+    assert weight.shape[-2] >= weight.shape[-1], (
+        "weight must reduce the dimension of data, i.e., n_in >= n_out"
     )
-    return weight @ data @ weight.transpose(-1, -2)
+    return weight.transpose(-1, -2) @ data @ weight
 
 
 class CongruenceRectangular(Function):
@@ -1091,15 +1091,15 @@ class CongruenceRectangular(Function):
         grad_input_data : torch.Tensor of shape (..., n_in, n_in)
             Gradient of the loss with respect to the input batch of SPD matrices
 
-        grad_input_W : torch.Tensor of shape (n_out, n_in)
+        grad_input_W : torch.Tensor of shape (n_in, n_out)
             Gradient of the loss with respect to the (full-rank) rectangular matrix W
         """
-        data, W = ctx.saved_tensors
-        grad_input_data = W.transpose(-1, -2) @ grad_output @ W
+        data, weight = ctx.saved_tensors
+        grad_input_data = weight @ grad_output @ weight.transpose(-1, -2)
         #grad_input_W = 2 * torch.sum(
         #    grad_output @ W @ data, dim=tuple(range(data.ndim - 2))
         #)
-        grad_input_W = 2 * torch.einsum('...ik,kl,...lj->ij', grad_output, W, data)
+        grad_input_W = 2 * torch.einsum('...ik,kl,...lj->ij', data, weight, grad_output)
         return grad_input_data, grad_input_W
 
 

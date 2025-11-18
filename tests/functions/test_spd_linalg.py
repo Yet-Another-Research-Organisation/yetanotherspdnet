@@ -1188,7 +1188,7 @@ class TestCongruenceRectangular:
         # Generate random SPD matrices
         X = random_SPD(n_in, n_matrices, cond=cond, device=device, dtype=dtype, generator=generator)
         # Generate random Stiefel matrix
-        W = torch.empty((n_out, n_in), device=device, dtype=dtype)
+        W = torch.empty((n_in, n_out), device=device, dtype=dtype)
         _init_weights_stiefel(W, generator=generator)
 
         Y = spd_linalg.CongruenceRectangular.apply(X, W)
@@ -1221,7 +1221,7 @@ class TestCongruenceRectangular:
         # Generate random SPD matrices
         X = random_SPD(n_in, n_matrices, cond=cond, device=device, dtype=dtype, generator=generator)
         # Generate random Stiefel matrix
-        W = torch.empty((n_out, n_in), device=device, dtype=dtype)
+        W = torch.empty((n_in, n_out), device=device, dtype=dtype)
         _init_weights_stiefel(W, generator=generator)
 
         X_manual = X.clone().detach()

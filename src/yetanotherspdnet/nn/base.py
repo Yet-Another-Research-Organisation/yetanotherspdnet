@@ -21,8 +21,10 @@ from ..functions.spd_linalg import (
     InvSqrtmSPD
 )
 from ..functions.stiefel import (
-    ProjectionStiefelPolar,
-    projection_stiefel_polar,
+    StiefelProjectionPolar,
+    stiefel_projection_polar,
+    StiefelProjectionQR,
+    stiefel_projection_qr,
 )
 from ..random.stiefel import _init_weights_stiefel
 
@@ -81,7 +83,7 @@ class SPDLogEuclideanParametrization(nn.Module):
         return self.__repr__()
 
 
-class StiefelProjectionParametrization(nn.Module):
+class StiefelProjectionPolarParametrization(nn.Module):
     def __init__(self, use_autograd: bool = False):
         """
         Stiefel parametrization using the projection based on the polar decomposition
@@ -94,7 +96,7 @@ class StiefelProjectionParametrization(nn.Module):
         """
         super().__init__()
         self.use_autograd = use_autograd
-        self.projectionStiefel = projection_stiefel_polar if self.use_autograd else ProjectionStiefelPolar.apply
+        self.projectionStiefel = stiefel_projection_polar if self.use_autograd else StiefelProjectionPolar.apply
 
     def forward(self, weight: torch.Tensor) -> torch.Tensor:
         """
@@ -102,20 +104,69 @@ class StiefelProjectionParametrization(nn.Module):
 
         Parameters
         ----------
-        weight : torch.Tensor of shape (n_out, n_in)
+        weight : torch.Tensor of shape (n_in, n_out)
             Rectangular matrix
 
         Returns
         -------
-        projected_weight : torch.Tensor (n_out, n_in)
+        projected_weight : torch.Tensor (n_in, n_out)
             Orthogonal matrix
         """
-        # return weight
-        #U, _, Vh = torch.linalg.svd(weight, full_matrices=False)
-        #return U @ Vh
-        #return self.projectionStiefel(weight)
-        Q,R = torch.linalg.qr(weight.transpose(-2,-1))
-        return Q.transpose(-2,-1)
+        return self.projectionStiefel(weight)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"StiefelProjectionParametrization(use_autograd={self.use_autograd})"
+
+    def __str__(self) -> str:
+        """
+        String representation of the layer
+
+        Returns
+        -------
+        str
+            String representation of the layer
+        """
+        return self.__repr__()
+
+
+class StiefelProjectionQRParametrization(nn.Module):
+    def __init__(self, use_autograd: bool = False):
+        """
+        Stiefel parametrization using the projection based on the QR decomposition
+
+        Parameters
+        ----------
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False.
+        """
+        super().__init__()
+        self.use_autograd = use_autograd
+        self.projectionStiefel = stiefel_projection_qr if self.use_autograd else StiefelProjectionQR.apply
+
+    def forward(self, weight: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the StiefelProjectionParametrization layer
+
+        Parameters
+        ----------
+        weight : torch.Tensor of shape (n_in, n_out)
+            Rectangular matrix
+
+        Returns
+        -------
+        projected_weight : torch.Tensor (n_in, n_out)
+            Orthogonal matrix
+        """
+        return self.projectionStiefel(weight)
 
     def __repr__(self) -> str:
         """
@@ -146,7 +197,7 @@ class BiMap(nn.Module):
         n_in: int,
         n_out: int,
         parametrized: bool = True,
-        parametrization: type[nn.Module] | Callable = StiefelProjectionParametrization,
+        parametrization: type[nn.Module] | Callable = StiefelProjectionQRParametrization,
         parametrization_options: dict | None = None,
         init_method: Callable = _init_weights_stiefel,
         init_options: dict | None = None,
@@ -175,7 +226,7 @@ class BiMap(nn.Module):
         parametrization : nn.Module or Callable, optional
             Parametrization to apply if parametrized is True.
             If not nn.Module, only parametrization.orthogonal is supported.
-            Default is StiefelProjectionParametrization
+            Default is StiefelProjectionQRParametrization (to be changed back to parametrization.orthogonal ??)
 
         parametrization_options : dict, optional
             Options for the parametrization function.
@@ -217,11 +268,11 @@ class BiMap(nn.Module):
         self.use_autograd = use_autograd
 
         if n_out > n_in:
-            raise ValueError("must have n_out < n_in")
+            raise ValueError("must have n_out <= n_in")
 
         # Create weight parameter
         self.weight = nn.Parameter(
-            torch.empty((n_out, n_in), dtype=dtype, device=device), requires_grad=True
+            torch.empty((n_in, n_out), dtype=dtype, device=device), requires_grad=True
         )
         # Initialize weights
         with torch.no_grad():
@@ -233,15 +284,14 @@ class BiMap(nn.Module):
                 )
 
         if self.parametrized:
-            if (self.parametrization is StiefelProjectionParametrization) and (self.parametrization_options is None):
-                self.parametrization_options = {'use_autograd': self.use_autograd}
-            # check if self.parametrization is a class (type) that subclasses nn.Module
             if isinstance(self.parametrization, type) and issubclass(self.parametrization, nn.Module):
+                if self.parametrization_options is None:
+                    self.parametrization_options = {'use_autograd': self.use_autograd}
+
                 register_parametrization(
                     self,
                     "weight",
-                    StiefelProjectionParametrization(use_autograd = True)
-                    #self.parametrization(**self.parametrization_options)
+                    self.parametrization(**self.parametrization_options)
                 )
             elif self.parametrization is parametrizations.orthogonal:
                 if self.parametrization_options is None:

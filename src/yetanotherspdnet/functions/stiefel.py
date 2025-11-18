@@ -3,7 +3,7 @@ from torch.autograd import Function
 
 from .spd_linalg import symmetrize
 
-def projection_stiefel_polar(point: torch.Tensor) -> torch.Tensor:
+def stiefel_projection_polar(point: torch.Tensor) -> torch.Tensor:
     """
     Projection from the ambient space onto the Stiefel manifold based on the polar decomposition
 
@@ -21,7 +21,7 @@ def projection_stiefel_polar(point: torch.Tensor) -> torch.Tensor:
     return U @ Vh
 
 
-def projection_tangent_stiefel_orthogonal(vector: torch.Tensor, point: torch.Tensor) -> torch.Tensor:
+def stiefel_projection_tangent_orthogonal(vector: torch.Tensor, point: torch.Tensor) -> torch.Tensor:
     """
     Orthogonal projection from the ambient space onto the tangent space
     of the Stiefel manifold at point
@@ -45,7 +45,7 @@ def projection_tangent_stiefel_orthogonal(vector: torch.Tensor, point: torch.Ten
     return vector - point @ symmetrize(point.transpose(-2, -1) @ vector)
 
 
-class ProjectionStiefelPolar(Function):
+class StiefelProjectionPolar(Function):
     """
     Projection from the ambient space onto the Stiefel manifold based on polar decomposition
     """
@@ -67,7 +67,7 @@ class ProjectionStiefelPolar(Function):
         projected_point : torch.Tensor of shape (n_in, n_out)
             Orthogonal matrix
         """
-        projected_point = projection_stiefel_polar(point)
+        projected_point = stiefel_projection_polar(point)
         ctx.save_for_backward(projected_point)
         return projected_point
 
@@ -90,10 +90,10 @@ class ProjectionStiefelPolar(Function):
             Gradient of the loss with respect to the input rectangular matrix
         """
         projected_point, = ctx.saved_tensors
-        return projection_tangent_stiefel_orthogonal(grad_output, projected_point)
+        return stiefel_projection_tangent_orthogonal(grad_output, projected_point)
 
 
-def projection_stiefel_qr(point: torch.Tensor) -> torch.Tensor:
+def stiefel_projection_qr(point: torch.Tensor) -> torch.Tensor:
     """
     Projection from the ambient space onto the Stiefel manifold based on the QR decomposition
 
@@ -111,7 +111,7 @@ def projection_stiefel_qr(point: torch.Tensor) -> torch.Tensor:
     return Q
 
 
-def differential_projection_stiefel_qr(vector: torch.Tensor, Q: torch.Tensor, R: torch.Tensor) -> torch.Tensor:
+def stiefel_differential_projection_qr(vector: torch.Tensor, Q: torch.Tensor, R: torch.Tensor) -> torch.Tensor:
     """
     Differential of the projection on Stiefel based on QR decomposition
 
@@ -136,7 +136,7 @@ def differential_projection_stiefel_qr(vector: torch.Tensor, Q: torch.Tensor, R:
     return vector - Q @ Q.transpose(-2, -1) @ vector + Q @ tmp
 
 
-def differential_adjoint_projection_stiefel_qr(vector: torch.Tensor, Q: torch.Tensor, R: torch.Tensor) -> torch.Tensor:
+def stiefel_adjoint_differential_projection_qr(vector: torch.Tensor, Q: torch.Tensor, R: torch.Tensor) -> torch.Tensor:
     """
     Adjoint of the differential projection on Stiefel based on QR decomposition
 
@@ -164,7 +164,7 @@ def differential_adjoint_projection_stiefel_qr(vector: torch.Tensor, Q: torch.Te
     )
 
 
-class ProjectionStiefelQR(Function):
+class StiefelProjectionQR(Function):
     """
     Projection from the ambient space onto the Stiefel manifold based on QR decomposition
     """
@@ -209,5 +209,5 @@ class ProjectionStiefelQR(Function):
             Gradient of the loss with respect to the input rectangular matrix
         """
         Q, R = ctx.saved_tensors
-        return differential_adjoint_projection_stiefel_qr(grad_output, Q, R)
+        return stiefel_adjoint_differential_projection_qr(grad_output, Q, R)
 

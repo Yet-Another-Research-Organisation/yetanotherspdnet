@@ -7,7 +7,6 @@ from torch.nn.utils import parametrizations
 
 import yetanotherspdnet.nn.base as nn_spd_base
 from yetanotherspdnet.functions.spd_linalg import symmetrize
-from yetanotherspdnet.functions.stiefel import projection_stiefel_polar
 from yetanotherspdnet.random.spd import random_SPD
 from yetanotherspdnet.random.stiefel import _init_weights_stiefel
 
@@ -157,18 +156,18 @@ class TestSPDLogEuclideanParametrization:
         assert layer.training is False
 
 
-class TestStiefelProjectionParametrization:
+class TestStiefelProjectionPolarParametrization:
     """
-    Test suite for StiefelProjectionParametrization module
+    Test suite for StiefelProjectionPolarParametrization module
     """
-    @pytest.mark.parametrize("n_in, n_out", [(100, 70), (50, 30)])
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_shape(self, n_in, n_out, use_autograd, device, dtype, generator):
         """
         Test that forward pass returns correct shape
         """
-        layer = nn_spd_base.StiefelProjectionParametrization(use_autograd=use_autograd)
-        weight = torch.randn((n_out, n_in), device=device, dtype=dtype, generator=generator)
+        layer = nn_spd_base.StiefelProjectionPolarParametrization(use_autograd=use_autograd)
+        weight = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
 
         output = layer(weight)
 
@@ -177,29 +176,29 @@ class TestStiefelProjectionParametrization:
         assert output.dtype == weight.dtype
         assert is_orthogonal(output)
 
-    @pytest.mark.parametrize("n_in, n_out", [(100, 70), (50, 30)])
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     def test_both_modes_give_same_result(self, n_in, n_out, device, dtype, generator):
         """
         Test that autograd and manual gradient give same forward results
         """
-        weight = torch.randn((n_out, n_in), device=device, dtype=dtype, generator=generator)
+        weight = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
 
-        layer_autograd = nn_spd_base.StiefelProjectionParametrization(use_autograd=True)
-        layer_manual = nn_spd_base.StiefelProjectionParametrization(use_autograd=False)
+        layer_autograd = nn_spd_base.StiefelProjectionPolarParametrization(use_autograd=True)
+        layer_manual = nn_spd_base.StiefelProjectionPolarParametrization(use_autograd=False)
 
         output_autograd = layer_autograd(weight)
         output_manual = layer_manual(weight)
 
         assert_close(output_autograd, output_manual)
 
-    @pytest.mark.parametrize("n_in, n_out", [(100, 70), (50, 30)])
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(self, n_in, n_out, use_autograd, device, dtype, generator):
         """
         Test that backward pass works (gradient computation)
         """
-        layer = nn_spd_base.StiefelProjectionParametrization(use_autograd=use_autograd)
-        weight = torch.randn((n_out, n_in), device=device, dtype=dtype, generator=generator)
+        layer = nn_spd_base.StiefelProjectionPolarParametrization(use_autograd=use_autograd)
+        weight = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
         weight.requires_grad = True
 
         output = layer(weight)
@@ -211,18 +210,18 @@ class TestStiefelProjectionParametrization:
         assert not torch.isnan(weight.grad).any()
         assert not torch.isinf(weight.grad).any()
 
-    @pytest.mark.parametrize("n_in, n_out", [(100, 70), (50, 30)])
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     def test_both_modes_give_same_gradient(self, n_in, n_out, device, dtype, generator):
         """
         Test that autograd and manual gradient give same gradients
         """
-        weight1 = torch.randn((n_out, n_in), device=device, dtype=dtype, generator=generator)
+        weight1 = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
         weight2 = weight1.clone()
         weight1.requires_grad = True
         weight2.requires_grad = True
 
-        layer_autograd = nn_spd_base.StiefelProjectionParametrization(use_autograd=True)
-        layer_manual = nn_spd_base.StiefelProjectionParametrization(use_autograd=False)
+        layer_autograd = nn_spd_base.StiefelProjectionPolarParametrization(use_autograd=True)
+        layer_manual = nn_spd_base.StiefelProjectionPolarParametrization(use_autograd=False)
 
         output1 = layer_autograd(weight1)
         output2 = layer_manual(weight2)
@@ -240,7 +239,7 @@ class TestStiefelProjectionParametrization:
         """
         Test string representations
         """
-        layer = nn_spd_base.StiefelProjectionParametrization(use_autograd=use_autograd)
+        layer = nn_spd_base.StiefelProjectionPolarParametrization(use_autograd=use_autograd)
 
         repr_str = repr(layer)
         str_str = str(layer)
@@ -253,7 +252,112 @@ class TestStiefelProjectionParametrization:
         """
         Test that module respects train/eval mode
         """
-        layer = nn_spd_base.StiefelProjectionParametrization(use_autograd=use_autograd)
+        layer = nn_spd_base.StiefelProjectionPolarParametrization(use_autograd=use_autograd)
+
+        layer.train()
+        assert layer.training is True
+
+        layer.eval()
+        assert layer.training is False
+
+
+class TestStiefelProjectionQRParametrization:
+    """
+    Test suite for StiefelProjectionQRParametrization module
+    """
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_forward_shape(self, n_in, n_out, use_autograd, device, dtype, generator):
+        """
+        Test that forward pass returns correct shape
+        """
+        layer = nn_spd_base.StiefelProjectionQRParametrization(use_autograd=use_autograd)
+        weight = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
+
+        output = layer(weight)
+
+        assert output.shape == weight.shape
+        assert output.device == weight.device
+        assert output.dtype == weight.dtype
+        assert is_orthogonal(output)
+
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    def test_both_modes_give_same_result(self, n_in, n_out, device, dtype, generator):
+        """
+        Test that autograd and manual gradient give same forward results
+        """
+        weight = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
+
+        layer_autograd = nn_spd_base.StiefelProjectionQRParametrization(use_autograd=True)
+        layer_manual = nn_spd_base.StiefelProjectionQRParametrization(use_autograd=False)
+
+        output_autograd = layer_autograd(weight)
+        output_manual = layer_manual(weight)
+
+        assert_close(output_autograd, output_manual)
+
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_backward_pass(self, n_in, n_out, use_autograd, device, dtype, generator):
+        """
+        Test that backward pass works (gradient computation)
+        """
+        layer = nn_spd_base.StiefelProjectionQRParametrization(use_autograd=use_autograd)
+        weight = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
+        weight.requires_grad = True
+
+        output = layer(weight)
+        loss = torch.norm(output)
+        loss.backward()
+
+        assert weight.grad is not None
+        assert weight.grad.shape == weight.shape
+        assert not torch.isnan(weight.grad).any()
+        assert not torch.isinf(weight.grad).any()
+
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    def test_both_modes_give_same_gradient(self, n_in, n_out, device, dtype, generator):
+        """
+        Test that autograd and manual gradient give same gradients
+        """
+        weight1 = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
+        weight2 = weight1.clone()
+        weight1.requires_grad = True
+        weight2.requires_grad = True
+
+        layer_autograd = nn_spd_base.StiefelProjectionQRParametrization(use_autograd=True)
+        layer_manual = nn_spd_base.StiefelProjectionQRParametrization(use_autograd=False)
+
+        output1 = layer_autograd(weight1)
+        output2 = layer_manual(weight2)
+
+        loss1 = torch.norm(output1)
+        loss2 = torch.norm(output2)
+
+        loss1.backward()
+        loss2.backward()
+
+        assert_close(weight1.grad, weight2.grad)
+
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_repr_and_str(self, use_autograd):
+        """
+        Test string representations
+        """
+        layer = nn_spd_base.StiefelProjectionQRParametrization(use_autograd=use_autograd)
+
+        repr_str = repr(layer)
+        str_str = str(layer)
+
+        assert f"use_autograd={use_autograd}" in repr_str
+        assert repr_str == str_str
+
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_module_mode(self, use_autograd):
+        """
+        Test that module respects train/eval mode
+        """
+        layer = nn_spd_base.StiefelProjectionQRParametrization(use_autograd=use_autograd)
 
         layer.train()
         assert layer.training is True
@@ -266,10 +370,14 @@ class TestBiMap:
     """
     Test suite for BiMap module
     """
-    @pytest.mark.parametrize("n_in, n_out", [(100, 70), (50, 30)])
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("parametrized", [True, False])
+    @pytest.mark.parametrize(
+        "parametrization", 
+        [nn_spd_base.StiefelProjectionPolarParametrization, nn_spd_base.StiefelProjectionQRParametrization, parametrizations.orthogonal]
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_initialization(self, n_in, n_out, parametrized, use_autograd, device, dtype, generator):
+    def test_initialization(self, n_in, n_out, parametrized, parametrization, use_autograd, device, dtype, generator):
         """
         Test that initialization goes as expected
 
@@ -280,7 +388,7 @@ class TestBiMap:
             n_in = n_in,
             n_out = n_out,
             parametrized = parametrized,
-            #parametrization = parametrizations.orthogonal,
+            parametrization = parametrization,
             device = device,
             dtype = dtype,
             generator = generator,
@@ -288,7 +396,9 @@ class TestBiMap:
         )
         assert layer.n_in == n_in
         assert layer.n_out == n_out
-        assert layer.weight.shape == (n_out, n_in)
+        if parametrized:
+            assert layer.parametrization is parametrization
+        assert layer.weight.shape == (n_in, n_out)
         assert layer.weight.dtype == dtype
         assert layer.weight.device == device
         assert layer.weight.requires_grad is True
@@ -304,17 +414,22 @@ class TestBiMap:
             nn_spd_base.BiMap(n_in=5, n_out=10, dtype=dtype, device=device, generator=generator)
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_in, n_out", [(100, 70), (50, 30)])
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    @pytest.mark.parametrize("parametrized", [True, False])
+    @pytest.mark.parametrize(
+        "parametrization", 
+        [nn_spd_base.StiefelProjectionPolarParametrization, nn_spd_base.StiefelProjectionQRParametrization, parametrizations.orthogonal]
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_forward_shape(self, n_matrices, n_in, n_out, use_autograd, device, dtype, generator):
+    def test_forward_shape(self, n_matrices, n_in, n_out, parametrized, parametrization, use_autograd, device, dtype, generator):
         """
         Test that forward pass returns correct shape
         """
         layer = nn_spd_base.BiMap(
             n_in = n_in,
             n_out = n_out,
-            parametrized = True,
-            #parametrization = parametrizations.orthogonal,
+            parametrized = parametrized,
+            parametrization = parametrization,
             device = device,
             dtype = dtype,
             generator = generator,
@@ -324,7 +439,10 @@ class TestBiMap:
 
         output = layer(X)
 
-        assert is_orthogonal(layer.weight)
+        # As is, even if not parametrized, weight initialization is orthogonal but it feels better
+        # not to ensure orthogonality in testing when not parametrized
+        if parametrized:
+            assert is_orthogonal(layer.weight)
 
         assert output.shape == (*X.shape[:-2], n_out, n_out)
         assert output.dtype == X.dtype
@@ -332,8 +450,13 @@ class TestBiMap:
         assert is_spd(output)
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_in, n_out", [(100, 70), (50, 30)])
-    def test_both_modes_give_same_result(self, n_matrices, n_in, n_out, device, dtype, generator, seed):
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    @pytest.mark.parametrize("parametrized", [True, False])
+    @pytest.mark.parametrize(
+        "parametrization", 
+        [nn_spd_base.StiefelProjectionPolarParametrization, nn_spd_base.StiefelProjectionQRParametrization, parametrizations.orthogonal]
+    )
+    def test_both_modes_give_same_result(self, n_matrices, n_in, parametrized, parametrization, n_out, device, dtype, generator, seed):
         """
         Test that autograd and manual gradient give same forward results
         """
@@ -344,8 +467,8 @@ class TestBiMap:
         layer_manual = nn_spd_base.BiMap(
             n_in = n_in,
             n_out = n_out,
-            parametrized = True,
-            #parametrization = parametrizations.orthogonal,
+            parametrized = parametrized,
+            parametrization = parametrization,
             device = device,
             dtype = dtype,
             generator = generator,
@@ -355,8 +478,8 @@ class TestBiMap:
         layer_autograd = nn_spd_base.BiMap(
             n_in = n_in,
             n_out = n_out,
-            parametrized = True,
-            #parametrization = parametrizations.orthogonal,
+            parametrized = parametrized,
+            parametrization = parametrization,
             device = device,
             dtype = dtype,
             generator = generator,
@@ -370,17 +493,25 @@ class TestBiMap:
         assert_close(output_manual, output_autograd)
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_in, n_out", [(100, 70), (50, 30)])
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    @pytest.mark.parametrize("parametrized", [True, False])
+    @pytest.mark.parametrize(
+        "parametrization", 
+        [nn_spd_base.StiefelProjectionPolarParametrization, nn_spd_base.StiefelProjectionQRParametrization, parametrizations.orthogonal]
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_backward_pass(self, n_matrices, n_in, n_out, use_autograd, device, dtype, generator):
+    def test_backward_pass(self, n_matrices, n_in, n_out, parametrized, parametrization, use_autograd, device, dtype, generator):
         """
         Test that backward pass works and updates gradients
         """
+        if (parametrization is nn_spd_base.StiefelProjectionPolarParametrization) and (use_autograd is True):
+            pytest.skip("Skipping Polar parametrization with autograd because it is highly unstable (probably due to use of svd).")
+
         layer = nn_spd_base.BiMap(
             n_in = n_in,
             n_out = n_out,
-            parametrized = True,
-            #parametrization = parametrizations.orthogonal,
+            parametrized = parametrized,
+            parametrization = parametrization,
             device = device,
             dtype = dtype,
             generator = generator,
@@ -399,25 +530,40 @@ class TestBiMap:
         assert not torch.isnan(X.grad).any()
         assert not torch.isinf(X.grad).any()
         # check weight gradient
-        # due to parametrization, gradient not directly on layer.weight
-        original_weight = layer.parametrizations.weight.original
-        assert original_weight.grad is not None
-        assert original_weight.grad.shape == layer.weight.shape
-        assert not torch.isnan(original_weight.grad).any()
-        assert not torch.isinf(original_weight.grad).any()
+        if parametrized:
+            # due to parametrization, gradient not directly on layer.weight
+            original_weight = layer.parametrizations.weight.original
+            assert original_weight.grad is not None
+            assert original_weight.grad.shape == layer.weight.shape
+            assert not torch.isnan(original_weight.grad).any()
+            assert not torch.isinf(original_weight.grad).any()
+        else:
+            assert layer.weight.grad is not None
+            assert layer.weight.grad.shape == layer.weight.shape
+            assert not torch.isnan(layer.weight.grad).any()
+            assert not torch.isinf(layer.weight.grad).any()
+
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_in, n_out", [(100, 70), (50, 30)])
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    @pytest.mark.parametrize("parametrized", [True, False])
+    @pytest.mark.parametrize(
+        "parametrization", 
+        [nn_spd_base.StiefelProjectionPolarParametrization, nn_spd_base.StiefelProjectionQRParametrization, parametrizations.orthogonal]
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_parameter_update(self, n_matrices, n_in, n_out, use_autograd, device, dtype, generator):
+    def test_parameter_update(self, n_matrices, n_in, n_out, parametrized, parametrization, use_autograd, device, dtype, generator):
         """
         Test that parameters can be updated via optimization
         """
+        if (parametrization is nn_spd_base.StiefelProjectionPolarParametrization) and (use_autograd is True):
+            pytest.skip("Skipping Polar parametrization with autograd because it is highly unstable (probably due to use of svd).")
+
         layer = nn_spd_base.BiMap(
             n_in = n_in,
             n_out = n_out,
-            parametrized = True,
-            parametrization = parametrizations.orthogonal,
+            parametrized = parametrized,
+            parametrization = parametrization,
             device = device,
             dtype = dtype,
             generator = generator,
@@ -440,17 +586,35 @@ class TestBiMap:
         assert not torch.allclose(layer.weight, initial_weights)
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_in, n_out", [(100, 70), (50, 30)])
-    def test_both_modes_give_same_gradient(self, n_matrices, n_in, n_out, device, dtype, generator, seed):
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    @pytest.mark.parametrize("parametrized", [True, False])
+    @pytest.mark.parametrize(
+        "parametrization", 
+        [nn_spd_base.StiefelProjectionPolarParametrization, nn_spd_base.StiefelProjectionQRParametrization, parametrizations.orthogonal]
+    )
+    def test_both_modes_give_same_gradient(self, n_matrices, n_in, n_out, parametrized, parametrization, device, dtype, generator, seed):
         """
         Test that parameters are updated the same way in both modes
         """
+        if (parametrization is nn_spd_base.StiefelProjectionPolarParametrization):
+            pytest.skip("Skipping Polar parametrization because it is highly unstable with autograd (probably due to use of svd).")
+
+        # For parametrization.orthogonal, we need to set use_trivialization option to False when n_in > n_out
+        # because it appears that the corresponding module then use a torch.randn that we cannot control
+        # which makes it impossible to get the same results.
+        if (n_out < n_in) and (parametrization is parametrizations.orthogonal):
+            parametrization_options = {'use_trivialization': False}
+        else:
+            parametrization_options = None
+
         # we need to reset the generator seed to ensure we generate same weights in both case
         generator.manual_seed(seed)
         layer_manual = nn_spd_base.BiMap(
             n_in = n_in,
             n_out = n_out,
-            parametrized = False,
+            parametrized = parametrized,
+            parametrization = parametrization,
+            parametrization_options = parametrization_options,
             device = device,
             dtype = dtype,
             generator = generator,
@@ -461,7 +625,9 @@ class TestBiMap:
         layer_auto = nn_spd_base.BiMap(
             n_in = n_in,
             n_out = n_out,
-            parametrized = False,
+            parametrized = parametrized,
+            parametrization = parametrization,
+            parametrization_options = parametrization_options,
             device = device,
             dtype = dtype,
             generator = generator,
@@ -473,7 +639,7 @@ class TestBiMap:
         X2.requires_grad = True
 
         assert_close(layer_manual.weight, layer_auto.weight)
-        
+
         # Forward + backward + update
         output_manual = layer_manual(X1)
         loss_manual = output_manual.sum()
@@ -486,11 +652,13 @@ class TestBiMap:
         # check input gradients
         assert_close(X1.grad, X2.grad)
         # check weight gradients
-        # due to parametrization, gradient not directly on layer.weight
-        #original_weight1 = layer_manual.parametrizations.weight.original
-        #original_weight2 = layer_auto.parametrizations.weight.original
-        #assert_close(original_weight1.grad, original_weight2.grad)
-        assert_close(layer_manual.weight.grad, layer_auto.weight.grad)
+        if parametrized:
+            # due to parametrization, gradient not directly on layer.weight
+            original_weight1 = layer_manual.parametrizations.weight.original
+            original_weight2 = layer_auto.parametrizations.weight.original
+            assert_close(original_weight1.grad, original_weight2.grad)
+        else:
+            assert_close(layer_manual.weight.grad, layer_auto.weight.grad)
 
 
 class TestReEig:

@@ -26,7 +26,7 @@ def generator(device):
 
 
 
-class TestProjectionStiefelPolar:
+class TestStiefelProjectionPolar:
     """
     Test suite for polar based projection on Stiefel and
     orthogonal projection on tangent space
@@ -38,11 +38,11 @@ class TestProjectionStiefelPolar:
         """
         Z = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
 
-        W = stiefel.projection_stiefel_polar(Z)
-        WW = stiefel.projection_stiefel_polar(W)
+        W = stiefel.stiefel_projection_polar(Z)
+        WW = stiefel.stiefel_projection_polar(W)
 
-        V = stiefel.ProjectionStiefelPolar.apply(Z)
-        VV = stiefel.ProjectionStiefelPolar.apply(V)
+        V = stiefel.StiefelProjectionPolar.apply(Z)
+        VV = stiefel.StiefelProjectionPolar.apply(V)
 
         assert W.shape == Z.shape
         assert W.device == Z.device
@@ -66,7 +66,7 @@ class TestProjectionStiefelPolar:
         Test that the projection of the identity matrix is the identity matrix
         """
         I = torch.eye(n_in, device=device, dtype=dtype)
-        proj_I = stiefel.projection_stiefel_polar(I)
+        proj_I = stiefel.stiefel_projection_polar(I)
         assert_close(I, proj_I)
 
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
@@ -74,11 +74,11 @@ class TestProjectionStiefelPolar:
         """
         Test that the orthogonal projection on the tangent space is working
         """
-        W = stiefel.projection_stiefel_polar(torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator))
+        W = stiefel.stiefel_projection_polar(torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator))
         Z = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
 
-        tangent_vec = stiefel.projection_tangent_stiefel_orthogonal(Z, W)
-        tantan_vec = stiefel.projection_tangent_stiefel_orthogonal(tangent_vec, W)
+        tangent_vec = stiefel.stiefel_projection_tangent_orthogonal(Z, W)
+        tantan_vec = stiefel.stiefel_projection_tangent_orthogonal(tangent_vec, W)
 
         assert tangent_vec.shape == Z.shape
         assert tangent_vec.device == Z.device
@@ -91,10 +91,10 @@ class TestProjectionStiefelPolar:
         """
         Test that the projection on the tangent space of the zero matrix is the zero matrix
         """
-        W = stiefel.projection_stiefel_polar(torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator))
+        W = stiefel.stiefel_projection_polar(torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator))
         Z = torch.zeros((n_in, n_out), device=device, dtype=dtype)
 
-        tangent_vec = stiefel.projection_tangent_stiefel_orthogonal(Z, W)
+        tangent_vec = stiefel.stiefel_projection_tangent_orthogonal(Z, W)
 
         assert_close(tangent_vec, torch.zeros((n_in, n_out), device=device, dtype=dtype))
 
@@ -109,8 +109,8 @@ class TestProjectionStiefelPolar:
         Z_auto = Z.clone().detach()
         Z_auto.requires_grad = True
 
-        W_manual = stiefel.ProjectionStiefelPolar.apply(Z_manual)
-        W_auto = stiefel.projection_stiefel_polar(Z_auto)
+        W_manual = stiefel.StiefelProjectionPolar.apply(Z_manual)
+        W_auto = stiefel.stiefel_projection_polar(Z_auto)
 
         loss_manual = torch.norm(W_manual)
         loss_manual.backward()
@@ -124,7 +124,7 @@ class TestProjectionStiefelPolar:
         assert_close(Z_manual.grad, Z_auto.grad)
 
 
-class TestProjectionStiefelQR:
+class TestStiefelProjectionQR:
     """
     Test suite for the QR based projection on Stiefel
     and its differential and differential adjoint
@@ -136,11 +136,11 @@ class TestProjectionStiefelQR:
         """
         Z = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
 
-        W = stiefel.projection_stiefel_qr(Z)
-        WW = stiefel.projection_stiefel_qr(W)
+        W = stiefel.stiefel_projection_qr(Z)
+        WW = stiefel.stiefel_projection_qr(W)
 
-        V = stiefel.ProjectionStiefelQR.apply(Z)
-        VV = stiefel.ProjectionStiefelQR.apply(V)
+        V = stiefel.StiefelProjectionQR.apply(Z)
+        VV = stiefel.StiefelProjectionQR.apply(V)
 
         assert W.shape == Z.shape
         assert W.device == Z.device
@@ -164,7 +164,7 @@ class TestProjectionStiefelQR:
         Test that the projection of the identity matrix is the identity matrix
         """
         I = torch.eye(n_in, device=device, dtype=dtype)
-        proj_I = stiefel.projection_stiefel_qr(I)
+        proj_I = stiefel.stiefel_projection_qr(I)
         assert_close(I, proj_I)
 
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
@@ -178,8 +178,8 @@ class TestProjectionStiefelQR:
         Y = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
         Z = torch.randn((n_in, n_out), device=device, dtype=dtype, generator=generator)
 
-        tangent_vec = stiefel.differential_projection_stiefel_qr(Y, Q, R)
-        adjoint = stiefel.differential_adjoint_projection_stiefel_qr(Z, Q, R)
+        tangent_vec = stiefel.stiefel_differential_projection_qr(Y, Q, R)
+        adjoint = stiefel.stiefel_adjoint_differential_projection_qr(Z, Q, R)
 
         assert tangent_vec.shape == Y.shape
         assert tangent_vec.device == Y.device
@@ -202,8 +202,8 @@ class TestProjectionStiefelQR:
 
         Z = torch.zeros((n_in, n_out), device=device, dtype=dtype)
 
-        tangent_vec = stiefel.differential_projection_stiefel_qr(Z, Q, R)
-        adjoint = stiefel.differential_adjoint_projection_stiefel_qr(Z, Q, R)
+        tangent_vec = stiefel.stiefel_differential_projection_qr(Z, Q, R)
+        adjoint = stiefel.stiefel_adjoint_differential_projection_qr(Z, Q, R)
 
         assert_close(tangent_vec, torch.zeros((n_in, n_out), device=device, dtype=dtype))
         assert_close(adjoint, torch.zeros((n_in, n_out), device=device, dtype=dtype))
@@ -219,8 +219,8 @@ class TestProjectionStiefelQR:
         Z_auto = Z.clone().detach()
         Z_auto.requires_grad = True
 
-        W_manual = stiefel.ProjectionStiefelQR.apply(Z_manual)
-        W_auto = stiefel.projection_stiefel_qr(Z_auto)
+        W_manual = stiefel.StiefelProjectionQR.apply(Z_manual)
+        W_auto = stiefel.stiefel_projection_qr(Z_auto)
 
         loss_manual = torch.norm(W_manual)
         loss_manual.backward()
