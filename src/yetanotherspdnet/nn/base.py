@@ -17,8 +17,6 @@ from ..functions.spd_linalg import (
     logm_SPD,
     expm_symmetric,
     vec_batch,
-    inv_sqrtm_SPD,
-    InvSqrtmSPD
 )
 from ..functions.stiefel import (
     StiefelProjectionPolar,
@@ -42,7 +40,11 @@ class SPDLogEuclideanParametrization(nn.Module):
         """
         super().__init__()
         self.use_autograd = use_autograd
-        self.expmSymmetric = (lambda data: expm_symmetric(data)[0]) if self.use_autograd else ExpmSymmetric.apply
+        self.expmSymmetric = (
+            (lambda data: expm_symmetric(data)[0])
+            if self.use_autograd
+            else ExpmSymmetric.apply
+        )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -96,7 +98,11 @@ class StiefelProjectionPolarParametrization(nn.Module):
         """
         super().__init__()
         self.use_autograd = use_autograd
-        self.projectionStiefel = stiefel_projection_polar if self.use_autograd else StiefelProjectionPolar.apply
+        self.projectionStiefel = (
+            stiefel_projection_polar
+            if self.use_autograd
+            else StiefelProjectionPolar.apply
+        )
 
     def forward(self, weight: torch.Tensor) -> torch.Tensor:
         """
@@ -150,7 +156,9 @@ class StiefelProjectionQRParametrization(nn.Module):
         """
         super().__init__()
         self.use_autograd = use_autograd
-        self.projectionStiefel = stiefel_projection_qr if self.use_autograd else StiefelProjectionQR.apply
+        self.projectionStiefel = (
+            stiefel_projection_qr if self.use_autograd else StiefelProjectionQR.apply
+        )
 
     def forward(self, weight: torch.Tensor) -> torch.Tensor:
         """
@@ -197,7 +205,8 @@ class BiMap(nn.Module):
         n_in: int,
         n_out: int,
         parametrized: bool = True,
-        parametrization: type[nn.Module] | Callable = StiefelProjectionQRParametrization,
+        parametrization: type[nn.Module]
+        | Callable = StiefelProjectionQRParametrization,
         parametrization_options: dict | None = None,
         init_method: Callable = _init_weights_stiefel,
         init_options: dict | None = None,
@@ -284,14 +293,14 @@ class BiMap(nn.Module):
                 )
 
         if self.parametrized:
-            if isinstance(self.parametrization, type) and issubclass(self.parametrization, nn.Module):
+            if isinstance(self.parametrization, type) and issubclass(
+                self.parametrization, nn.Module
+            ):
                 if self.parametrization_options is None:
-                    self.parametrization_options = {'use_autograd': self.use_autograd}
+                    self.parametrization_options = {"use_autograd": self.use_autograd}
 
                 register_parametrization(
-                    self,
-                    "weight",
-                    self.parametrization(**self.parametrization_options)
+                    self, "weight", self.parametrization(**self.parametrization_options)
                 )
             elif self.parametrization is parametrizations.orthogonal:
                 if self.parametrization_options is None:
@@ -301,7 +310,7 @@ class BiMap(nn.Module):
                         module=self, name="weight", **self.parametrization_options
                     )
             else:
-                 raise TypeError(
+                raise TypeError(
                     f"parametrization must be a nn.Module class or parametrization.orthogonal "
                     f"got {type(self.parametrization)}"
                 )
@@ -383,7 +392,11 @@ class ReEig(nn.Module):
         self.use_autograd = use_autograd
         self.dim = dim
 
-        self.reeig_fun = (lambda data, eps: eigh_relu(data, eps)[0]) if self.use_autograd else EighReLu.apply
+        self.reeig_fun = (
+            (lambda data, eps: eigh_relu(data, eps)[0])
+            if self.use_autograd
+            else EighReLu.apply
+        )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -439,7 +452,9 @@ class LogEig(nn.Module):
         """
         super().__init__()
         self.use_autograd = use_autograd
-        self.logmSPD = (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
+        self.logmSPD = (
+            (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
+        )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -559,5 +574,3 @@ class Vech(nn.Module):
             Batch of vech matrices
         """
         return VechBatch.apply(data)
-
-
