@@ -65,6 +65,7 @@ class VecBatch(Function):
     """
     Vectorize a batch of matrices along last two dimensions
     """
+
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
@@ -165,6 +166,7 @@ class VechBatch(Function):
     """
     Half vectorize a batch of symmetric matrices along last two dimensions
     """
+
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
@@ -387,6 +389,7 @@ class SqrtmSPD(Function):
     Matrix square root of a batch of SPD matrices
     (relies on eigenvalue decomposition)
     """
+
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
@@ -437,7 +440,9 @@ class SqrtmSPD(Function):
 # ------------------------------
 # SPD matrix inverse square root
 # ------------------------------
-def inv_sqrtm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def inv_sqrtm_SPD(
+    data: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Matrix logarithm of a batch of SPD matrices
 
@@ -467,6 +472,7 @@ class InvSqrtmSPD(Function):
     Matrix inverse square root of a batch of SPD matrices
     (relies on eigenvalue decomposition)
     """
+
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
@@ -518,7 +524,9 @@ class InvSqrtmSPD(Function):
 # ----------------
 # SPD matrix power
 # ----------------
-def powm_SPD(data: torch.Tensor, exponent: torch.float) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def powm_SPD(
+    data: torch.Tensor, exponent: float | torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Matrix power of a batch of SPD matrices
 
@@ -526,7 +534,7 @@ def powm_SPD(data: torch.Tensor, exponent: torch.float) -> tuple[torch.Tensor, t
     ----------
     data : torch.Tensor of shape (..., n_features, n_features)
         Batch of SPD matrices
-    
+
     exponent : torch.float
         Power exponent
 
@@ -551,8 +559,11 @@ class PowmSPD(Function):
     Matrix power of a batch of SPD matrices
     (relies on eigenvalue decomposition)
     """
+
     @staticmethod
-    def forward(ctx, data: torch.Tensor, exponent: torch.float) -> torch.Tensor:
+    def forward(
+        ctx, data: torch.Tensor, exponent: float | torch.Tensor
+    ) -> torch.Tensor:
         """
         Forward pass of the matrix power of a batch of SPD matrices
 
@@ -577,7 +588,7 @@ class PowmSPD(Function):
         return powm_data
 
     @staticmethod
-    def backward(ctx, grad_output : torch.Tensor) -> tuple[torch.Tensor, torch.float]:
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Backward pass of the matrix power of a batch of SPD matrices
 
@@ -603,7 +614,10 @@ class PowmSPD(Function):
         exponent_deriv_fun = lambda x: torch.pow(x, exponent) * torch.log(x)
         return (
             eigh_operation_grad(grad_output, eigvals, eigvecs, pow_fun, pow_deriv),
-            (grad_output @ eigh_operation(eigvals, eigvecs, exponent_deriv_fun)).diagonal(offset=0, dim1=-1, dim2=-2).sum().reshape(exponent.shape)
+            (grad_output @ eigh_operation(eigvals, eigvecs, exponent_deriv_fun))
+            .diagonal(offset=0, dim1=-1, dim2=-2)
+            .sum()
+            .reshape(exponent.shape),
         )
 
 
@@ -639,6 +653,7 @@ class LogmSPD(Function):
     Matrix logarithm of a batch of SPD matrices
     (relies on eigenvalue decomposition)
     """
+
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
@@ -689,7 +704,9 @@ class LogmSPD(Function):
 # ----------------------------
 # Symmetric matrix exponential
 # ----------------------------
-def expm_symmetric(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def expm_symmetric(
+    data: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Matrix exponential of a batch of symmetric matrices
 
@@ -718,6 +735,7 @@ class ExpmSymmetric(Function):
     Matrix exponential of a batch of symmetric matrices
     (relies on eigenvalue decomposition)
     """
+
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
@@ -765,7 +783,9 @@ class ExpmSymmetric(Function):
 # -----------------------------------------------------
 # ReLu activation function on eigenvalues of SPD matrix
 # -----------------------------------------------------
-def eigh_relu(data: torch.Tensor, eps: float) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def eigh_relu(
+    data: torch.Tensor, eps: float
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     ReLu activation function on the eigenvalues of SPD matrices
 
@@ -797,6 +817,7 @@ class EighReLu(Function):
     """
     ReLu activation function on the eigenvalues of SPD matrices
     """
+
     @staticmethod
     def forward(ctx, data: torch.Tensor, eps: float) -> torch.Tensor:
         """
@@ -818,7 +839,7 @@ class EighReLu(Function):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices with rectified eigenvalues
         """
-        data_transformed, eigvals, eigvecs = eigh_relu(data,eps)
+        data_transformed, eigvals, eigvecs = eigh_relu(data, eps)
         ctx.save_for_backward(eigvals, eigvecs)
         ctx.eps = eps
         return data_transformed
@@ -880,6 +901,7 @@ class CongruenceSPD(Function):
     """
     Congruence of a batch of SPD matrices with an SPD matrix
     """
+
     @staticmethod
     def forward(ctx, data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
         """
@@ -926,13 +948,15 @@ class CongruenceSPD(Function):
             Gradient of the loss with respect to the SPD matrix used for congruence
         """
         data, matrix = ctx.saved_tensors
-        #return matrix @ grad_output @ matrix, torch.sum(
+        # return matrix @ grad_output @ matrix, torch.sum(
         #    2 * symmetrize(grad_output @ matrix @ data), dim=tuple(range(data.ndim - 2))
-        #)
+        # )
         return (
             matrix @ grad_output @ matrix,
-            2 * symmetrize( torch.einsum('...ik,kl,...lj->ij', grad_output, matrix, data) )
+            2
+            * symmetrize(torch.einsum("...ik,kl,...lj->ij", grad_output, matrix, data)),
         )
+
 
 def whitening(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
     """
@@ -959,6 +983,7 @@ class Whitening(Function):
     """
     Whitening of a batch of SPD matrices with an SPD matrix
     """
+
     @staticmethod
     def forward(ctx, data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
         """
@@ -1007,12 +1032,12 @@ class Whitening(Function):
         """
         data, eigvals_matrix, eigvecs_matrix, inv_sqrtm_matrix = ctx.saved_tensors
         grad_input_data = inv_sqrtm_matrix @ grad_output @ inv_sqrtm_matrix
-        #syl_right = -torch.sum(
+        # syl_right = -torch.sum(
         #    2 * symmetrize(grad_input_data @ data @ inv_sqrtm_matrix),
         #    dim=tuple(range(data.ndim - 2)),
-        #)
+        # )
         syl_right = -2 * symmetrize(
-            torch.einsum('...ik,...kl,lj->ij', grad_input_data, data, inv_sqrtm_matrix)
+            torch.einsum("...ik,...kl,lj->ij", grad_input_data, data, inv_sqrtm_matrix)
         )
         grad_input_matrix = solve_sylvester_SPD(
             torch.sqrt(eigvals_matrix), eigvecs_matrix, syl_right
@@ -1048,6 +1073,7 @@ class CongruenceRectangular(Function):
     """
     Congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
     """
+
     @staticmethod
     def forward(ctx, data: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
         """
@@ -1096,10 +1122,8 @@ class CongruenceRectangular(Function):
         """
         data, weight = ctx.saved_tensors
         grad_input_data = weight @ grad_output @ weight.transpose(-1, -2)
-        #grad_input_W = 2 * torch.sum(
+        # grad_input_W = 2 * torch.sum(
         #    grad_output @ W @ data, dim=tuple(range(data.ndim - 2))
-        #)
-        grad_input_W = 2 * torch.einsum('...ik,kl,...lj->ij', data, weight, grad_output)
+        # )
+        grad_input_W = 2 * torch.einsum("...ik,kl,...lj->ij", data, weight, grad_output)
         return grad_input_data, grad_input_W
-
-

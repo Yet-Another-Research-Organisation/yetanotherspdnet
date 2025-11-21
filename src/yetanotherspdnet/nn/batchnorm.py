@@ -1,34 +1,238 @@
+from collections.abc import Callable
+
 import torch
+from torch.autograd import Function
 from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
 
-from ..functions.spd_geometries import (
-    ArithmeticMean,
-    GeometricArithmeticHarmonicMean,
-    GeometricMean,
-    HarmonicMean,
-    LogEuclideanMean,
-    adaptive_update_arithmetic,
-    adaptive_update_geometric,
-    adaptive_update_geometric_arithmetic_harmonic,
-    adaptive_update_harmonic,
-    adaptive_update_logEuclidean,
-    arithmetic_mean,
-    geometric_arithmetic_harmonic_mean,
-    geometric_mean,
-    harmonic_mean,
-    logEuclidean_mean,
-)
+#from ..functions.spd_geometries import (
+#    ArithmeticMean,
+#    GeometricArithmeticHarmonicMean,
+#    GeometricMean,
+#    HarmonicMean,
+#    LogEuclideanMean,
+#    adaptive_update_arithmetic,
+#    adaptive_update_geometric,
+#    adaptive_update_geometric_arithmetic_harmonic,
+#    adaptive_update_harmonic,
+#    adaptive_update_logEuclidean,
+#    arithmetic_mean,
+#    geometric_arithmetic_harmonic_mean,
+#    geometric_mean,
+#    harmonic_mean,
+#    logEuclidean_mean,
+#)
 from ..functions.spd_linalg import (
     CongruenceSPD,
     Whitening,
     congruence_SPD,
     whitening,
 )
+
+from ..functions.spd_geometries.affine_invariant import affine_invariant_mean, AffineInvariantMean, affine_invariant_geodesic 
+
 from .base import SPDLogEuclideanParametrization
 
 
+
+
 class BatchNormSPDMean(nn.Module):
+    def __init__(
+        self,
+        n_features: int,
+        mean_type: str = "affine_invariant",
+        mean_options: dict | None = None,
+        adaptive_mean_type: str = "affine_invariant",
+        mometum: float = 0.01,
+        use_autograd: bool = False,
+        device: torch.device = torch.device("cpu"),
+        dtype: torch.dtype = torch.float64,
+    ) -> None:
+        """
+        Batch normalization layer for SPDnet relying on a SPD mean
+
+        Parameters
+        ----------
+        n_features : int
+            Number of features
+
+        mean_type : str, optional
+            Choice of SPD mean. Default is "affine_invariant".
+            Choices are: "affine_invariant", "log_Euclidean",
+            "arithmetic", "harmonic", "geometric_arithmetic_harmonic"
+
+        mean_options : dict | None, optional
+            Options for the SPD mean computation.
+            For affine-invariant mean, one can typically set {'n_iterations': 5}.
+            Currently, for others, no options available.
+            Default is None
+
+        adaptive_mean_type : str, optional
+            Choice of adaptive mean update. Default is "affine_invariant".
+            Choices are: "affine_invariant", "log_Euclidean",
+            "arithmetic", "harmonic", "geometric_arithmetic_harmonic"
+
+        momentum : float, optional
+            Momentum for running mean update.
+            Default is 0.01
+
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula.
+            Default is False
+
+        device: torch.device, optional
+            Device on which to store the parameters.
+            Default is torch.device("cpu")
+
+        dtype : torch.dtype, optional
+            Data type of the layer.
+            Default is torch.float64
+        """
+        super.__init__()
+
+        self.n_features = n_features
+        self.use_autograd = use_autograd
+        self.device = device
+        self.dtype = dtype
+
+        # deal with mean_type
+        self.mean_type = mean_type
+        self.mean_options = mean_options
+        self._init_mean()
+
+        # deal with adaptive_mean_type
+        self.adaptive_mean_type = adaptive_mean_type
+        self.momentum = momentum
+        self._init_adaptive_mean()
+
+        # bias parameter 
+        self.Covbias = torch.nn.Parameter(
+            torch.zeros(n_features, n_features, dtype=self.dtype, device=self.device)
+        )
+        register_parametrization(self, "Covbias", SPDLogEuclideanParametrization())
+        # normalize and add bias functions
+        self.normalize = whitening if self.use_autograd else Whitening.apply
+        self.add_bias = congruence_SPD if self.use_autograd else CongruenceSPD.apply
+        # set running parameters
+        self.running_param = torch.eye(n_features, dtype=self.dtype, device=self.device)
+        self.get_running_mean = lambda x: x
+
+    def _init_mean(self) -> None:
+        """
+        Auxiliary function to select mean function
+        """
+        assert self.mean_type in [
+            "affine_invariant",
+            "log_Euclidean",
+            "arithmetic",
+            "harmonic",
+            "geometric_arithmetic_harmonic",
+        ], (
+            f"formula must be in ['affine_invariant', 'log_Euclidean', "
+            f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic'],"
+            f"got {self.mean_type}"
+        )
+
+        if self.mean_type == "affine_invariant":
+            if "n_iterations" in self.mean_options:
+                if self.use_autograd:
+                    self.mean_fun = lambda data: affine_invariant_mean(data, self.mean_options["n_iterations"])
+                else:
+                    self.mean_fun = lambda data: AffineInvariantMean(data, self.mean_options["n_iterations"])
+            else:
+                self.mean_fun = affine_invariant_mean if self.use_autograd else AffineInvariantMean
+        else:
+            raise ValueError("not implemented yet")
+
+    def _init_adaptive_mean(self) -> None:
+        """
+        Auxiliary function to select adaptive mean update function
+        """
+        assert self.adaptive_mean_type in [
+            "affine_invariant",
+            "log_Euclidean",
+            "arithmetic",
+            "harmonic",
+            "geometric_arithmetic_harmonic",
+        ], (
+            f"formula must be in ['affine_invariant', 'log_Euclidean', "
+            f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic'],"
+            f"got {self.adaptive_mean_type}"
+        )
+
+        if self.adaptive_mean_type == "affine_invariant":
+            self.adaptive_fun = affine_invariant_geodesic
+        else:
+            raise ValueError("not implemented yet")
+
+
+    def forward(self, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the BatchNormSPDMean layer
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Batch of transformed (normalized then biased) SPD matrices
+        """
+        if self.training:
+            mean_param = self.mean_fun(data)
+            with torch.no_grad():
+                self.running_param = self.adaptive_fun(
+                    self.running_param, mean_param, self.momentum
+                )
+        else:
+            # training over, use overall mean learnt on all batches
+            mean_param = self.running_param
+
+        # get mean from mean parameters
+        mean = self.get_running_mean(mean_param)
+
+        # Normalize data and add bias
+        data_normalized = self.normalize(data, mean)
+        data_transformed = self.add_bias(data_normalized, self.Covbias)
+
+        return data_transformed
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return (
+            f"BatchNormSPDMean(n_features={self.n_features}, "
+            f"mean_type={self.mean_type}, mean_options={self.mean_options}, "
+            f"adaptive_mean_type={self.adaptive_mean_type}, momentum={self.momentum}, "
+            f"use_autograd={self.use_autograd}, device={self.device}, "
+            f"dtype={self.dtype})"
+        )
+
+    def __str__(self) -> str:
+        """
+        String representation of the layer
+
+        Returns
+        -------
+        str
+            String representation of the layer
+        """
+        return self.__repr__()
+
+
+
+
+
+class BatchNormSPDMean_old(nn.Module):
     def __init__(
         self,
         n_features: int,

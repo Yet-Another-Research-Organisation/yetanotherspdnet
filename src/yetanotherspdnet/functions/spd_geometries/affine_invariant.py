@@ -11,18 +11,58 @@ from ..spd_linalg import (
 from .kullback_leibler import arithmetic_mean
 
 
-# --------------
-# Geometric mean
-# --------------
-class GeometricMeanIteration(Function):
+# ---------------------
+# Affine_invariant mean
+# ---------------------
+def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
     """
-    One iteration of the fixed-point algorithm computing the geometric mean
+    Affine-invariant (geometric) mean computed with fixed-point algorithm
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices. The mean is computed along ... axes
+
+    n_iterations : int
+        Number of iterations to perform to estimate the geometric mean, by default 5
+
+    Returns
+    -------
+    mean : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+    """
+    if data.ndim == 2:
+        return data
+    n_features = data.shape[-1]
+    mean = torch.eye(
+        n_features, dtype=data.dtype, device=data.device
+    )  # initialize with identity to ensure correct manual backpropagation
+    for _ in range(n_iterations):
+        # sqrtm and inverse sqrtm of mean
+        eigvals_mean, eigvecs_mean = torch.linalg.eigh(mean)
+        mean_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, torch.sqrt)
+        inv_sqrt = lambda x: 1 / torch.sqrt(x)
+        mean_inv_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, inv_sqrt)
+        # transform data
+        transformed_data = mean_inv_sqrtm @ data @ mean_inv_sqrtm
+        # compute descent direction
+        logm_transformed_data, _, _ = logm_SPD(transformed_data)
+        logm_mean = arithmetic_mean(logm_transformed_data)
+        # compute new iterate
+        expm_logm_mean, _, _ = expm_symmetric(logm_mean)
+        mean = mean_sqrtm @ expm_logm_mean @ mean_sqrtm
+    return mean
+
+
+class AffineInvariantMeanIteration(Function):
+    """
+    One iteration of the fixed-point algorithm computing the affine-invariant (geometric) mean
     """
 
     @staticmethod
     def forward(ctx, mean_iterate: torch.Tensor, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of one iteration of the fixed-point algorithm for the geometric mean
+        Forward pass of one iteration of the fixed-point algorithm for the affine-invariant (geometric) mean
 
         Parameters
         ----------
@@ -30,7 +70,7 @@ class GeometricMeanIteration(Function):
             Context object to retrieve tensors saved during the forward pass
 
         mean_iterate : torch.Tensor of shape (n_features, n_features)
-            Current iterate of the geometric mean
+            Current iterate of the affine-invariant mean
 
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices. The mean is computed along ... axes
@@ -38,9 +78,8 @@ class GeometricMeanIteration(Function):
         Returns
         -------
         mean_iterate_new : torch.Tensor of shape (n_features, n_features)
-            New iterate of the geometric mean
+            New iterate of the affine-invariant mean
         """
-        ctx.shape = data.shape
         eigvals_mean_iterate, eigvecs_mean_iterate = torch.linalg.eigh(mean_iterate)
         mean_iterate_sqrtm = eigh_operation(
             eigvals_mean_iterate, eigvecs_mean_iterate, torch.sqrt
@@ -59,6 +98,7 @@ class GeometricMeanIteration(Function):
         log_mean = arithmetic_mean(log_transformed_data)
         eigvals_log_mean, eigvecs_log_mean = torch.linalg.eigh(log_mean)
         exp_log_mean = eigh_operation(eigvals_log_mean, eigvecs_log_mean, torch.exp)
+        ctx.shape = data.shape
         ctx.save_for_backward(
             eigvals_mean_iterate,
             eigvecs_mean_iterate,
@@ -76,7 +116,7 @@ class GeometricMeanIteration(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of one iteration of the fixed-point algorithm for the geometric mean
+        Backward pass of one iteration of the fixed-point algorithm for the affine-invariant (geometric) mean
 
         Parameters
         ----------
@@ -84,12 +124,12 @@ class GeometricMeanIteration(Function):
             Context object to retrieve tensors saved during the forward pass
 
         grad_output : torch.Tensor of shape (nfeatures, nfeatures)
-            Gradient of the loss with respect to the new iterate of the geometric mean
+            Gradient of the loss with respect to the new iterate of the affine-invariant mean
 
         Returns
         -------
         grad_input_mean : torch.Tensor of shape (nfeatures, nfeatures)
-            Gradient of the loss with respect to the current iterate of the geometric mean
+            Gradient of the loss with respect to the current iterate of the affine-invariant mean
 
         grad_input_data : torch.Tensor of shape (..., n_features, n_features)
             Gradient of the loss with respect to the data at the current iterate
@@ -150,9 +190,9 @@ class GeometricMeanIteration(Function):
         )
 
 
-def GeometricMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
+def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
     """
-    Geometric mean computed with fixed-point algorithm
+    Affine-invariant (geometric) mean computed with fixed-point algorithm
 
     Parameters
     ----------
@@ -166,55 +206,22 @@ def GeometricMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
     Returns
     -------
     mean : torch.Tensor of shape (n_features, n_features)
-        Geometric mean
+        SPD matrix
     """
+    if data.ndim == 2:
+        return data
     n_features = data.shape[-1]
     mean = torch.eye(n_features, dtype=data.dtype, device=data.device)
     for _ in range(n_iterations):
-        mean = GeometricMeanIteration.apply(mean, data)
+        mean = AffineInvariantMeanIteration.apply(mean, data)
     return mean
 
 
-def geometric_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
-    """
-    Geometric mean computed with fixed-point algorithm
-
-    Parameters
-    ----------
-    data : torch.Tensor of shape (..., n_features, n_features)
-        Batch of SPD matrices. The mean is computed along ... axes
-
-    n_iterations : int
-        Number of iterations to perform to estimate the geometric mean, by default 10
-
-    Returns
-    -------
-    mean : torch.Tensor of shape (n_features, n_features)
-        Geometric mean
-    """
-    n_features = data.shape[-1]
-    mean = torch.eye(
-        n_features, dtype=data.dtype, device=data.device
-    )  # initialize with identity to ensure correct manual backpropagation
-    for _ in range(n_iterations):
-        # sqrtm and inverse sqrtm of mean
-        eigvals_mean, eigvecs_mean = torch.linalg.eigh(mean)
-        mean_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, torch.sqrt)
-        inv_sqrt = lambda x: 1 / torch.sqrt(x)
-        mean_inv_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, inv_sqrt)
-        # transform data
-        transformed_data = mean_inv_sqrtm @ data @ mean_inv_sqrtm
-        # compute descent direction
-        logm_transformed_data = logm_SPD(transformed_data)
-        logm_mean = arithmetic_mean(logm_transformed_data)
-        # compute new iterate
-        expm_logm_mean = expm_symmetric(logm_mean)
-        mean = mean_sqrtm @ expm_logm_mean @ mean_sqrtm
-    return mean
-
-
-def adaptive_update_geometric(
-    point1: torch.Tensor, point2: torch.Tensor, t: int
+# --------------------------
+# Affine-invariant geodesics
+# --------------------------
+def affine_invariant_geodesic(
+    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
     """
     Path for adaptive geometric mean computation:
@@ -228,7 +235,7 @@ def adaptive_update_geometric(
     point2 : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
 
-    t : int
+    t : float | torch.Tensor
         parameter on the path, should be in [0,1]
 
     Returns
