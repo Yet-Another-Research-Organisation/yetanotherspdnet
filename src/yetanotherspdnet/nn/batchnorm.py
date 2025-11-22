@@ -17,6 +17,12 @@ from ..functions.spd_geometries.affine_invariant import (
     affine_invariant_geodesic,
 )
 
+from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
+    LogEuclideanMean,
+    log_euclidean_geodesic,
+    log_euclidean_mean,
+)
+
 from .base import SPDLogEuclideanParametrization
 
 
@@ -42,7 +48,7 @@ class BatchNormSPDMean(nn.Module):
 
         mean_type : str, optional
             Choice of SPD mean. Default is "affine_invariant".
-            Choices are: "affine_invariant", "log_Euclidean",
+            Choices are: "affine_invariant", "log_euclidean",
             "arithmetic", "harmonic", "geometric_arithmetic_harmonic"
 
         mean_options : dict | None, optional
@@ -108,12 +114,12 @@ class BatchNormSPDMean(nn.Module):
         """
         assert self.mean_type in [
             "affine_invariant",
-            "log_Euclidean",
+            "log_euclidean",
             "arithmetic",
             "harmonic",
             "geometric_arithmetic_harmonic",
         ], (
-            f"formula must be in ['affine_invariant', 'log_Euclidean', "
+            f"formula must be in ['affine_invariant', 'log_euclidean', "
             f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic'],"
             f"got {self.mean_type}"
         )
@@ -134,6 +140,10 @@ class BatchNormSPDMean(nn.Module):
                 self.mean_fun = (
                     affine_invariant_mean if self.use_autograd else AffineInvariantMean
                 )
+        elif self.mean_type == "log_euclidean":
+            self.mean_fun = (
+                log_euclidean_mean if self.use_autograd else LogEuclideanMean
+            )
         else:
             raise ValueError("not implemented yet")
 
@@ -143,18 +153,20 @@ class BatchNormSPDMean(nn.Module):
         """
         assert self.adaptive_mean_type in [
             "affine_invariant",
-            "log_Euclidean",
+            "log_euclidean",
             "arithmetic",
             "harmonic",
             "geometric_arithmetic_harmonic",
         ], (
-            f"formula must be in ['affine_invariant', 'log_Euclidean', "
+            f"formula must be in ['affine_invariant', 'log_euclidean', "
             f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic'],"
             f"got {self.adaptive_mean_type}"
         )
 
         if self.adaptive_mean_type == "affine_invariant":
             self.adaptive_fun = affine_invariant_geodesic
+        elif self.adaptive_mean_type == "log_euclidean":
+            self.adaptive_fun = log_euclidean_geodesic
         else:
             raise ValueError("not implemented yet")
 

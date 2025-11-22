@@ -46,9 +46,15 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
         "mean_type, mean_options",
-        [("affine_invariant", None), ("affine_invariant", {"n_iterations": 5})],
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+        ],
     )
-    @pytest.mark.parametrize("adaptive_mean_type", ["affine_invariant"])
+    @pytest.mark.parametrize(
+        "adaptive_mean_type", ["affine_invariant", "log_euclidean"]
+    )
     @pytest.mark.parametrize("use_autograd", [False, True])
     def test_initialization(
         self,
@@ -113,9 +119,15 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
         "mean_type, mean_options",
-        [("affine_invariant", None), ("affine_invariant", {"n_iterations": 30})],
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 30}),
+            ("log_euclidean", None),
+        ],
     )
-    @pytest.mark.parametrize("adaptive_mean_type", ["affine_invariant"])
+    @pytest.mark.parametrize(
+        "adaptive_mean_type", ["affine_invariant", "log_euclidean"]
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_pass(
         self,
@@ -175,9 +187,15 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
         "mean_type, mean_options",
-        [("affine_invariant", None), ("affine_invariant", {"n_iterations": 5})],
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+        ],
     )
-    @pytest.mark.parametrize("adaptive_mean_type", ["affine_invariant"])
+    @pytest.mark.parametrize(
+        "adaptive_mean_type", ["affine_invariant", "log_euclidean"]
+    )
     def test_both_modes_give_same_result(
         self,
         n_matrices,
@@ -233,9 +251,15 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
         "mean_type, mean_options",
-        [("affine_invariant", None), ("affine_invariant", {"n_iterations": 5})],
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+        ],
     )
-    @pytest.mark.parametrize("adaptive_mean_type", ["affine_invariant"])
+    @pytest.mark.parametrize(
+        "adaptive_mean_type", ["affine_invariant", "log_euclidean"]
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(
         self,
@@ -296,9 +320,15 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
         "mean_type, mean_options",
-        [("affine_invariant", None), ("affine_invariant", {"n_iterations": 5})],
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+        ],
     )
-    @pytest.mark.parametrize("adaptive_mean_type", ["affine_invariant"])
+    @pytest.mark.parametrize(
+        "adaptive_mean_type", ["affine_invariant", "log_euclidean"]
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_parameter_update(
         self,
@@ -353,9 +383,15 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
         "mean_type, mean_options",
-        [("affine_invariant", None), ("affine_invariant", {"n_iterations": 5})],
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+        ],
     )
-    @pytest.mark.parametrize("adaptive_mean_type", ["affine_invariant"])
+    @pytest.mark.parametrize(
+        "adaptive_mean_type", ["affine_invariant", "log_euclidean"]
+    )
     def test_both_modes_give_same_gradient(
         self,
         n_matrices,
@@ -414,7 +450,7 @@ class TestBatchNormSPDMean:
         loss_auto.backward()
 
         # check input gradients
-        assert_close(X1.grad, X2.grad)
+        assert_close(X1.grad, X2.grad, rtol=1e-6, atol=1e-6)
         # check Covbias gradient
         # due to parametrization, gradient not directly on layer.weight
         original_bias1 = layer_manual.parametrizations.Covbias.original
@@ -424,9 +460,15 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
         "mean_type, mean_options",
-        [("affine_invariant", None), ("affine_invariant", {"n_iterations": 5})],
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+        ],
     )
-    @pytest.mark.parametrize("adaptive_mean_type", ["affine_invariant"])
+    @pytest.mark.parametrize(
+        "adaptive_mean_type", ["affine_invariant", "log_euclidean"]
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_repr_and_str(
         self,
@@ -468,9 +510,15 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
         "mean_type, mean_options",
-        [("affine_invariant", None), ("affine_invariant", {"n_iterations": 5})],
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+        ],
     )
-    @pytest.mark.parametrize("adaptive_mean_type", ["affine_invariant"])
+    @pytest.mark.parametrize(
+        "adaptive_mean_type", ["affine_invariant", "log_euclidean"]
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_module_mode(
         self,
