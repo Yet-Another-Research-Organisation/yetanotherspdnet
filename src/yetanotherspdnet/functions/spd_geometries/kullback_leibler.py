@@ -75,11 +75,11 @@ def arithmetic_mean(data: torch.Tensor) -> torch.Tensor:
     return symmetrize(torch.real(torch.mean(data, dim=tuple(range(data.ndim - 2)))))
 
 
-def adaptive_update_arithmetic(
-    point1: torch.Tensor, point2: torch.Tensor, t: int
+def euclidean_geodesic(
+    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
     """
-    Euclidean path for adaptive arithmetic mean computation:
+    Euclidean geodesic:
     (1-t)*point1 + t*point2
 
     Parameters
@@ -90,7 +90,7 @@ def adaptive_update_arithmetic(
     point2 : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
 
-    t : int
+    t : float | torch.Tensor
         parameter on the path, should be in [0,1]
 
     Returns

@@ -11,6 +11,44 @@ from ..spd_linalg import (
 from .kullback_leibler import arithmetic_mean
 
 
+# --------------------------
+# Affine-invariant geodesics
+# --------------------------
+def affine_invariant_geodesic(
+    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
+) -> torch.Tensor:
+    """
+    Affine-invariant geodesic:
+    point1^{1/2} ( point1^{-1/2} point2 point1^{-1/2} )^t point1^{1/2}
+
+    Parameters
+    ----------
+    point1 : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    point2 : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    t : float | torch.Tensor
+        parameter on the path, should be in [0,1]
+
+    Returns
+    -------
+    point : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+    """
+    eigvals1, eigvecs1 = torch.linalg.eigh(point1)
+    point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
+    inv_sqrt = lambda x: 1 / torch.sqrt(x)
+    point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
+    eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
+        point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
+    )
+    pow_t = lambda x: torch.pow(x, t)
+    middle_term1 = eigh_operation(eigvals_middle_term1, eigvecs_middle_term1, pow_t)
+    return point1_sqrtm @ middle_term1 @ point1_sqrtm
+
+
 # ---------------------
 # Affine_invariant mean
 # ---------------------
@@ -215,41 +253,3 @@ def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tens
     for _ in range(n_iterations):
         mean = AffineInvariantMeanIteration.apply(mean, data)
     return mean
-
-
-# --------------------------
-# Affine-invariant geodesics
-# --------------------------
-def affine_invariant_geodesic(
-    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
-) -> torch.Tensor:
-    """
-    Path for adaptive geometric mean computation:
-    point1^{1/2} ( point1^{-1/2} point2 point1^{-1/2} )^t point1^{1/2}
-
-    Parameters
-    ----------
-    point1 : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
-
-    point2 : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
-
-    t : float | torch.Tensor
-        parameter on the path, should be in [0,1]
-
-    Returns
-    -------
-    point : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
-    """
-    eigvals1, eigvecs1 = torch.linalg.eigh(point1)
-    point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-    inv_sqrt = lambda x: 1 / torch.sqrt(x)
-    point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
-    eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
-        point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
-    )
-    pow_t = lambda x: torch.pow(x, t)
-    middle_term1 = eigh_operation(eigvals_middle_term1, eigvecs_middle_term1, pow_t)
-    return point1_sqrtm @ middle_term1 @ point1_sqrtm

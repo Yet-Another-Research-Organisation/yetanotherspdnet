@@ -3,7 +3,7 @@ import torch
 from torch.testing import assert_close
 
 import yetanotherspdnet.functions.spd_linalg as spd_linalg
-import yetanotherspdnet.functions.spd_geometries.affine_invariant as affine_invariant
+import yetanotherspdnet.functions.spd_geometries.log_euclidean as log_euclidean
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler import arithmetic_mean
 from yetanotherspdnet.random.spd import random_SPD, random_DPD
 from yetanotherspdnet.random.stiefel import random_stiefel
@@ -28,9 +28,9 @@ def generator(device):
     return generator
 
 
-class TestAffineInvariantGeodesic:
+class TestLogEuclideanGeodesic:
     """
-    Test suite for affine-invariant geodesics
+    Test suite for log-Euclidean geodesics
     """
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
@@ -52,7 +52,7 @@ class TestAffineInvariantGeodesic:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point = affine_invariant.affine_invariant_geodesic(point1, point2, t)
+        point = log_euclidean.log_euclidean_geodesic(point1, point2, t)
 
         assert point.shape == point1.shape
         assert point.device == point1.device
@@ -76,8 +76,8 @@ class TestAffineInvariantGeodesic:
         point1 = points[0]
         point2 = points[1]
 
-        point1_ = affine_invariant.affine_invariant_geodesic(point1, point2, 0)
-        point2_ = affine_invariant.affine_invariant_geodesic(point1, point2, 1)
+        point1_ = log_euclidean.log_euclidean_geodesic(point1, point2, 0)
+        point2_ = log_euclidean.log_euclidean_geodesic(point1, point2, 1)
 
         assert_close(point1_, point1)
         assert_close(point2_, point2)
@@ -100,8 +100,8 @@ class TestAffineInvariantGeodesic:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_12 = affine_invariant.affine_invariant_geodesic(point1, point2, t)
-        point_21 = affine_invariant.affine_invariant_geodesic(point2, point1, 1 - t)
+        point_12 = log_euclidean.log_euclidean_geodesic(point1, point2, t)
+        point_21 = log_euclidean.log_euclidean_geodesic(point2, point1, 1 - t)
 
         assert_close(point_12, point_21)
 
@@ -122,7 +122,7 @@ class TestAffineInvariantGeodesic:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_ = affine_invariant.affine_invariant_geodesic(point, point, t)
+        point_ = log_euclidean.log_euclidean_geodesic(point, point, t)
 
         assert_close(point_, point)
 
@@ -147,7 +147,7 @@ class TestAffineInvariantGeodesic:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point = affine_invariant.affine_invariant_geodesic(point1, point2, t)
+        point = log_euclidean.log_euclidean_geodesic(point1, point2, t)
 
         expected_diag = torch.pow(diagvals1, 1 - t) * torch.pow(diagvals2, t)
         expected = torch.diag(expected_diag)
@@ -187,7 +187,7 @@ class TestAffineInvariantGeodesic:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point = affine_invariant.affine_invariant_geodesic(point1, point2, t)
+        point = log_euclidean.log_euclidean_geodesic(point1, point2, t)
 
         expected_diag = torch.pow(diagvals1, 1 - t) * torch.pow(diagvals2, t)
         expected = eigvecs @ torch.diag(expected_diag) @ eigvecs.transpose(-1, -2)
@@ -212,16 +212,19 @@ class TestAffineInvariantGeodesic:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_ = affine_invariant.affine_invariant_geodesic(Id, point, t)
+        point_ = log_euclidean.log_euclidean_geodesic(Id, point, t)
 
         expected = spd_linalg.powm_SPD(point, t)[0]
 
         assert_close(point_, expected)
 
 
-class TestAffineInvariantMean:
+# ------------------
+# Log-Euclidean mean
+# ------------------
+class TestLogEuclideanMean:
     """
-    Test suite for the computation of the affine-invariant mean
+    Test suite for log-Euclidean mean
     """
 
     @pytest.mark.parametrize("n_matrices", [1, 30])
@@ -243,8 +246,8 @@ class TestAffineInvariantMean:
             generator=generator,
         )
         # compute mean
-        G_auto = affine_invariant.affine_invariant_mean(X, n_iterations=20)
-        G_manual = affine_invariant.AffineInvariantMean(X, n_iterations=20)
+        G_auto = log_euclidean.log_euclidean_mean(X)
+        G_manual = log_euclidean.LogEuclideanMean(X)
 
         assert G_auto.shape == (n_features, n_features)
         assert G_auto.device == X.device
@@ -259,12 +262,7 @@ class TestAffineInvariantMean:
         assert_close(G_auto, G_manual)
 
     @pytest.mark.parametrize("n_matrices, n_features", [(30, 100)])
-    # to check that it is stable with respect to iterations.
-    # In this case, the algorithm is initialized with the solution
-    @pytest.mark.parametrize("n_iterations", [1, 10])
-    def test_identity_matrix(
-        self, n_matrices, n_features, n_iterations, device, dtype, generator
-    ):
+    def test_identity_matrix(self, n_matrices, n_features, device, dtype, generator):
         """
         Test that the mean of n_matrices whose mean is the identity matrix is the identity matrix
         """
@@ -283,21 +281,18 @@ class TestAffineInvariantMean:
         tangent_vectors = 0.1 * tangent_vectors
         data = spd_linalg.expm_symmetric(tangent_vectors)[0]
 
-        G_auto = affine_invariant.affine_invariant_mean(data, n_iterations)
-        G_manual = affine_invariant.AffineInvariantMean(data, n_iterations)
+        G_auto = log_euclidean.log_euclidean_mean(data)
+        G_manual = log_euclidean.LogEuclideanMean(data)
 
         assert_close(G_auto, Id)
         assert_close(G_manual, Id)
 
     @pytest.mark.parametrize("n_matrices, n_features, cond", [(30, 100, 1000)])
-    # to check that it is stable with respect to iterations.
-    # In this case, only one iteration should be needed
-    @pytest.mark.parametrize("n_iterations", [1, 10])
     def test_diagonal_matrices(
-        self, n_matrices, n_features, cond, n_iterations, device, dtype, generator
+        self, n_matrices, n_features, cond, device, dtype, generator
     ):
         """
-        Test that the affine-invariant mean of diagonal matrices is the diagonal matrix
+        Test that the log-Euclidean mean of diagonal matrices is the diagonal matrix
         whose elements are the geometric means of the diagonal matrices elements
         """
         diagmats = random_DPD(
@@ -310,8 +305,8 @@ class TestAffineInvariantMean:
         )
         diagvals = diagmats.diagonal(dim1=-1, dim2=-2)
 
-        G_auto = affine_invariant.affine_invariant_mean(diagmats, n_iterations)
-        G_manual = affine_invariant.AffineInvariantMean(diagmats, n_iterations)
+        G_auto = log_euclidean.log_euclidean_mean(diagmats)
+        G_manual = log_euclidean.LogEuclideanMean(diagmats)
 
         expected = torch.diag_embed(
             torch.pow(torch.prod(diagvals, dim=0), 1 / n_matrices)
@@ -321,14 +316,11 @@ class TestAffineInvariantMean:
         assert_close(G_manual, expected)
 
     @pytest.mark.parametrize("n_matrices, n_features, cond", [(30, 100, 1000)])
-    # to check that it is stable with respect to iterations.
-    # In this case, only one iteration should be needed
-    @pytest.mark.parametrize("n_iterations", [1, 10])
     def test_commuting_matrices(
-        self, n_matrices, n_features, cond, n_iterations, device, dtype, generator
+        self, n_matrices, n_features, cond, device, dtype, generator
     ):
         """
-        Test that the affine-invariant mean of commuting matrices works well
+        Test that the log-Euclidean mean of commuting matrices works well
         """
         diagmats = random_DPD(
             n_features,
@@ -351,8 +343,8 @@ class TestAffineInvariantMean:
 
         data = eigvecs @ diagmats @ eigvecs.transpose(-2, -1)
 
-        G_auto = affine_invariant.affine_invariant_mean(data, n_iterations)
-        G_manual = affine_invariant.AffineInvariantMean(data, n_iterations)
+        G_auto = log_euclidean.log_euclidean_mean(data)
+        G_manual = log_euclidean.LogEuclideanMean(data)
 
         expected_eigvals = torch.diag_embed(
             torch.pow(torch.prod(diagvals, dim=0), 1 / n_matrices)
@@ -365,7 +357,7 @@ class TestAffineInvariantMean:
     @pytest.mark.parametrize("n_matrices, n_features, cond", [(30, 100, 1000)])
     def test_general_case(self, n_matrices, n_features, cond, device, dtype, generator):
         """
-        Test affine-invariant mean in general case with exact solution
+        Test log-Euclidean mean in general case with exact solution
         """
         # generate a random mean
         G_true = random_SPD(
@@ -376,7 +368,6 @@ class TestAffineInvariantMean:
             dtype=dtype,
             generator=generator,
         )
-        G_true_sqrtm, _, _ = spd_linalg.sqrtm_SPD(G_true)
         # generate random tangent vectors whose arithmetic mean is exactly zero
         tangent_vectors = spd_linalg.symmetrize(
             torch.randn(
@@ -390,12 +381,12 @@ class TestAffineInvariantMean:
         # multiply by some scale so that we don't get too far
         tangent_vectors = 0.1 * tangent_vectors
         # get SPD matrices from tangent vectors
-        data = (
-            G_true_sqrtm @ spd_linalg.expm_symmetric(tangent_vectors)[0] @ G_true_sqrtm
-        )
+        data = spd_linalg.expm_symmetric(
+            tangent_vectors + spd_linalg.logm_SPD(G_true)[0]
+        )[0]
 
-        G_auto = affine_invariant.affine_invariant_mean(data, n_iterations=20)
-        G_manual = affine_invariant.AffineInvariantMean(data, n_iterations=20)
+        G_auto = log_euclidean.log_euclidean_mean(data)
+        G_manual = log_euclidean.LogEuclideanMean(data)
 
         assert_close(G_auto, G_true)
         assert_close(G_manual, G_true)
@@ -421,8 +412,8 @@ class TestAffineInvariantMean:
         X_auto = X.clone().detach()
         X_auto.requires_grad = True
 
-        G_manual = affine_invariant.AffineInvariantMean(X_manual, n_iterations=10)
-        G_auto = affine_invariant.affine_invariant_mean(X_auto, n_iterations=10)
+        G_auto = log_euclidean.log_euclidean_mean(X_auto)
+        G_manual = log_euclidean.LogEuclideanMean(X_manual)
 
         loss_manual = torch.norm(G_manual)
         loss_manual.backward()
