@@ -219,6 +219,248 @@ class TestAffineInvariantGeodesic:
         assert_close(point_, expected)
 
 
+class TestAffineInvariantMean2points:
+    """
+    Test suite for the computation of the affine-invariant mean of 2 points,
+    which is known in closed form
+    """
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward_shape(self, n_features, cond, device, dtype, generator):
+        """
+        Test that forward yields correct shape and structure (SPD matrix)
+        """
+        # generate 2 SPD matrices
+        X = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # compute mean
+        G_auto = affine_invariant.affine_invariant_mean_2points(X[0], X[1])
+        G_manual = affine_invariant.AffineInvariantMean2Points.apply(X[0], X[1])
+
+        assert G_auto.shape == (n_features, n_features)
+        assert G_auto.device == X.device
+        assert G_auto.dtype == X.dtype
+        assert is_spd(G_auto)
+
+        assert G_manual.shape == (n_features, n_features)
+        assert G_manual.device == X.device
+        assert G_manual.dtype == X.dtype
+        assert is_spd(G_manual)
+
+        assert_close(G_auto, G_manual)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_diagonal_matrices(self, n_features, cond, device, dtype, generator):
+        """
+        Test that the affine-invariant mean of diagonal matrices is the diagonal matrix
+        whose elements are the geometric means of the diagonal matrices elements
+        """
+        diagmats = random_DPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals = diagmats.diagonal(dim1=-1, dim2=-2)
+
+        G_auto = affine_invariant.affine_invariant_mean_2points(
+            diagmats[0], diagmats[1]
+        )
+        G_manual = affine_invariant.AffineInvariantMean2Points.apply(
+            diagmats[0], diagmats[1]
+        )
+
+        expected = torch.diag_embed(torch.pow(torch.prod(diagvals, dim=0), 1 / 2))
+
+        assert_close(G_auto, expected)
+        assert_close(G_manual, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_commuting_matrices(self, n_features, cond, device, dtype, generator):
+        """
+        Test that the affine-invariant mean of commuting matrices works well
+        """
+        diagmats = random_DPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals = diagmats.diagonal(dim1=-1, dim2=-2)
+
+        eigvecs = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        data = eigvecs @ diagmats @ eigvecs.transpose(-2, -1)
+
+        G_auto = affine_invariant.affine_invariant_mean_2points(data[0], data[1])
+        G_manual = affine_invariant.AffineInvariantMean2Points.apply(data[0], data[1])
+
+        expected_eigvals = torch.diag_embed(
+            torch.pow(torch.prod(diagvals, dim=0), 1 / 2)
+        )
+        expected = eigvecs @ expected_eigvals @ eigvecs.transpose(-2, -1)
+
+        assert_close(G_auto, expected)
+        assert_close(G_manual, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_general_case(self, n_features, cond, device, dtype, generator):
+        """
+        Test affine-invariant mean in general case with exact solution
+        """
+        # generate a random mean
+        G_true = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G_true_sqrtm, _, _ = spd_linalg.sqrtm_SPD(G_true)
+        # generate random tangent vectors whose arithmetic mean is exactly zero
+        tangent_vectors = spd_linalg.symmetrize(
+            torch.randn(
+                (2, n_features, n_features),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        tangent_vectors = tangent_vectors - arithmetic_mean(tangent_vectors)
+        # multiply by some scale so that we don't get too far
+        tangent_vectors = 0.1 * tangent_vectors
+        # get SPD matrices from tangent vectors
+        data = (
+            G_true_sqrtm @ spd_linalg.expm_symmetric(tangent_vectors)[0] @ G_true_sqrtm
+        )
+
+        G_auto = affine_invariant.affine_invariant_mean_2points(data[0], data[1])
+        G_manual = affine_invariant.AffineInvariantMean2Points.apply(data[0], data[1])
+
+        assert_close(G_auto, G_true)
+        assert_close(G_manual, G_true)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_features, cond, device, dtype, generator):
+        """
+        Test that backward works and that automatic and manual differentiation yield same results
+        """
+        # generate some random SPD matrices
+        X = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X1 = X[0]
+        X2 = X[1]
+
+        X1_manual = X1.clone().detach()
+        X1_manual.requires_grad = True
+        X1_auto = X1.clone().detach()
+        X1_auto.requires_grad = True
+
+        X2_manual = X2.clone().detach()
+        X2_manual.requires_grad = True
+        X2_auto = X2.clone().detach()
+        X2_auto.requires_grad = True
+
+        G_manual = affine_invariant.AffineInvariantMean2Points.apply(
+            X1_manual, X2_manual
+        )
+        G_auto = affine_invariant.affine_invariant_mean_2points(X1_auto, X2_auto)
+
+        loss_manual = torch.norm(G_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(G_auto)
+        loss_auto.backward()
+
+        assert X1_manual.grad is not None
+        assert X1_auto.grad is not None
+        assert torch.isfinite(X1_manual.grad).all()
+        assert torch.isfinite(X1_auto.grad).all()
+        assert is_symmetric(X1_manual.grad)
+        assert is_symmetric(X1_auto.grad)
+        assert_close(X1_manual.grad, X1_auto.grad)
+
+        assert X2_manual.grad is not None
+        assert X2_auto.grad is not None
+        assert torch.isfinite(X2_manual.grad).all()
+        assert torch.isfinite(X2_auto.grad).all()
+        assert is_symmetric(X2_manual.grad)
+        assert is_symmetric(X2_auto.grad)
+        assert_close(X2_manual.grad, X2_auto.grad)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_adequation_geodesic_fixedpoint(
+        self, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that we get the same result with affine_invariant_geodesic and affine-invariant mean
+        """
+        G_true = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G_true_sqrtm, _, _ = spd_linalg.sqrtm_SPD(G_true)
+        # generate random tangent vectors whose arithmetic mean is exactly zero
+        tangent_vectors = spd_linalg.symmetrize(
+            torch.randn(
+                (2, n_features, n_features),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        tangent_vectors = tangent_vectors - arithmetic_mean(tangent_vectors)
+        # multiply by some scale so that we don't get too far
+        tangent_vectors = 0.1 * tangent_vectors
+        # get SPD matrices from tangent vectors
+        data = (
+            G_true_sqrtm @ spd_linalg.expm_symmetric(tangent_vectors)[0] @ G_true_sqrtm
+        )
+
+        G_geodesic = affine_invariant.affine_invariant_geodesic(data[0], data[1], t=0.5)
+        G_2points_auto = affine_invariant.affine_invariant_mean_2points(
+            data[0], data[1]
+        )
+        G_fixedpoint_auto = affine_invariant.affine_invariant_mean(
+            data, n_iterations=20
+        )
+
+        print(G_geodesic)
+        print(G_2points_auto)
+        print(G_fixedpoint_auto)
+        print(G_true)
+
+        assert_close(G_geodesic, G_2points_auto)
+        assert_close(G_fixedpoint_auto, G_geodesic)
+
+
 class TestAffineInvariantMean:
     """
     Test suite for the computation of the affine-invariant mean
