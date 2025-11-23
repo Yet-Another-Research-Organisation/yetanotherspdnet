@@ -196,11 +196,11 @@ class TestEuclideanGeodesic:
         assert_close(point, expected)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_zero_to_general(self, n_features, cond, device, dtype, generator):
+    def test_identity_to_general(self, n_features, cond, device, dtype, generator):
         """
         Test that the geodesic between the zero matrix and a random SPD works as expected
         """
-        Zero = torch.zeros((n_features, n_features), device=device, dtype=dtype)
+        Id = torch.eye(n_features, device=device, dtype=dtype)
         # random point
         point = random_SPD(
             n_features,
@@ -213,9 +213,9 @@ class TestEuclideanGeodesic:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_ = kullback_leibler.euclidean_geodesic(Zero, point, t)
+        point_ = kullback_leibler.euclidean_geodesic(Id, point, t)
 
-        expected = t * point
+        expected = (1 - t) * Id + t * point
 
         assert_close(point_, expected)
 

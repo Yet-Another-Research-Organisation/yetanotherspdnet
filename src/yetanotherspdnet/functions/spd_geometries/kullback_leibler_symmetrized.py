@@ -18,12 +18,12 @@ from .kullback_leibler import (
 # ----------------------------------------------------------------------------
 # Curve for adaptive update of geometric mean of arithmetic and harmonic means
 # ----------------------------------------------------------------------------
-def adaptive_update_geometric_arithmetic_harmonic(
+def geometric_arithmetic_harmonic_adaptive_update(
     point1_arithmetic: torch.Tensor,
     point1_harmonic: torch.Tensor,
     point2_arithmetic: torch.Tensor,
     point2_harmonic: torch.Tensor,
-    t: float,
+    t: float | torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Path for adaptive computation of the geometric mean of arithmetic and harmonic means:
@@ -43,7 +43,7 @@ def adaptive_update_geometric_arithmetic_harmonic(
     point2_harmonic : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
 
-    t : int
+    t : float | torch.Tensor
         parameter on the path, should be in [0,1]
 
     Returns
@@ -64,6 +64,33 @@ def adaptive_update_geometric_arithmetic_harmonic(
         point_arithmetic,
         point_harmonic,
     )
+
+
+def geometric_euclidean_harmonic_curve(
+    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
+) -> torch.Tensor:
+    """
+    Curve corresponding to the geometric mean of the Euclidean geodesic and the harmonic curve
+
+    Parameters
+    ----------
+    point1 : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    point2 : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    t : float | torch.Tensor
+        parameter on the path, should be in [0,1]
+
+    Returns
+    -------
+    point : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+    """
+    point_euclidean = euclidean_geodesic(point1, point2, t)
+    point_harmonic = harmonic_curve(point1, point2, t)
+    return affine_invariant_mean_2points(point_euclidean, point_harmonic)
 
 
 # -----------------------------------------------
@@ -94,6 +121,8 @@ def geometric_arithmetic_harmonic_mean(
     mean_harmonic : torch.Tensor of shape (n_features, n_features)
         Harmonic mean (for adptative mean update reasons)
     """
+    if data.ndim == 2:
+        return data, data, data
     mean_arithmetic = arithmetic_mean(data)
     mean_harmonic = harmonic_mean(data)
     mean = affine_invariant_mean_2points(mean_arithmetic, mean_harmonic)
@@ -122,6 +151,8 @@ def GeometricArithmeticHarmonicMean(
     mean_harmonic : torch.Tensor of shape (n_features, n_features)
         Harmonic mean (for adptative mean update reasons)
     """
+    if data.ndim == 2:
+        return data, data, data
     mean_arithmetic = ArithmeticMean.apply(data)
     mean_harmonic = HarmonicMean.apply(data)
     mean = AffineInvariantMean2Points.apply(mean_arithmetic, mean_harmonic)

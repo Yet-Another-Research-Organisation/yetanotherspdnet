@@ -206,8 +206,9 @@ class TestBatchNormSPDMean:
             G_output = affine_invariant_mean(output, n_iterations=30)
             assert_close(G_output, layer.Covbias @ layer.Covbias)
         elif mean_type == "log_euclidean":
+            # This actually does not work. This is normal.
+            # It is due to the way normalization is done.
             G_output = log_euclidean_mean(output)
-            print(G_output)
             assert_close(G_output, layer.Covbias @ layer.Covbias)
         elif mean_type == "arithmetic":
             G_output = arithmetic_mean(output)

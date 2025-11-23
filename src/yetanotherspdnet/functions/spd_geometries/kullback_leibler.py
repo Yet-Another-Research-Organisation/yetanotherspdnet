@@ -159,6 +159,8 @@ def harmonic_mean(data: torch.Tensor) -> torch.Tensor:
     mean : torch.Tensor of shape (n_features, n_features)
         Harmonic mean
     """
+    if data.ndim == 2:
+        return data
     inv_data = torch.cholesky_inverse(torch.linalg.cholesky(data))
     inv_mean = arithmetic_mean(inv_data)
     return torch.cholesky_inverse(torch.linalg.cholesky(inv_mean))
@@ -188,6 +190,8 @@ class HarmonicMean(Function):
             Harmonic mean
         """
         ctx.shape = data.shape
+        if data.ndim == 2:
+            return data
         inv_data = torch.cholesky_inverse(torch.linalg.cholesky(data))
         inv_mean = arithmetic_mean(inv_data)
         mean = torch.cholesky_inverse(torch.linalg.cholesky(inv_mean))
@@ -213,6 +217,8 @@ class HarmonicMean(Function):
             Gradient of the loss with respect to the input batch of SPD matrices
         """
         shape = ctx.shape
+        if len(shape) == 2:
+            return symmetrize(grad_output)
         n_matrices = torch.prod(torch.tensor(shape[:-2]))
         inv_data, mean = ctx.saved_tensors
         tmp = symmetrize(mean @ grad_output @ mean)
