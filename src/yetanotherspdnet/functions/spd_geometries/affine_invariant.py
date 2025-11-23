@@ -184,9 +184,6 @@ class AffineInvariantMean2Points(Function):
 # ---------------------
 # Affine-invariant mean
 # ---------------------
-# TODO: Actually, this algorithm appears quite unstable..... I could see it diverge for
-# some random data when it clearly should not have. Probably actually need to do something
-# about the step-size and/or replace expm_symmetric by more stable retraction
 def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
     """
     Affine-invariant (geometric) mean computed with fixed-point algorithm
@@ -210,7 +207,7 @@ def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Te
     mean = torch.eye(
         n_features, dtype=data.dtype, device=data.device
     )  # initialize with identity to ensure correct manual backpropagation
-    for _ in range(n_iterations):
+    for it in range(n_iterations):
         # sqrtm and inverse sqrtm of mean
         eigvals_mean, eigvecs_mean = torch.linalg.eigh(mean)
         mean_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, torch.sqrt)
@@ -221,8 +218,10 @@ def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Te
         # compute descent direction
         logm_transformed_data = logm_SPD(transformed_data)[0]
         logm_mean = arithmetic_mean(logm_transformed_data)
+        # step-size to stabilize algorithm
+        stepsize = 0.95**it
         # compute new iterate
-        expm_logm_mean = expm_symmetric(logm_mean)[0]
+        expm_logm_mean = expm_symmetric(stepsize * logm_mean)[0]
         mean = mean_sqrtm @ expm_logm_mean @ mean_sqrtm
     return mean
 
@@ -233,7 +232,9 @@ class AffineInvariantMeanIteration(Function):
     """
 
     @staticmethod
-    def forward(ctx, mean_iterate: torch.Tensor, data: torch.Tensor) -> torch.Tensor:
+    def forward(
+        ctx, mean_iterate: torch.Tensor, data: torch.Tensor, stepsize: float
+    ) -> torch.Tensor:
         """
         Forward pass of one iteration of the fixed-point algorithm for the affine-invariant (geometric) mean
 
@@ -247,6 +248,9 @@ class AffineInvariantMeanIteration(Function):
 
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices. The mean is computed along ... axes
+
+        stepsize : float
+            step-size to stabilize the fixed-point algorithm
 
         Returns
         -------
@@ -268,7 +272,7 @@ class AffineInvariantMeanIteration(Function):
         log_transformed_data = eigh_operation(
             eigvals_transformed_data, eigvecs_transformed_data, torch.log
         )
-        log_mean = arithmetic_mean(log_transformed_data)
+        log_mean = stepsize * arithmetic_mean(log_transformed_data)
         eigvals_log_mean, eigvecs_log_mean = torch.linalg.eigh(log_mean)
         exp_log_mean = eigh_operation(eigvals_log_mean, eigvecs_log_mean, torch.exp)
         ctx.shape = data.shape
@@ -287,7 +291,9 @@ class AffineInvariantMeanIteration(Function):
         return mean_iterate_sqrtm @ exp_log_mean @ mean_iterate_sqrtm
 
     @staticmethod
-    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def backward(
+        ctx, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, None]:
         """
         Backward pass of one iteration of the fixed-point algorithm for the affine-invariant (geometric) mean
 
@@ -360,6 +366,7 @@ class AffineInvariantMeanIteration(Function):
             @ diff_log_data
             @ mean_iterate_inv_sqrtm
             / n_matrices,
+            None,
         )
 
 
@@ -385,6 +392,7 @@ def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tens
         return data
     n_features = data.shape[-1]
     mean = torch.eye(n_features, dtype=data.dtype, device=data.device)
-    for _ in range(n_iterations):
-        mean = AffineInvariantMeanIteration.apply(mean, data)
+    for it in range(n_iterations):
+        stepsize = 0.95**it
+        mean = AffineInvariantMeanIteration.apply(mean, data, stepsize)
     return mean

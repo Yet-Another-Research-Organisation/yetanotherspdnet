@@ -418,30 +418,13 @@ class TestAffineInvariantMean2points:
         """
         Test that we get the same result with affine_invariant_geodesic and affine-invariant mean
         """
-        G_true = random_SPD(
+        data = random_SPD(
             n_features,
-            n_matrices=1,
+            n_matrices=2,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
-        )
-        G_true_sqrtm, _, _ = spd_linalg.sqrtm_SPD(G_true)
-        # generate random tangent vectors whose arithmetic mean is exactly zero
-        tangent_vectors = spd_linalg.symmetrize(
-            torch.randn(
-                (2, n_features, n_features),
-                device=device,
-                dtype=dtype,
-                generator=generator,
-            )
-        )
-        tangent_vectors = tangent_vectors - arithmetic_mean(tangent_vectors)
-        # multiply by some scale so that we don't get too far
-        tangent_vectors = 0.1 * tangent_vectors
-        # get SPD matrices from tangent vectors
-        data = (
-            G_true_sqrtm @ spd_linalg.expm_symmetric(tangent_vectors)[0] @ G_true_sqrtm
         )
 
         G_geodesic = affine_invariant.affine_invariant_geodesic(data[0], data[1], t=0.5)
@@ -449,13 +432,8 @@ class TestAffineInvariantMean2points:
             data[0], data[1]
         )
         G_fixedpoint_auto = affine_invariant.affine_invariant_mean(
-            data, n_iterations=20
+            data, n_iterations=30
         )
-
-        print(G_geodesic)
-        print(G_2points_auto)
-        print(G_fixedpoint_auto)
-        print(G_true)
 
         assert_close(G_geodesic, G_2points_auto)
         assert_close(G_fixedpoint_auto, G_geodesic)
@@ -663,8 +641,8 @@ class TestAffineInvariantMean:
         X_auto = X.clone().detach()
         X_auto.requires_grad = True
 
-        G_manual = affine_invariant.AffineInvariantMean(X_manual, n_iterations=10)
-        G_auto = affine_invariant.affine_invariant_mean(X_auto, n_iterations=10)
+        G_manual = affine_invariant.AffineInvariantMean(X_manual, n_iterations=20)
+        G_auto = affine_invariant.affine_invariant_mean(X_auto, n_iterations=20)
 
         loss_manual = torch.norm(G_manual)
         loss_manual.backward()
