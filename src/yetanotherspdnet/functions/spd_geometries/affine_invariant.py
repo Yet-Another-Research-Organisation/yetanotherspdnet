@@ -220,6 +220,7 @@ def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Te
         logm_mean = arithmetic_mean(logm_transformed_data)
         # step-size to stabilize algorithm
         stepsize = 0.95**it
+        # stepsize = 1
         # compute new iterate
         expm_logm_mean = expm_symmetric(stepsize * logm_mean)[0]
         mean = mean_sqrtm @ expm_logm_mean @ mean_sqrtm
@@ -276,6 +277,7 @@ class AffineInvariantMeanIteration(Function):
         eigvals_log_mean, eigvecs_log_mean = torch.linalg.eigh(log_mean)
         exp_log_mean = eigh_operation(eigvals_log_mean, eigvecs_log_mean, torch.exp)
         ctx.shape = data.shape
+        ctx.stepsize = stepsize
         ctx.save_for_backward(
             eigvals_mean_iterate,
             eigvecs_mean_iterate,
@@ -314,6 +316,7 @@ class AffineInvariantMeanIteration(Function):
             Gradient of the loss with respect to the data at the current iterate
         """
         shape = ctx.shape
+        stepsize = ctx.stepsize
         n_matrices = torch.prod(torch.tensor(shape[:-2]))
         (
             eigvals_mean_iterate,
@@ -344,7 +347,7 @@ class AffineInvariantMeanIteration(Function):
             inv,
         )
 
-        syl2_right = data @ mean_iterate_inv_sqrtm @ diff_log_data
+        syl2_right = stepsize * data @ mean_iterate_inv_sqrtm @ diff_log_data
         syl2_right = arithmetic_mean(syl2_right + syl2_right.transpose(-1, -2))
         syl2_sol = solve_sylvester_SPD(
             1 / torch.sqrt(eigvals_mean_iterate), eigvecs_mean_iterate, syl2_right
@@ -363,7 +366,7 @@ class AffineInvariantMeanIteration(Function):
         return (
             syl1_sol - mean_iterate_inv @ syl2_sol @ mean_iterate_inv,
             mean_iterate_inv_sqrtm
-            @ diff_log_data
+            @ (stepsize * diff_log_data)
             @ mean_iterate_inv_sqrtm
             / n_matrices,
             None,
@@ -394,5 +397,6 @@ def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tens
     mean = torch.eye(n_features, dtype=data.dtype, device=data.device)
     for it in range(n_iterations):
         stepsize = 0.95**it
+        # stepsize = 1
         mean = AffineInvariantMeanIteration.apply(mean, data, stepsize)
     return mean

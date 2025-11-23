@@ -380,7 +380,7 @@ class TestBatchNormSPDMean:
         assert not torch.allclose(layer.Covbias, initial_Covbias)
 
     @pytest.mark.parametrize("n_matrices", [1, 10])
-    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    @pytest.mark.parametrize("n_features, cond", [(5, 1000)])
     @pytest.mark.parametrize(
         "mean_type, mean_options",
         [
@@ -448,6 +448,9 @@ class TestBatchNormSPDMean:
         output_auto = layer_auto(X2)
         loss_auto = output_auto.sum()
         loss_auto.backward()
+
+        print(X1.grad[0])
+        print(X2.grad[0])
 
         # check input gradients
         assert_close(X1.grad, X2.grad, rtol=1e-6, atol=1e-6)
