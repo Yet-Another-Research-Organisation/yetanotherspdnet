@@ -12,8 +12,8 @@ from ..functions.spd_linalg import (
 )
 
 from ..functions.spd_geometries.affine_invariant import (
-    affine_invariant_mean,
     AffineInvariantMean,
+    affine_invariant_mean,
     affine_invariant_geodesic,
 )
 
@@ -21,6 +21,15 @@ from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
     LogEuclideanMean,
     log_euclidean_geodesic,
     log_euclidean_mean,
+)
+
+from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
+    ArithmeticMean,
+    HarmonicMean,
+    arithmetic_mean,
+    harmonic_mean,
+    euclidean_geodesic,
+    harmonic_curve,
 )
 
 from .base import SPDLogEuclideanParametrization
@@ -144,6 +153,12 @@ class BatchNormSPDMean(nn.Module):
             self.mean_fun = (
                 log_euclidean_mean if self.use_autograd else LogEuclideanMean
             )
+        elif self.mean_type == "arithmetic":
+            self.mean_fun = (
+                arithmetic_mean if self.use_autograd else ArithmeticMean.apply
+            )
+        elif self.mean_type == "harmonic":
+            self.mean_fun = harmonic_mean if self.use_autograd else HarmonicMean.apply
         else:
             raise ValueError("not implemented yet")
 
@@ -167,6 +182,10 @@ class BatchNormSPDMean(nn.Module):
             self.adaptive_fun = affine_invariant_geodesic
         elif self.adaptive_mean_type == "log_euclidean":
             self.adaptive_fun = log_euclidean_geodesic
+        elif self.adaptive_mean_type == "arithmetic":
+            self.adaptive_fun = euclidean_geodesic
+        elif self.adaptive_mean_type == "harmonic":
+            self.adaptive_fun = harmonic_curve
         else:
             raise ValueError("not implemented yet")
 
