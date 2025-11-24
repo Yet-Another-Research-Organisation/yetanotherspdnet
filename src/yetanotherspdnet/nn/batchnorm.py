@@ -4,6 +4,13 @@ from torch.nn.utils.parametrize import register_parametrization
 
 from functools import partial
 
+from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
+    GeometricArithmeticHarmonicMean,
+    geometric_arithmetic_harmonic_adaptive_update,
+    geometric_arithmetic_harmonic_mean,
+    geometric_euclidean_harmonic_curve,
+)
+
 from ..functions.spd_linalg import (
     CongruenceSPD,
     Whitening,
@@ -95,14 +102,12 @@ class BatchNormSPDMean(nn.Module):
         self.device = device
         self.dtype = dtype
 
-        # deal with mean_type
+        # deal with mean_type and adaptive_mean_type
         self.mean_type = mean_type
         self.mean_options = mean_options
-        self._init_mean()
-
-        # deal with adaptive_mean_type
         self.adaptive_mean_type = adaptive_mean_type
         self.momentum = momentum
+        self._init_mean()
         self._init_adaptive_mean()
 
         # bias parameter
@@ -114,8 +119,7 @@ class BatchNormSPDMean(nn.Module):
         self.normalize = whitening if self.use_autograd else Whitening.apply
         self.add_bias = congruence_SPD if self.use_autograd else CongruenceSPD.apply
         # set running parameters
-        self.running_param = torch.eye(n_features, dtype=self.dtype, device=self.device)
-        self.get_running_mean = lambda x: x
+        self._init_running_parameters()
 
     def _init_mean(self) -> None:
         """
@@ -159,6 +163,22 @@ class BatchNormSPDMean(nn.Module):
             )
         elif self.mean_type == "harmonic":
             self.mean_fun = harmonic_mean if self.use_autograd else HarmonicMean.apply
+        elif self.mean_type == "geometric_arithmetic_harmonic":
+            if self.adaptive_mean_type == "geometric_arithmetic_harmonic_exact":
+                self.mean_fun = (
+                    geometric_arithmetic_harmonic_mean
+                    if self.use_autograd
+                    else GeometricArithmeticHarmonicMean
+                )
+            else:
+                if self.use_autograd:
+                    self.mean_fun = lambda data: geometric_arithmetic_harmonic_mean(
+                        data
+                    )[0]
+                else:
+                    self.mean_fun = lambda data: GeometricArithmeticHarmonicMean(data)[
+                        0
+                    ]
         else:
             raise ValueError("not implemented yet")
 
@@ -171,10 +191,11 @@ class BatchNormSPDMean(nn.Module):
             "log_euclidean",
             "arithmetic",
             "harmonic",
-            "geometric_arithmetic_harmonic",
+            "geometric_arithmetic_harmonic_exact",
+            "geometric_arithmetic_harmonic_simple",
         ], (
             f"formula must be in ['affine_invariant', 'log_euclidean', "
-            f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic'],"
+            f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic_exact', geometric_arithmetic_harmonic_simple],"
             f"got {self.adaptive_mean_type}"
         )
 
@@ -186,8 +207,46 @@ class BatchNormSPDMean(nn.Module):
             self.adaptive_fun = euclidean_geodesic
         elif self.adaptive_mean_type == "harmonic":
             self.adaptive_fun = harmonic_curve
+        elif self.adaptive_mean_type == "geometric_arithmetic_harmonic_exact":
+            if not self.mean_type == "geometric_arithmetic_harmonic":
+                raise ValueError(
+                    "adaptive_mean_type can be 'geometric_arithmetic_harmonic_exact' only with mean_type 'geometric_arithmetic_harmonic'"
+                )
+            self.adaptive_fun = (
+                lambda running_param,
+                mean_param,
+                momentum: geometric_arithmetic_harmonic_adaptive_update(
+                    running_param[1],
+                    running_param[2],
+                    mean_param[1],
+                    mean_param[2],
+                    momentum,
+                )
+            )
+        elif self.adaptive_mean_type == "geometric_arithmetic_harmonic_simple":
+            self.adaptive_fun = geometric_euclidean_harmonic_curve
         else:
             raise ValueError("not implemented yet")
+
+    def _init_running_parameters(self) -> None:
+        """
+        Auxiliary function to initialize running parameters
+        """
+        if (
+            self.mean_type == "geometric_arithmetic_harmonic"
+            and self.adaptive_mean_type == "geometric_arithmetic_harmonic_exact"
+        ):
+            self.running_param = (
+                torch.eye(self.n_features, dtype=self.dtype, device=self.device),
+                torch.eye(self.n_features, dtype=self.dtype, device=self.device),
+                torch.eye(self.n_features, dtype=self.dtype, device=self.device),
+            )
+            self.get_running_mean = lambda x: x[0]
+        else:
+            self.running_param = torch.eye(
+                self.n_features, dtype=self.dtype, device=self.device
+            )
+            self.get_running_mean = lambda x: x
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """

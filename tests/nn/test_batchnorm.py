@@ -56,18 +56,24 @@ class TestBatchNormSPDMean:
 
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
-        "mean_type, mean_options",
+        "mean_type, mean_options, adaptive_mean_type",
         [
-            ("affine_invariant", None),
-            ("affine_invariant", {"n_iterations": 5}),
-            ("log_euclidean", None),
-            ("arithmetic", None),
-            ("harmonic", None),
+            ("affine_invariant", None, "affine_invariant"),
+            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
+            ("log_euclidean", None, "log_euclidean"),
+            ("arithmetic", None, "arithmetic"),
+            ("harmonic", None, "harmonic"),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_simple",
+            ),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_exact",
+            ),
         ],
-    )
-    @pytest.mark.parametrize(
-        "adaptive_mean_type",
-        ["affine_invariant", "log_euclidean", "arithmetic", "harmonic"],
     )
     @pytest.mark.parametrize("use_autograd", [False, True])
     def test_initialization(
@@ -138,18 +144,24 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_matrices", [1, 10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
-        "mean_type, mean_options",
+        "mean_type, mean_options, adaptive_mean_type",
         [
-            ("affine_invariant", None),
-            ("affine_invariant", {"n_iterations": 30}),
-            ("log_euclidean", None),
-            ("arithmetic", None),
-            ("harmonic", None),
+            ("affine_invariant", None, "affine_invariant"),
+            ("affine_invariant", {"n_iterations": 30}, "affine_invariant"),
+            ("log_euclidean", None, "log_euclidean"),
+            ("arithmetic", None, "arithmetic"),
+            ("harmonic", None, "harmonic"),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_simple",
+            ),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_exact",
+            ),
         ],
-    )
-    @pytest.mark.parametrize(
-        "adaptive_mean_type",
-        ["affine_invariant", "log_euclidean", "arithmetic", "harmonic"],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_pass(
@@ -220,18 +232,24 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_matrices", [1, 10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
-        "mean_type, mean_options",
+        "mean_type, mean_options, adaptive_mean_type",
         [
-            ("affine_invariant", None),
-            ("affine_invariant", {"n_iterations": 5}),
-            ("log_euclidean", None),
-            ("arithmetic", None),
-            ("harmonic", None),
+            ("affine_invariant", None, "affine_invariant"),
+            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
+            ("log_euclidean", None, "log_euclidean"),
+            ("arithmetic", None, "arithmetic"),
+            ("harmonic", None, "harmonic"),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_simple",
+            ),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_exact",
+            ),
         ],
-    )
-    @pytest.mark.parametrize(
-        "adaptive_mean_type",
-        ["affine_invariant", "log_euclidean", "arithmetic", "harmonic"],
     )
     def test_both_modes_give_same_result(
         self,
@@ -287,18 +305,24 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_matrices", [1, 10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
-        "mean_type, mean_options",
+        "mean_type, mean_options, adaptive_mean_type",
         [
-            ("affine_invariant", None),
-            ("affine_invariant", {"n_iterations": 5}),
-            ("log_euclidean", None),
-            ("arithmetic", None),
-            ("harmonic", None),
+            ("affine_invariant", None, "affine_invariant"),
+            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
+            ("log_euclidean", None, "log_euclidean"),
+            ("arithmetic", None, "arithmetic"),
+            ("harmonic", None, "harmonic"),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_simple",
+            ),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_exact",
+            ),
         ],
-    )
-    @pytest.mark.parametrize(
-        "adaptive_mean_type",
-        ["affine_invariant", "log_euclidean", "arithmetic", "harmonic"],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(
@@ -359,18 +383,24 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_matrices", [1, 10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
-        "mean_type, mean_options",
+        "mean_type, mean_options, adaptive_mean_type",
         [
-            ("affine_invariant", None),
-            ("affine_invariant", {"n_iterations": 5}),
-            ("log_euclidean", None),
-            ("arithmetic", None),
-            ("harmonic", None),
+            ("affine_invariant", None, "affine_invariant"),
+            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
+            ("log_euclidean", None, "log_euclidean"),
+            ("arithmetic", None, "arithmetic"),
+            ("harmonic", None, "harmonic"),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_simple",
+            ),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_exact",
+            ),
         ],
-    )
-    @pytest.mark.parametrize(
-        "adaptive_mean_type",
-        ["affine_invariant", "log_euclidean", "arithmetic", "harmonic"],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_parameter_update(
@@ -425,18 +455,24 @@ class TestBatchNormSPDMean:
     @pytest.mark.parametrize("n_matrices", [1, 10])
     @pytest.mark.parametrize("n_features, cond", [(5, 1000)])
     @pytest.mark.parametrize(
-        "mean_type, mean_options",
+        "mean_type, mean_options, adaptive_mean_type",
         [
-            ("affine_invariant", None),
-            ("affine_invariant", {"n_iterations": 5}),
-            ("log_euclidean", None),
-            ("arithmetic", None),
-            ("harmonic", None),
+            ("affine_invariant", None, "affine_invariant"),
+            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
+            ("log_euclidean", None, "log_euclidean"),
+            ("arithmetic", None, "arithmetic"),
+            ("harmonic", None, "harmonic"),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_simple",
+            ),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_exact",
+            ),
         ],
-    )
-    @pytest.mark.parametrize(
-        "adaptive_mean_type",
-        ["affine_invariant", "log_euclidean", "arithmetic", "harmonic"],
     )
     def test_both_modes_give_same_gradient(
         self,
@@ -508,18 +544,24 @@ class TestBatchNormSPDMean:
 
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
-        "mean_type, mean_options",
+        "mean_type, mean_options, adaptive_mean_type",
         [
-            ("affine_invariant", None),
-            ("affine_invariant", {"n_iterations": 5}),
-            ("log_euclidean", None),
-            ("arithmetic", None),
-            ("harmonic", None),
+            ("affine_invariant", None, "affine_invariant"),
+            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
+            ("log_euclidean", None, "log_euclidean"),
+            ("arithmetic", None, "arithmetic"),
+            ("harmonic", None, "harmonic"),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_simple",
+            ),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_exact",
+            ),
         ],
-    )
-    @pytest.mark.parametrize(
-        "adaptive_mean_type",
-        ["affine_invariant", "log_euclidean", "arithmetic", "harmonic"],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_repr_and_str(
@@ -561,18 +603,24 @@ class TestBatchNormSPDMean:
 
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
-        "mean_type, mean_options",
+        "mean_type, mean_options, adaptive_mean_type",
         [
-            ("affine_invariant", None),
-            ("affine_invariant", {"n_iterations": 5}),
-            ("log_euclidean", None),
-            ("arithmetic", None),
-            ("harmonic", None),
+            ("affine_invariant", None, "affine_invariant"),
+            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
+            ("log_euclidean", None, "log_euclidean"),
+            ("arithmetic", None, "arithmetic"),
+            ("harmonic", None, "harmonic"),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_simple",
+            ),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+                "geometric_arithmetic_harmonic_exact",
+            ),
         ],
-    )
-    @pytest.mark.parametrize(
-        "adaptive_mean_type",
-        ["affine_invariant", "log_euclidean", "arithmetic", "harmonic"],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_module_mode(
