@@ -1,0 +1,819 @@
+import pytest
+import torch
+from torch.testing import assert_close
+
+import yetanotherspdnet.functions.spd_linalg as spd_linalg
+
+import yetanotherspdnet.functions.spd_geometries.kullback_leibler as kullback_leibler
+
+from yetanotherspdnet.random.spd import random_SPD, random_DPD
+from yetanotherspdnet.random.stiefel import random_stiefel
+
+from utils import is_symmetric, is_spd
+
+
+@pytest.fixture(scope="module")
+def device():
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+@pytest.fixture(scope="module")
+def dtype():
+    return torch.float64
+
+
+@pytest.fixture(scope="function")
+def generator(device):
+    generator = torch.Generator(device=device)
+    generator.manual_seed(777)
+    return generator
+
+
+class TestEuclideanGeodesic:
+    """
+    Test suite for Euclidean geodesics
+    """
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_shape(self, n_features, cond, device, dtype, generator):
+        """
+        Test that euclidean_geodesic function works and return appropriate shape
+        """
+        # generate 2 random SPD points
+        points = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        point1 = points[0]
+        point2 = points[1]
+        # generate random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point = kullback_leibler.euclidean_geodesic(point1, point2, t)
+
+        assert point.shape == point1.shape
+        assert point.device == point1.device
+        assert point.dtype == point1.dtype
+        assert is_spd(point)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_extremities(self, n_features, cond, device, dtype, generator):
+        """
+        Test that for t=0 and t=1 we get point1 and point2
+        """
+        # generate 2 random SPD points
+        points = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        point1 = points[0]
+        point2 = points[1]
+
+        point1_ = kullback_leibler.euclidean_geodesic(point1, point2, 0)
+        point2_ = kullback_leibler.euclidean_geodesic(point1, point2, 1)
+
+        assert_close(point1_, point1)
+        assert_close(point2_, point2)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_symmetry(self, n_features, cond, device, dtype, generator):
+        """
+        Test the symmetry property of the geodesic
+        """
+        points = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        point1 = points[0]
+        point2 = points[1]
+        # generate random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point_12 = kullback_leibler.euclidean_geodesic(point1, point2, t)
+        point_21 = kullback_leibler.euclidean_geodesic(point2, point1, 1 - t)
+
+        assert_close(point_12, point_21)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_identical_points(self, n_features, cond, device, dtype, generator):
+        """
+        Test that for t in [0,1], the geodesic between point and point returns point
+        """
+        # generate 1 SPD matrix
+        point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # generate random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point_ = kullback_leibler.euclidean_geodesic(point, point, t)
+
+        assert_close(point_, point)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_diagonal_matrices(self, n_features, cond, device, dtype, generator):
+        """
+        Test that geodesic between 2 diagonal matrices works as expected
+        """
+        # random diagonal
+        diag_points = random_DPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        point1 = diag_points[0]
+        diagvals1 = point1.diagonal(dim1=-1, dim2=-2)
+        point2 = diag_points[1]
+        diagvals2 = point2.diagonal(dim1=-1, dim2=-2)
+        # random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point = kullback_leibler.euclidean_geodesic(point1, point2, t)
+
+        expected_diag = (1 - t) * diagvals1 + t * diagvals2
+        expected = torch.diag(expected_diag)
+
+        assert_close(point, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_commuting_matrices(self, n_features, cond, device, dtype, generator):
+        """
+        Test that geodesic between 2 commuting matrices works as expected
+        """
+        # random diagonal
+        diag_points = random_DPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diag_point1 = diag_points[0]
+        diagvals1 = diag_point1.diagonal(dim1=-1, dim2=-2)
+        diag_point2 = diag_points[1]
+        diagvals2 = diag_point2.diagonal(dim1=-1, dim2=-2)
+        # random eigvecs
+        eigvecs = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # final points
+        point1 = eigvecs @ diag_point1 @ eigvecs.transpose(-1, -2)
+        point2 = eigvecs @ diag_point2 @ eigvecs.transpose(-1, -2)
+        # random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point = kullback_leibler.euclidean_geodesic(point1, point2, t)
+
+        expected_diag = (1 - t) * diagvals1 + t * diagvals2
+        expected = eigvecs @ torch.diag(expected_diag) @ eigvecs.transpose(-1, -2)
+
+        assert_close(point, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_identity_to_general(self, n_features, cond, device, dtype, generator):
+        """
+        Test that the geodesic between the zero matrix and a random SPD works as expected
+        """
+        Id = torch.eye(n_features, device=device, dtype=dtype)
+        # random point
+        point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point_ = kullback_leibler.euclidean_geodesic(Id, point, t)
+
+        expected = (1 - t) * Id + t * point
+
+        assert_close(point_, expected)
+
+
+class TestArithmeticMean:
+    """
+    Test suite for the arthmetic mean
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward_shape(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that forward yields correct shape and structure (i.e., SPD solution)
+        and that both affine_invariant_mean and AffineInvariantMean yield same result
+        """
+        # generate some SPD matrices
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # compute mean
+        G_auto = kullback_leibler.arithmetic_mean(X)
+        G_manual = kullback_leibler.ArithmeticMean.apply(X)
+
+        assert G_auto.shape == (n_features, n_features)
+        assert G_auto.device == X.device
+        assert G_auto.dtype == X.dtype
+        assert is_spd(G_auto)
+
+        assert G_manual.shape == (n_features, n_features)
+        assert G_manual.device == X.device
+        assert G_manual.dtype == X.dtype
+        assert is_spd(G_manual)
+
+        assert_close(G_auto, G_manual)
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(30, 100)])
+    def test_identity_matrix(self, n_matrices, n_features, device, dtype, generator):
+        """
+        Test that the mean of n_matrices whose mean is the identity matrix is the identity matrix
+        """
+        Id = torch.eye(n_features, device=device, dtype=dtype)
+        # generate random tangent vectors whose arithmetic mean is exactly zero
+        tangent_vectors_ = spd_linalg.symmetrize(
+            torch.randn(
+                (n_matrices - 1, n_features, n_features),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        tangent_vectors_last = -torch.sum(tangent_vectors_, dim=0)
+        tangent_vectors = torch.zeros((n_matrices, n_features, n_features))
+        tangent_vectors[:-1] = tangent_vectors_
+        tangent_vectors[-1] = tangent_vectors_last
+        data = Id + tangent_vectors
+
+        G_auto = kullback_leibler.arithmetic_mean(data)
+        G_manual = kullback_leibler.ArithmeticMean.apply(data)
+
+        assert_close(G_auto, Id)
+        assert_close(G_manual, Id)
+
+    @pytest.mark.parametrize("n_matrices, n_features, cond", [(30, 100, 1000)])
+    def test_diagonal_matrices(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that the mean of diagonal matrices is working
+        """
+        diagmats = random_DPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals = diagmats.diagonal(dim1=-1, dim2=-2)
+
+        G_auto = kullback_leibler.arithmetic_mean(diagmats)
+        G_manual = kullback_leibler.ArithmeticMean.apply(diagmats)
+
+        expected = torch.diag_embed(torch.mean(diagvals, dim=0))
+
+        assert_close(G_auto, expected)
+        assert_close(G_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices, n_features, cond", [(30, 100, 1000)])
+    def test_commuting_matrices(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that the mean of commuting matrices works well
+        """
+        diagmats = random_DPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals = diagmats.diagonal(dim1=-1, dim2=-2)
+
+        eigvecs = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        data = eigvecs @ diagmats @ eigvecs.transpose(-2, -1)
+
+        G_auto = kullback_leibler.arithmetic_mean(data)
+        G_manual = kullback_leibler.ArithmeticMean.apply(data)
+
+        expected_eigvals = torch.diag_embed(torch.mean(diagvals, dim=0))
+        expected = eigvecs @ expected_eigvals @ eigvecs.transpose(-2, -1)
+
+        assert_close(G_auto, expected)
+        assert_close(G_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices, n_features, cond", [(30, 100, 1000)])
+    def test_general_case(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test mean in general case with exact solution
+        """
+        # generate a random mean
+        G_true = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # generate random tangent vectors whose arithmetic mean is exactly zero
+        tangent_vectors_ = spd_linalg.symmetrize(
+            torch.randn(
+                (n_matrices - 1, n_features, n_features),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        tangent_vectors_last = -torch.sum(tangent_vectors_, dim=0)
+        tangent_vectors = torch.zeros((n_matrices, n_features, n_features))
+        tangent_vectors[:-1] = tangent_vectors_
+        tangent_vectors[-1] = tangent_vectors_last
+        # get SPD matrices from tangent vectors
+        data = G_true + tangent_vectors
+
+        G_auto = kullback_leibler.arithmetic_mean(data)
+        G_manual = kullback_leibler.ArithmeticMean.apply(data)
+
+        assert_close(G_auto, G_true)
+        assert_close(G_manual, G_true)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that backward works and that automatic and manual differentiation yield same results
+        """
+        # generate some random SPD matrices
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        G_auto = kullback_leibler.arithmetic_mean(X_auto)
+        G_manual = kullback_leibler.ArithmeticMean.apply(X_manual)
+
+        loss_manual = torch.norm(G_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(G_auto)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+
+class TestHarmonicCurve:
+    """
+    Test suite for harmonic curves
+    """
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_shape(self, n_features, cond, device, dtype, generator):
+        """
+        Test that harmonic_curve function works and return appropriate shape
+        """
+        # generate 2 random SPD points
+        points = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        point1 = points[0]
+        point2 = points[1]
+        # generate random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point = kullback_leibler.harmonic_curve(point1, point2, t)
+
+        assert point.shape == point1.shape
+        assert point.device == point1.device
+        assert point.dtype == point1.dtype
+        assert is_spd(point)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_extremities(self, n_features, cond, device, dtype, generator):
+        """
+        Test that for t=0 and t=1 we get point1 and point2
+        """
+        # generate 2 random SPD points
+        points = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        point1 = points[0]
+        point2 = points[1]
+
+        point1_ = kullback_leibler.harmonic_curve(point1, point2, 0)
+        point2_ = kullback_leibler.harmonic_curve(point1, point2, 1)
+
+        assert_close(point1_, point1)
+        assert_close(point2_, point2)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_symmetry(self, n_features, cond, device, dtype, generator):
+        """
+        Test the symmetry property of the curve
+        """
+        points = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        point1 = points[0]
+        point2 = points[1]
+        # generate random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point_12 = kullback_leibler.harmonic_curve(point1, point2, t)
+        point_21 = kullback_leibler.harmonic_curve(point2, point1, 1 - t)
+
+        assert_close(point_12, point_21)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_identical_points(self, n_features, cond, device, dtype, generator):
+        """
+        Test that for t in [0,1], the curve between point and point returns point
+        """
+        # generate 1 SPD matrix
+        point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # generate random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point_ = kullback_leibler.harmonic_curve(point, point, t)
+
+        assert_close(point_, point)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_diagonal_matrices(self, n_features, cond, device, dtype, generator):
+        """
+        Test that geodesic between 2 diagonal matrices works as expected
+        """
+        # random diagonal
+        diag_points = random_DPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        point1 = diag_points[0]
+        diagvals1 = point1.diagonal(dim1=-1, dim2=-2)
+        point2 = diag_points[1]
+        diagvals2 = point2.diagonal(dim1=-1, dim2=-2)
+        # random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point = kullback_leibler.harmonic_curve(point1, point2, t)
+
+        expected_diag = 1 / ((1 - t) * 1 / diagvals1 + t * 1 / diagvals2)
+        expected = torch.diag(expected_diag)
+
+        assert_close(point, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_commuting_matrices(self, n_features, cond, device, dtype, generator):
+        """
+        Test that curve between 2 commuting matrices works as expected
+        """
+        # random diagonal
+        diag_points = random_DPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diag_point1 = diag_points[0]
+        diagvals1 = diag_point1.diagonal(dim1=-1, dim2=-2)
+        diag_point2 = diag_points[1]
+        diagvals2 = diag_point2.diagonal(dim1=-1, dim2=-2)
+        # random eigvecs
+        eigvecs = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # final points
+        point1 = eigvecs @ diag_point1 @ eigvecs.transpose(-1, -2)
+        point2 = eigvecs @ diag_point2 @ eigvecs.transpose(-1, -2)
+        # random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point = kullback_leibler.harmonic_curve(point1, point2, t)
+
+        expected_diag = 1 / ((1 - t) * 1 / diagvals1 + t * 1 / diagvals2)
+        expected = eigvecs @ torch.diag(expected_diag) @ eigvecs.transpose(-1, -2)
+
+        assert_close(point, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_identity_to_general(self, n_features, cond, device, dtype, generator):
+        """
+        Test that the curve between the identity and a random SPD works as expected
+        """
+        Id = torch.eye(n_features, device=device, dtype=dtype)
+        # random point
+        point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        point_ = kullback_leibler.harmonic_curve(Id, point, t)
+
+        expected = torch.linalg.inv((1 - t) * Id + t * torch.linalg.inv(point))
+
+        assert_close(point_, expected)
+
+
+class TestHarmonicMean:
+    """
+    Test suite for the harmonic mean
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward_shape(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that forward yields correct shape and structure (i.e., SPD solution)
+        and that both harmonic_mean and HarmonicMean yield same result
+        """
+        # generate some SPD matrices
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # compute mean
+        G_auto = kullback_leibler.harmonic_mean(X)
+        G_manual = kullback_leibler.HarmonicMean.apply(X)
+
+        assert G_auto.shape == (n_features, n_features)
+        assert G_auto.device == X.device
+        assert G_auto.dtype == X.dtype
+        assert is_spd(G_auto)
+
+        assert G_manual.shape == (n_features, n_features)
+        assert G_manual.device == X.device
+        assert G_manual.dtype == X.dtype
+        assert is_spd(G_manual)
+
+        assert_close(G_auto, G_manual)
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(30, 100)])
+    def test_identity_matrix(self, n_matrices, n_features, device, dtype, generator):
+        """
+        Test that the mean of n_matrices whose mean is the identity matrix is the identity matrix
+        """
+        Id = torch.eye(n_features, device=device, dtype=dtype)
+        # generate random tangent vectors whose arithmetic mean is exactly zero
+        tangent_vectors = spd_linalg.symmetrize(
+            torch.randn(
+                (n_matrices, n_features, n_features),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        tangent_vectors = tangent_vectors - kullback_leibler.arithmetic_mean(
+            tangent_vectors
+        )
+        tangent_vectors = 0.1 * tangent_vectors
+        while not is_spd(Id + tangent_vectors):
+            tangent_vectors = tangent_vectors / 2
+        data = torch.linalg.inv(Id + tangent_vectors)
+
+        G_auto = kullback_leibler.harmonic_mean(data)
+        G_manual = kullback_leibler.HarmonicMean.apply(data)
+
+        assert_close(G_auto, Id)
+        assert_close(G_manual, Id)
+
+    @pytest.mark.parametrize("n_matrices, n_features, cond", [(30, 100, 1000)])
+    def test_diagonal_matrices(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that the mean of diagonal matrices is working
+        """
+        diagmats = random_DPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals = diagmats.diagonal(dim1=-1, dim2=-2)
+
+        G_auto = kullback_leibler.harmonic_mean(diagmats)
+        G_manual = kullback_leibler.HarmonicMean.apply(diagmats)
+
+        expected = torch.diag_embed(1 / torch.mean(1 / diagvals, dim=0))
+
+        assert_close(G_auto, expected)
+        assert_close(G_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices, n_features, cond", [(30, 100, 1000)])
+    def test_commuting_matrices(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that the mean of commuting matrices works well
+        """
+        diagmats = random_DPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals = diagmats.diagonal(dim1=-1, dim2=-2)
+
+        eigvecs = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        data = eigvecs @ diagmats @ eigvecs.transpose(-2, -1)
+
+        G_auto = kullback_leibler.harmonic_mean(data)
+        G_manual = kullback_leibler.HarmonicMean.apply(data)
+
+        expected_eigvals = torch.diag_embed(1 / torch.mean(1 / diagvals, dim=0))
+        expected = eigvecs @ expected_eigvals @ eigvecs.transpose(-2, -1)
+
+        assert_close(G_auto, expected)
+        assert_close(G_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices, n_features, cond", [(30, 100, 1000)])
+    def test_general_case(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test mean in general case with exact solution
+        """
+        # generate a random mean
+        G_true = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G_true_inv = torch.linalg.inv(G_true)
+        # generate random tangent vectors whose arithmetic mean is exactly zero
+        tangent_vectors = spd_linalg.symmetrize(
+            torch.randn(
+                (n_matrices, n_features, n_features),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        tangent_vectors = tangent_vectors - kullback_leibler.arithmetic_mean(
+            tangent_vectors
+        )
+        tangent_vectors = 0.1 * tangent_vectors
+        while not is_spd(G_true_inv + tangent_vectors):
+            tangent_vectors = tangent_vectors / 2
+        data = torch.linalg.inv(G_true_inv + tangent_vectors)
+
+        G_auto = kullback_leibler.harmonic_mean(data)
+        G_manual = kullback_leibler.HarmonicMean.apply(data)
+
+        assert_close(G_auto, G_true)
+        assert_close(G_manual, G_true)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that backward works and that automatic and manual differentiation yield same results
+        """
+        # generate some random SPD matrices
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        G_auto = kullback_leibler.harmonic_mean(X_auto)
+        G_manual = kullback_leibler.HarmonicMean.apply(X_manual)
+
+        loss_manual = torch.norm(G_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(G_auto)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)

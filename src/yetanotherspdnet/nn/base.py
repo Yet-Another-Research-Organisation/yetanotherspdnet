@@ -3,19 +3,200 @@ from collections.abc import Callable
 import torch
 from torch import nn
 from torch.nn.utils import parametrizations
+from torch.nn.utils.parametrize import register_parametrization
 
 from ..functions.spd_linalg import (
     CongruenceRectangular,
     EighReLu,
     ExpmSymmetric,
     LogmSPD,
+    VecBatch,
+    VechBatch,
     congruence_rectangular,
     eigh_relu,
     logm_SPD,
+    expm_symmetric,
     vec_batch,
-    vech_batch,
+)
+from ..functions.stiefel import (
+    StiefelProjectionPolar,
+    stiefel_projection_polar,
+    StiefelProjectionQR,
+    stiefel_projection_qr,
 )
 from ..random.stiefel import _init_weights_stiefel
+
+
+class SPDLogEuclideanParametrization(nn.Module):
+    def __init__(self, use_autograd: bool = False):
+        """
+        SPD parametrization using the log-Euclidean exponential mapping
+
+        Parameters
+        ----------
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False.
+        """
+        super().__init__()
+        self.use_autograd = use_autograd
+        self.expmSymmetric = (
+            (lambda data: expm_symmetric(data)[0])
+            if self.use_autograd
+            else ExpmSymmetric.apply
+        )
+
+    def forward(self, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the SPDLogEuclideanParametrization layer
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        Returns
+        -------
+        data_expm : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+        """
+        return self.expmSymmetric(data)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"SPDLogEuclideanParametrization(use_autograd={self.use_autograd})"
+
+    def __str__(self) -> str:
+        """
+        String representation of the layer
+
+        Returns
+        -------
+        str
+            String representation of the layer
+        """
+        return self.__repr__()
+
+
+class StiefelProjectionPolarParametrization(nn.Module):
+    def __init__(self, use_autograd: bool = False):
+        """
+        Stiefel parametrization using the projection based on the polar decomposition
+
+        Parameters
+        ----------
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False.
+        """
+        super().__init__()
+        self.use_autograd = use_autograd
+        self.projectionStiefel = (
+            stiefel_projection_polar
+            if self.use_autograd
+            else StiefelProjectionPolar.apply
+        )
+
+    def forward(self, weight: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the StiefelProjectionParametrization layer
+
+        Parameters
+        ----------
+        weight : torch.Tensor of shape (n_in, n_out)
+            Rectangular matrix
+
+        Returns
+        -------
+        projected_weight : torch.Tensor (n_in, n_out)
+            Orthogonal matrix
+        """
+        return self.projectionStiefel(weight)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"StiefelProjectionParametrization(use_autograd={self.use_autograd})"
+
+    def __str__(self) -> str:
+        """
+        String representation of the layer
+
+        Returns
+        -------
+        str
+            String representation of the layer
+        """
+        return self.__repr__()
+
+
+class StiefelProjectionQRParametrization(nn.Module):
+    def __init__(self, use_autograd: bool = False):
+        """
+        Stiefel parametrization using the projection based on the QR decomposition
+
+        Parameters
+        ----------
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False.
+        """
+        super().__init__()
+        self.use_autograd = use_autograd
+        self.projectionStiefel = (
+            stiefel_projection_qr if self.use_autograd else StiefelProjectionQR.apply
+        )
+
+    def forward(self, weight: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the StiefelProjectionParametrization layer
+
+        Parameters
+        ----------
+        weight : torch.Tensor of shape (n_in, n_out)
+            Rectangular matrix
+
+        Returns
+        -------
+        projected_weight : torch.Tensor (n_in, n_out)
+            Orthogonal matrix
+        """
+        return self.projectionStiefel(weight)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"StiefelProjectionParametrization(use_autograd={self.use_autograd})"
+
+    def __str__(self) -> str:
+        """
+        String representation of the layer
+
+        Returns
+        -------
+        str
+            String representation of the layer
+        """
+        return self.__repr__()
 
 
 class BiMap(nn.Module):
@@ -24,13 +205,13 @@ class BiMap(nn.Module):
         n_in: int,
         n_out: int,
         parametrized: bool = True,
-        parametrization: Callable = parametrizations.orthogonal,
+        parametrization: type[nn.Module] | Callable = parametrizations.orthogonal,
         parametrization_options: dict | None = None,
         init_method: Callable = _init_weights_stiefel,
         init_options: dict | None = None,
-        seed: int | None = None,
-        dtype: torch.dtype = torch.float64,
         device: torch.device = torch.device("cpu"),
+        dtype: torch.dtype = torch.float64,
+        generator: torch.Generator | None = None,
         use_autograd: bool = False,
     ) -> None:
         """
@@ -41,69 +222,65 @@ class BiMap(nn.Module):
         Parameters
         ----------
         n_in : int
-            Number of input features.
+            Number of input features
 
         n_out : int
-            Number of output features.
+            Number of output features
 
         parametrized : bool, optional
             Whether to apply parametrization to enforce manifold constraints.
-            Default is True.
+            Default is True
 
-        parametrization : Callable, optional
+        parametrization : nn.Module or Callable, optional
             Parametrization to apply if parametrized is True.
-            Default is parametrizations.orthogonal.
+            If not nn.Module, only parametrization.orthogonal is supported.
+            Default is parametrizations.orthogonal
 
         parametrization_options : dict, optional
             Options for the parametrization function.
-            Default is None.
+            Default is None
 
         init_method : Callable, optional
             Initialization method for the weight matrix.
-            Default is _init_weights_stiefel.
+            Default is _init_weights_stiefel
 
         init_options : dict, optional
             Options for the init_method function.
-            Default is None.
-
-        seed : int, optional
-            Seed for the initialization of the weight matrix. Default is None.
-
-        dtype : torch.dtype, optional
-            Data type of the layer. Default is torch.float64.
+            Default is None
 
         device : torch.device, optional
             Device on which the layer is initialized.
-            Default is torch.device("cpu").
+            Default is torch.device("cpu")
+
+        dtype : torch.dtype, optional
+            Data type of the layer. Default is torch.float64
+
+        generator : torch.Generator, optional
+            Generator to ensure reproducibility. Default is None
 
         use_autograd : bool, optional
             Use torch autograd for the computation of the gradient rather than
-            the analytical formula. Default is False.
+            the analytical formula. Default is False
         """
         super().__init__()
         self.n_in = n_in
         self.n_out = n_out
-        self.device = device
-        self.seed = seed
-        self.dtype = dtype
-        self.use_autograd = use_autograd
         self.parametrized = parametrized
         self.parametrization = parametrization
         self.parametrization_options = parametrization_options
         self.init_method = init_method
         self.init_options = init_options
-        self.dim = n_out
-        self.generator = torch.Generator(device=self.device).manual_seed(self.seed)
+        self.device = device
+        self.dtype = dtype
+        self.generator = generator
+        self.use_autograd = use_autograd
 
         if n_out > n_in:
-            raise ValueError("must have n_out < n_in")
-
-        if not isinstance(device, torch.device):
-            raise TypeError("device must be a torch.device")
+            raise ValueError("must have n_out <= n_in")
 
         # Create weight parameter
         self.weight = nn.Parameter(
-            torch.empty((n_out, n_in), dtype=dtype, device=device), requires_grad=True
+            torch.empty((n_in, n_out), dtype=dtype, device=device), requires_grad=True
         )
         # Initialize weights
         with torch.no_grad():
@@ -115,11 +292,26 @@ class BiMap(nn.Module):
                 )
 
         if self.parametrized:
-            if self.parametrization_options is None:
-                self.parametrization(module=self, name="weight")
+            if isinstance(self.parametrization, type) and issubclass(
+                self.parametrization, nn.Module
+            ):
+                if self.parametrization_options is None:
+                    self.parametrization_options = {"use_autograd": self.use_autograd}
+
+                register_parametrization(
+                    self, "weight", self.parametrization(**self.parametrization_options)
+                )
+            elif self.parametrization is parametrizations.orthogonal:
+                if self.parametrization_options is None:
+                    self.parametrization(module=self, name="weight")
+                else:
+                    self.parametrization(
+                        module=self, name="weight", **self.parametrization_options
+                    )
             else:
-                self.parametrization(
-                    module=self, name="weight", **self.parametrization_options
+                raise TypeError(
+                    f"parametrization must be a nn.Module class or parametrization.orthogonal "
+                    f"got {type(self.parametrization)}"
                 )
 
         self.bimap_fun = (
@@ -153,15 +345,16 @@ class BiMap(nn.Module):
         """
         return (
             f"BiMap(n_in={self.n_in}, n_out={self.n_out}, "
-            f"seed={self.seed}, dtype={self.dtype}, device={self.device}, "
-            f"use_autograd={self.use_autograd}, parametrized={self.parametrized}, "
-            f"parametrization={self.parametrization}, "
+            f"parametrized={self.parametrized}, parametrization={self.parametrization}, "
             f"parametrization_options={self.parametrization_options}, "
-            f"init_method={self.init_method}, init_options={self.init_options})"
+            f"init_method={self.init_method}, init_options={self.init_options}, "
+            f"device={self.device}, dtype={self.dtype}, generator={self.generator}, "
+            f"use_autograd={self.use_autograd})"
         )
 
     def __str__(self) -> str:
-        """String representation of the layer
+        """
+        String representation of the layer
 
         Returns
         -------
@@ -173,7 +366,7 @@ class BiMap(nn.Module):
 
 class ReEig(nn.Module):
     def __init__(
-        self, eps: float = 1e-2, use_autograd: bool = False, dim: int | None = None
+        self, eps: float = 1e-4, use_autograd: bool = False, dim: int | None = None
     ) -> None:
         """
         ReEig layer in a SPDnet layer according to the paper:
@@ -198,7 +391,11 @@ class ReEig(nn.Module):
         self.use_autograd = use_autograd
         self.dim = dim
 
-        self.reeig_fun = eigh_relu if self.use_autograd else EighReLu.apply
+        self.reeig_fun = (
+            (lambda data, eps: eigh_relu(data, eps)[0])
+            if self.use_autograd
+            else EighReLu.apply
+        )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -217,17 +414,19 @@ class ReEig(nn.Module):
         return self.reeig_fun(data, self.eps)
 
     def __repr__(self) -> str:
-        """Representation of the layer
+        """
+        Representation of the layer
 
         Returns
         -------
         str
             Representation of the layer
         """
-        return f"ReEig(eps={self.eps},use_autograd={self.use_autograd})"
+        return f"ReEig(eps={self.eps}, use_autograd={self.use_autograd})"
 
     def __str__(self) -> str:
-        """String representation of the layer
+        """
+        String representation of the layer
 
         Returns
         -------
@@ -252,7 +451,9 @@ class LogEig(nn.Module):
         """
         super().__init__()
         self.use_autograd = use_autograd
-        self.logmSPD = logm_SPD if self.use_autograd else LogmSPD.apply
+        self.logmSPD = (
+            (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
+        )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -271,7 +472,8 @@ class LogEig(nn.Module):
         return self.logmSPD(data)
 
     def __repr__(self) -> str:
-        """Representation of the layer
+        """
+        Representation of the layer
 
         Returns
         -------
@@ -281,7 +483,8 @@ class LogEig(nn.Module):
         return f"LogEig(use_autograd={self.use_autograd})"
 
     def __str__(self) -> str:
-        """String representation of the layer
+        """
+        String representation of the layer
 
         Returns
         -------
@@ -292,12 +495,20 @@ class LogEig(nn.Module):
 
 
 class Vec(nn.Module):
-    def __init__(self):
+    def __init__(self, use_autograd: bool = False):
         """
         Vectorization operator of a batch of matrices according to
         the last two dimensions
+
+        Parameters
+        ----------
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False.
         """
         super().__init__()
+        self.use_autograd = use_autograd
+        self.vecBatch = vec_batch if self.use_autograd else VecBatch.apply
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -313,17 +524,43 @@ class Vec(nn.Module):
         data_vec : torch.Tensor of shape (..., n_rows*n_columns)
             Batch of vectorized matrices
         """
-        return vec_batch(data)
+        return self.vecBatch(data)
+
+    def __repr__(self) -> str:
+        """Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"Vec(use_autograd={self.use_autograd})"
+
+    def __str__(self) -> str:
+        """String representation of the layer
+
+        Returns
+        -------
+        str
+            String representation of the layer
+        """
+        return self.__repr__()
 
 
 class Vech(nn.Module):
     def __init__(self) -> None:
-        """Vech operator of a batch of matrices according to the
-        last two dimensions"""
+        """
+        Vech operator of a batch of matrices according to the last two dimensions
+
+        WARNING : no automatic differentiation available here because it fails
+        """
         super().__init__()
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
-        """Forward pass of the Vech layer
+        """
+        Forward pass of the Vech layer
+
+        WARNING : no automatic differentiation available here because it fails
 
         Parameters
         ----------
@@ -335,22 +572,4 @@ class Vech(nn.Module):
         data_vech: torch.Tensor of shape (..., n_features*(n_features+1)//2)
             Batch of vech matrices
         """
-        return vech_batch(data)
-
-
-class SPDLogEuclideanParametrization(torch.nn.Module):
-    """
-    SPD parametrization using Log-Euclidean metric.
-    Input: Symmetric matrix V of shape (..., n, n)
-    Output: exp(V) (guaranteed SPD) of shape (..., n, n)
-    Works on both single matrices and batches.
-    """
-
-    def forward(self, symmetric_matrix):
-        """
-        Args:
-            symmetric_matrix: Symmetric matrix parameter of shape (..., n, n)
-        Returns:
-            SPD matrix exp(symmetric_matrix) of shape (..., n, n)
-        """
-        return ExpmSymmetric.apply(symmetric_matrix)
+        return VechBatch.apply(data)
