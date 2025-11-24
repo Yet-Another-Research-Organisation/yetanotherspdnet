@@ -205,8 +205,7 @@ class BiMap(nn.Module):
         n_in: int,
         n_out: int,
         parametrized: bool = True,
-        parametrization: type[nn.Module]
-        | Callable = StiefelProjectionQRParametrization,
+        parametrization: type[nn.Module] | Callable = parametrizations.orthogonal,
         parametrization_options: dict | None = None,
         init_method: Callable = _init_weights_stiefel,
         init_options: dict | None = None,
@@ -235,7 +234,7 @@ class BiMap(nn.Module):
         parametrization : nn.Module or Callable, optional
             Parametrization to apply if parametrized is True.
             If not nn.Module, only parametrization.orthogonal is supported.
-            Default is StiefelProjectionQRParametrization (to be changed back to parametrization.orthogonal ??)
+            Default is parametrizations.orthogonal
 
         parametrization_options : dict, optional
             Options for the parametrization function.

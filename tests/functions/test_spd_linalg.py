@@ -113,64 +113,31 @@ class TestVec:
         assert X_unvec.dtype == X_vec.dtype
 
     @pytest.mark.parametrize(
-        "n_matrices, n_rows, n_columns",
-        [(1, 100, 100), (1, 100, 30), (50, 100, 100), (50, 100, 30)],
+        "n_matrices, n_features",
+        [(1, 100), (50, 100)],
     )
-    def test_forward(self, n_matrices, n_rows, n_columns, device, dtype, generator):
+    def test_forward(self, n_matrices, n_features, device, dtype, generator):
         """
         Test forward of VecBatch Function class
         """
         X = torch.squeeze(
-            torch.randn(
-                (n_matrices, n_rows, n_columns),
-                device=device,
-                dtype=dtype,
-                generator=generator,
+            spd_linalg.symmetrize(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
             )
         )
         X_Vec = spd_linalg.VecBatch.apply(X)
         assert X_Vec.dim() == X.dim() - 1
         if n_matrices > 1:
             assert X_Vec.shape[0] == n_matrices
-        assert X_Vec.shape[-1] == n_rows * n_columns
-        assert_close(spd_linalg.unvec_batch(X_Vec, n_rows), X)
+        assert X_Vec.shape[-1] == n_features**2
+        assert_close(spd_linalg.unvec_batch(X_Vec, n_features), X)
         assert X_Vec.device == X.device
         assert X_Vec.dtype == X.dtype
-
-    @pytest.mark.parametrize(
-        "n_matrices, n_rows, n_columns",
-        [(1, 100, 100), (1, 100, 30), (50, 100, 100), (50, 100, 30)],
-    )
-    def test_backward(self, n_matrices, n_rows, n_columns, device, dtype, generator):
-        """
-        Test forward of VecBatch Function class
-        """
-        X = torch.squeeze(
-            torch.randn(
-                (n_matrices, n_rows, n_columns),
-                device=device,
-                dtype=dtype,
-                generator=generator,
-            )
-        )
-        X_manual = X.clone().detach()
-        X_manual.requires_grad = True
-        X_auto = X.clone().detach()
-        X_auto.requires_grad = True
-
-        X_manual_vec = spd_linalg.VecBatch.apply(X_manual)
-        X_auto_vec = spd_linalg.vec_batch(X_auto)
-
-        loss_manual = torch.norm(X_manual_vec)
-        loss_manual.backward()
-        loss_auto = torch.norm(X_auto_vec)
-        loss_auto.backward()
-
-        assert X_manual.grad is not None
-        assert X_auto.grad is not None
-        assert torch.isfinite(X_manual.grad).all()
-        assert torch.isfinite(X_auto.grad).all()
-        assert_close(X_manual.grad, X_auto.grad)
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features", [100])

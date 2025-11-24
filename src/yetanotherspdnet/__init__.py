@@ -4,7 +4,7 @@ __version__ = "0.1.0"
 
 # Import main modules
 from yetanotherspdnet import functions, nn, random
-from yetanotherspdnet.models import SPDNet
+from yetanotherspdnet.models import SPDnet
 
 
 # Define public API
@@ -12,6 +12,6 @@ __all__ = [
     "functions",
     "nn",
     "random",
-    "SPDNet",
+    "SPDnet",
     "__version__",
 ]

@@ -63,7 +63,8 @@ def unvec_batch(data_vec: torch.Tensor, n_rows: int) -> torch.Tensor:
 
 class VecBatch(Function):
     """
-    Vectorize a batch of matrices along last two dimensions
+    Vectorize a batch of matrices along last two dimensions.
+    Matrices are assumed to be symmetric (for backward)
     """
 
     @staticmethod
@@ -76,12 +77,12 @@ class VecBatch(Function):
         ctx : torch.autograd.function._ContextMethodMixin
             Context object to retrieve tensors saved during the forward pass
 
-        data : torch.Tensor of shape (..., n_rows, n_columns)
+        data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
 
         Returns
         -------
-        vec_data : torch.Tensor of shape (..., n_rows * n_columns)
+        vec_data : torch.Tensor of shape (..., n_features ** 2)
         """
         ctx.n_rows = data.shape[-2]
         return vec_batch(data)
@@ -89,22 +90,22 @@ class VecBatch(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the vectorization of a batch of matrices
+        Backward pass of the vectorization of a batch of symmetric matrices
 
         Parameters
         ----------
         ctx : torch.autograd.function._ContextMethodMixin
             Context object to retrieve tensors saved during the forward pass
 
-        grad_output : torch.Tensor of shape (..., n_rows * n_columns)
+        grad_output : torch.Tensor of shape (..., n_features ** 2)
             Gradient of the loss with respect to vectorized input batch of matrices
 
         Returns
         -------
-        grad_input : torch.Tensor of shape (..., n_rows, n_columns)
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
             Gradient of the loss with respect to the input batch of matrices
         """
-        return unvec_batch(grad_output, ctx.n_rows)
+        return symmetrize(unvec_batch(grad_output, ctx.n_rows))
 
 
 def vech_batch(data: torch.Tensor) -> torch.Tensor:

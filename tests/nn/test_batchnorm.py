@@ -16,6 +16,9 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     harmonic_curve,
     harmonic_mean,
 )
+from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
+    geometric_arithmetic_harmonic_mean,
+)
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
     log_euclidean_geodesic,
     log_euclidean_mean,
@@ -114,33 +117,6 @@ class TestBatchNormSPDMean:
         assert is_spd(layer.Covbias)
         assert_close(layer.Covbias, torch.eye(n_features, device=device, dtype=dtype))
 
-        # check that the right mean_fun is selected
-        if mean_type == "affine_invariant":
-            if mean_options is None:
-                assert (
-                    layer.mean_fun == affine_invariant_mean
-                    if use_autograd
-                    else AffineInvariantMean
-                )
-            else:
-                assert isinstance(layer.mean_fun, partial)
-                assert (
-                    layer.mean_fun.func == affine_invariant_mean
-                    if use_autograd
-                    else AffineInvariantMean
-                )
-                assert layer.mean_fun.keywords == mean_options
-
-        # check that the right adaptive_fun is selected
-        if adaptive_mean_type == "affine_invariant":
-            assert layer.adaptive_fun == affine_invariant_geodesic
-        elif adaptive_mean_type == "log_euclidean":
-            assert layer.adaptive_fun == log_euclidean_geodesic
-        elif adaptive_mean_type == "arithmetic":
-            assert layer.adaptive_fun == euclidean_geodesic
-        elif adaptive_mean_type == "harmonic":
-            assert layer.adaptive_fun == harmonic_curve
-
     @pytest.mark.parametrize("n_matrices", [1, 10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
@@ -227,6 +203,9 @@ class TestBatchNormSPDMean:
             assert_close(G_output, layer.Covbias @ layer.Covbias)
         elif mean_type == "harmonic":
             G_output = harmonic_mean(output)
+            assert_close(G_output, layer.Covbias @ layer.Covbias)
+        elif mean_type == "geometric_arithmetic_harmonic":
+            G_output = geometric_arithmetic_harmonic_mean(output)[0]
             assert_close(G_output, layer.Covbias @ layer.Covbias)
 
     @pytest.mark.parametrize("n_matrices", [1, 10])

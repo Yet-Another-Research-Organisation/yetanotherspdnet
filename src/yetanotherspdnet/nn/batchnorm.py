@@ -76,7 +76,8 @@ class BatchNormSPDMean(nn.Module):
         adaptive_mean_type : str, optional
             Choice of adaptive mean update. Default is "affine_invariant".
             Choices are: "affine_invariant", "log_Euclidean",
-            "arithmetic", "harmonic", "geometric_arithmetic_harmonic"
+            "arithmetic", "harmonic", "geometric_arithmetic_harmonic_exact",
+            "geometric_arithmetic_harmonic_simple"
 
         momentum : float, optional
             Momentum for running mean update.
