@@ -512,3 +512,6 @@ coverage.svg
 data/
 results/
 experiments/
+src/dataloader/*
+src/evaluation/*
+src/utils/*

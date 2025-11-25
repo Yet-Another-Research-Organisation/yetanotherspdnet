@@ -24,13 +24,14 @@ class SPDnet(nn.Module):
         batchnorm: bool = False,
         batchnorm_mean_type: str = "geometric_arithmetic_harmonic",
         batchnorm_mean_options: dict | None = None,
-        batchnorm_adaptive_mean_type: str = "geometric_arithmetic_harmonic_simple",
+        batchnorm_adaptive_mean_type: str | None = "geometric_arithmetic_harmonic_simple",
         batchnorm_momentum: float = 0.01,
         vec_type: str = "vec",
+        use_logeig: bool = True,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
-        use_autograd: bool = False,
+        use_autograd: bool | dict = False,
     ) -> None:
         """
         Standard SPDnet model with hidden layers
@@ -79,8 +80,9 @@ class SPDnet(nn.Module):
             Currently, for others, no options available.
             Default is None
 
-        batchnorm_adaptive_mean_type : str, optional
-            Choice of adaptive mean update in BatchNormSPDMean. Default is "affine_invariant".
+        batchnorm_adaptive_mean_type : str | None, optional
+            Choice of adaptive mean update in BatchNormSPDMean. If None, uses same as batchnorm_mean_type.
+            Default is "geometric_arithmetic_harmonic_simple".
             Choices are: "affine_invariant", "log_Euclidean",
             "arithmetic", "harmonic", "geometric_arithmetic_harmonic_exact",
             "geometric_arithmetic_harmonic_simple"
@@ -94,6 +96,10 @@ class SPDnet(nn.Module):
             Default is "vec".
             Choices are: "vec", "vech"
 
+        use_logeig : bool, optional
+            Whether to apply LogEig layer before vectorization.
+            Default is True
+
         device : torch.device, optional
             Device to run model on. Default is torch.device('cpu')
 
@@ -103,10 +109,10 @@ class SPDnet(nn.Module):
         generator : torch.Generator, optional
             Generator to ensure reproducibility. Default is None
 
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula.
-            Note that even if True, Vech module always uses manual gradient.
+        use_autograd : bool | dict, optional
+            Use torch autograd for gradient computation. Can be bool for all layers,
+            or dict with keys: 'bimap', 'reeig', 'logeig', 'batchnorm', 'vec'.
+            Note that Vech module always uses manual gradient.
             Default is False
         """
         super().__init__()
@@ -124,7 +130,14 @@ class SPDnet(nn.Module):
         self.batchnorm = batchnorm
         self.batchnorm_mean_type = batchnorm_mean_type
         self.batchnorm_mean_options = batchnorm_mean_options
-        self.batchnorm_adaptive_mean_type = batchnorm_adaptive_mean_type
+        # Fallback to batchnorm_mean_type if adaptive type is None
+        # For geometric_arithmetic_harmonic, append _simple suffix for adaptive mean
+        if batchnorm_adaptive_mean_type is not None:
+            self.batchnorm_adaptive_mean_type = batchnorm_adaptive_mean_type
+        elif batchnorm_mean_type == "geometric_arithmetic_harmonic":
+            self.batchnorm_adaptive_mean_type = "geometric_arithmetic_harmonic_simple"
+        else:
+            self.batchnorm_adaptive_mean_type = batchnorm_mean_type
         self.batchnorm_momentum = batchnorm_momentum
 
         self.vec_type = vec_type
@@ -132,10 +145,33 @@ class SPDnet(nn.Module):
             f"vec_type must be 'vec' or 'vech', got {self.vec_type}"
         )
 
+        self.use_logeig = use_logeig
         self.device = device
         self.dtype = dtype
         self.generator = generator
-        self.use_autograd = use_autograd
+        
+        # Handle use_autograd as bool or dict
+        if isinstance(use_autograd, bool):
+            self.use_autograd = {
+                'bimap': use_autograd,
+                'reeig': use_autograd,
+                'logeig': use_autograd,
+                'batchnorm': use_autograd,
+                'vec': use_autograd,
+            }
+        else:
+            # Default all to False, then update with provided values
+            self.use_autograd = {
+                'bimap': False,
+                'reeig': False,
+                'logeig': False,
+                'batchnorm': False,
+                'vec': False,
+            }
+            self.use_autograd.update(use_autograd)
+        
+        # Store original for compatibility
+        self._use_autograd_original = use_autograd
 
         # Create layers
         spdnet_layers: list[nn.Module] = [
@@ -148,7 +184,7 @@ class SPDnet(nn.Module):
                 device=self.device,
                 dtype=self.dtype,
                 generator=self.generator,
-                use_autograd=self.use_autograd,
+                use_autograd=self.use_autograd['bimap'],
             )
         ]
 
@@ -156,7 +192,7 @@ class SPDnet(nn.Module):
             ReEig(
                 eps=self.reeig_eps,
                 dim=self.hidden_layers_size[0],
-                use_autograd=self.use_autograd,
+                use_autograd=self.use_autograd['reeig'],
             )
         )
 
@@ -168,7 +204,7 @@ class SPDnet(nn.Module):
                     mean_options=self.batchnorm_mean_options,
                     adaptive_mean_type=self.batchnorm_adaptive_mean_type,
                     momentum=self.batchnorm_momentum,
-                    use_autograd=self.use_autograd,
+                    use_autograd=self.use_autograd['batchnorm'],
                     device=self.device,
                     dtype=self.dtype,
                 )
@@ -184,14 +220,14 @@ class SPDnet(nn.Module):
                     device=self.device,
                     dtype=self.dtype,
                     generator=self.generator,
-                    use_autograd=self.use_autograd,
+                    use_autograd=self.use_autograd['bimap'],
                 )
             )
             spdnet_layers.append(
                 ReEig(
                     eps=self.reeig_eps,
                     dim=self.hidden_layers_size[i],
-                    use_autograd=self.use_autograd,
+                    use_autograd=self.use_autograd['reeig'],
                 )
             )
 
@@ -203,18 +239,21 @@ class SPDnet(nn.Module):
                         mean_options=self.batchnorm_mean_options,
                         adaptive_mean_type=self.batchnorm_adaptive_mean_type,
                         momentum=self.batchnorm_momentum,
-                        use_autograd=self.use_autograd,
+                        use_autograd=self.use_autograd['batchnorm'],
                         device=self.device,
                         dtype=self.dtype,
                     )
                 )
-        spdnet_layers.append(LogEig(use_autograd=self.use_autograd))
+        
+        # Conditionally add LogEig layer
+        if self.use_logeig:
+            spdnet_layers.append(LogEig(use_autograd=self.use_autograd['logeig']))
 
         self.spdnet_layers = nn.Sequential(*spdnet_layers)
 
         # Create final layer(s)
         if self.vec_type == "vec":
-            self.vectorization = Vec(use_autograd=self.use_autograd)
+            self.vectorization = Vec(use_autograd=self.use_autograd['vec'])
             self.linear = nn.Linear(
                 self.hidden_layers_size[-1] ** 2,
                 self.output_dim,
@@ -222,7 +261,7 @@ class SPDnet(nn.Module):
                 device=self.device,
             )
         elif self.vec_type == "vech":
-            self.vectorization = Vech()
+            self.vectorization = Vech()  # Vech always uses manual gradient
             self.linear = nn.Linear(
                 self.hidden_layers_size[-1] * (self.hidden_layers_size[-1] + 1) // 2,
                 self.output_dim,
@@ -276,10 +315,11 @@ class SPDnet(nn.Module):
             f"  batchnorm_adaptive_mean_type='{self.batchnorm_adaptive_mean_type}',\n"
             f"  batchnorm_momentum={self.batchnorm_momentum},\n"
             f"  vec_type='{self.vec_type}',\n"
+            f"  use_logeig={self.use_logeig},\n"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f"  generator={self.generator},\n"
-            f"  use_autograd={self.use_autograd}\n"
+            f"  use_autograd={self._use_autograd_original}\n"
             f")"
         )
 
