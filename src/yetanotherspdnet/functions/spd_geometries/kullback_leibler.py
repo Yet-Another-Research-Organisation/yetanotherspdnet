@@ -262,8 +262,8 @@ class HarmonicCurve(Function):
         t = ctx.t
         point1_inv, point2_inv, point = ctx.saved_tensors
         return (
-            t * point1_inv @ point @ symmetrize(grad_output) @ point @ point1_inv,
-            (1 - t) * point2_inv @ point @ symmetrize(grad_output) @ point @ point2_inv,
+            (1 - t) * point1_inv @ point @ symmetrize(grad_output) @ point @ point1_inv,
+            t * point2_inv @ point @ symmetrize(grad_output) @ point @ point2_inv,
             None,
         )
 

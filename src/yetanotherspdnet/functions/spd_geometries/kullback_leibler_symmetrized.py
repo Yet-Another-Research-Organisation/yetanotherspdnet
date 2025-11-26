@@ -1,11 +1,14 @@
 import torch
 
 from .affine_invariant import (
+    AffineInvariantGeodesic,
     affine_invariant_mean_2points,
     AffineInvariantMean2Points,
 )
 
 from .kullback_leibler import (
+    EuclideanGeodesic,
+    HarmonicCurve,
     euclidean_geodesic,
     arithmetic_mean,
     ArithmeticMean,
@@ -66,6 +69,51 @@ def geometric_arithmetic_harmonic_adaptive_update(
     )
 
 
+def GeometricArithmeticHarmonicAdaptiveUpdate(
+    point1_arithmetic: torch.Tensor,
+    point1_harmonic: torch.Tensor,
+    point2_arithmetic: torch.Tensor,
+    point2_harmonic: torch.Tensor,
+    t: float | torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Path for adaptive computation of the geometric mean of arithmetic and harmonic means:
+    ( (1-t)*point1_arithmetic + t*point2_arithmetic ) #_{1/2} ( (1-t)*point1_harmonic^{-1} + t*point2_harmonic^{-1} )^{-1}
+
+    Parameters
+    ----------
+    point1_arithmetic : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    point1_harmonic : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    point2_arithmetic : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    point2_harmonic : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    t : float | torch.Tensor
+        parameter on the path, should be in [0,1]
+
+    Returns
+    -------
+    point : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    point_arithmetic : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    point_harmonic : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+    """
+    point_arithmetic = EuclideanGeodesic.apply(point1_arithmetic, point2_arithmetic, t)
+    point_harmonic = HarmonicCurve.apply(point1_harmonic, point2_harmonic, t)
+    point = AffineInvariantMean2Points.apply(point_arithmetic, point_harmonic)
+    return point, point_arithmetic, point_harmonic
+
+
 def geometric_euclidean_harmonic_curve(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
@@ -91,6 +139,33 @@ def geometric_euclidean_harmonic_curve(
     point_euclidean = euclidean_geodesic(point1, point2, t)
     point_harmonic = harmonic_curve(point1, point2, t)
     return affine_invariant_mean_2points(point_euclidean, point_harmonic)
+
+
+def GeometricEuclideanHarmonicCurve(
+    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
+) -> torch.Tensor:
+    """
+    Curve corresponding to the geometric mean of the Euclidean geodesic and the harmonic curve
+
+    Parameters
+    ----------
+    point1 : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    point2 : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    t : float | torch.Tensor
+        parameter on the path, should be in [0,1]
+
+    Returns
+    -------
+    point : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+    """
+    point_euclidean = EuclideanGeodesic.apply(point1, point2, t)
+    point_harmonic = HarmonicCurve.apply(point1, point2, t)
+    return AffineInvariantMean2Points.apply(point_euclidean, point_harmonic)
 
 
 # -----------------------------------------------

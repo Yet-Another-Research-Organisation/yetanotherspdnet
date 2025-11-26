@@ -59,26 +59,50 @@ class TestGeometricArithmeticHarmonicAdaptiveUpdate:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point, point_eucl, point_harm = (
+        point_auto, point_eucl_auto, point_harm_auto = (
             kullback_leibler_symmetrized.geometric_arithmetic_harmonic_adaptive_update(
                 point1_eucl, point1_harm, point2_eucl, point2_harm, t
             )
         )
+        point_manual, point_eucl_manual, point_harm_manual = (
+            kullback_leibler_symmetrized.GeometricArithmeticHarmonicAdaptiveUpdate(
+                point1_eucl, point1_harm, point2_eucl, point2_harm, t
+            )
+        )
 
-        assert point.shape == point1_eucl.shape
-        assert point.device == point1_eucl.device
-        assert point.dtype == point1_eucl.dtype
-        assert is_spd(point)
+        assert point_auto.shape == point1_eucl.shape
+        assert point_auto.device == point1_eucl.device
+        assert point_auto.dtype == point1_eucl.dtype
+        assert is_spd(point_auto)
 
-        assert point_eucl.shape == point1_eucl.shape
-        assert point_eucl.device == point1_eucl.device
-        assert point_eucl.dtype == point1_eucl.dtype
-        assert is_spd(point_eucl)
+        assert point_eucl_auto.shape == point1_eucl.shape
+        assert point_eucl_auto.device == point1_eucl.device
+        assert point_eucl_auto.dtype == point1_eucl.dtype
+        assert is_spd(point_eucl_auto)
 
-        assert point_harm.shape == point1_eucl.shape
-        assert point_harm.device == point1_eucl.device
-        assert point_harm.dtype == point1_eucl.dtype
-        assert is_spd(point)
+        assert point_harm_auto.shape == point1_eucl.shape
+        assert point_harm_auto.device == point1_eucl.device
+        assert point_harm_auto.dtype == point1_eucl.dtype
+        assert is_spd(point_harm_auto)
+
+        assert point_manual.shape == point1_eucl.shape
+        assert point_manual.device == point1_eucl.device
+        assert point_manual.dtype == point1_eucl.dtype
+        assert is_spd(point_manual)
+
+        assert point_eucl_manual.shape == point1_eucl.shape
+        assert point_eucl_manual.device == point1_eucl.device
+        assert point_eucl_manual.dtype == point1_eucl.dtype
+        assert is_spd(point_eucl_manual)
+
+        assert point_harm_manual.shape == point1_eucl.shape
+        assert point_harm_manual.device == point1_eucl.device
+        assert point_harm_manual.dtype == point1_eucl.dtype
+        assert is_spd(point_harm_manual)
+
+        assert_close(point_eucl_auto, point_eucl_manual)
+        assert_close(point_harm_auto, point_harm_manual)
+        assert_close(point_auto, point_manual)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_extremities(self, n_features, cond, device, dtype, generator):
@@ -98,23 +122,47 @@ class TestGeometricArithmeticHarmonicAdaptiveUpdate:
         point2_eucl = points[2]
         point2_harm = points[3]
 
-        point1_, point1_eucl_, point1_harm_ = (
+        point1_auto, point1_eucl_auto, point1_harm_auto = (
             kullback_leibler_symmetrized.geometric_arithmetic_harmonic_adaptive_update(
                 point1_eucl, point1_harm, point2_eucl, point2_harm, 0
             )
         )
-        point2_, point2_eucl_, point2_harm_ = (
+        point2_auto, point2_eucl_auto, point2_harm_auto = (
             kullback_leibler_symmetrized.geometric_arithmetic_harmonic_adaptive_update(
                 point1_eucl, point1_harm, point2_eucl, point2_harm, 1
             )
         )
+        point1_manual, point1_eucl_manual, point1_harm_manual = (
+            kullback_leibler_symmetrized.GeometricArithmeticHarmonicAdaptiveUpdate(
+                point1_eucl, point1_harm, point2_eucl, point2_harm, 0
+            )
+        )
+        point2_manual, point2_eucl_manual, point2_harm_manual = (
+            kullback_leibler_symmetrized.GeometricArithmeticHarmonicAdaptiveUpdate(
+                point1_eucl, point1_harm, point2_eucl, point2_harm, 1
+            )
+        )
 
-        assert_close(point1_eucl_, point1_eucl)
-        assert_close(point1_harm_, point1_harm)
-        assert_close(point1_, affine_invariant_mean_2points(point1_eucl, point1_harm))
-        assert_close(point2_eucl_, point2_eucl)
-        assert_close(point2_harm_, point2_harm)
-        assert_close(point2_, affine_invariant_mean_2points(point2_eucl, point2_harm))
+        assert_close(point1_eucl_auto, point1_eucl)
+        assert_close(point1_harm_auto, point1_harm)
+        assert_close(
+            point1_auto, affine_invariant_mean_2points(point1_eucl, point1_harm)
+        )
+        assert_close(point2_eucl_auto, point2_eucl)
+        assert_close(point2_harm_auto, point2_harm)
+        assert_close(
+            point2_auto, affine_invariant_mean_2points(point2_eucl, point2_harm)
+        )
+        assert_close(point1_eucl_manual, point1_eucl)
+        assert_close(point1_harm_manual, point1_harm)
+        assert_close(
+            point1_manual, affine_invariant_mean_2points(point1_eucl, point1_harm)
+        )
+        assert_close(point2_eucl_manual, point2_eucl)
+        assert_close(point2_harm_manual, point2_harm)
+        assert_close(
+            point2_manual, affine_invariant_mean_2points(point2_eucl, point2_harm)
+        )
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_symmetry(self, n_features, cond, device, dtype, generator):
@@ -136,20 +184,33 @@ class TestGeometricArithmeticHarmonicAdaptiveUpdate:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_12, point_eucl_12, point_harm_12 = (
+        point_12_auto, point_eucl_12_auto, point_harm_12_auto = (
             kullback_leibler_symmetrized.geometric_arithmetic_harmonic_adaptive_update(
                 point1_eucl, point1_harm, point2_eucl, point2_harm, t
             )
         )
-        point_21, point_eucl_21, point_harm_21 = (
+        point_21_auto, point_eucl_21_auto, point_harm_21_auto = (
             kullback_leibler_symmetrized.geometric_arithmetic_harmonic_adaptive_update(
                 point2_eucl, point2_harm, point1_eucl, point1_harm, 1 - t
             )
         )
+        point_12_manual, point_eucl_12_manual, point_harm_12_manual = (
+            kullback_leibler_symmetrized.GeometricArithmeticHarmonicAdaptiveUpdate(
+                point1_eucl, point1_harm, point2_eucl, point2_harm, t
+            )
+        )
+        point_21_manual, point_eucl_21_manual, point_harm_21_manual = (
+            kullback_leibler_symmetrized.GeometricArithmeticHarmonicAdaptiveUpdate(
+                point2_eucl, point2_harm, point1_eucl, point1_harm, 1 - t
+            )
+        )
 
-        assert_close(point_12, point_21)
-        assert_close(point_eucl_12, point_eucl_21)
-        assert_close(point_harm_12, point_harm_21)
+        assert_close(point_12_auto, point_21_auto)
+        assert_close(point_eucl_12_auto, point_eucl_21_auto)
+        assert_close(point_harm_12_auto, point_harm_21_auto)
+        assert_close(point_12_manual, point_21_manual)
+        assert_close(point_eucl_12_manual, point_eucl_21_manual)
+        assert_close(point_harm_12_manual, point_harm_21_manual)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_identical_points(self, n_features, cond, device, dtype, generator):
@@ -170,15 +231,26 @@ class TestGeometricArithmeticHarmonicAdaptiveUpdate:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_, point_eucl_, point_harm_ = (
+        point_auto, point_eucl_auto, point_harm_auto = (
             kullback_leibler_symmetrized.geometric_arithmetic_harmonic_adaptive_update(
                 point_eucl, point_harm, point_eucl, point_harm, t
             )
         )
+        point_manual, point_eucl_manual, point_harm_manual = (
+            kullback_leibler_symmetrized.GeometricArithmeticHarmonicAdaptiveUpdate(
+                point_eucl, point_harm, point_eucl, point_harm, t
+            )
+        )
 
-        assert_close(point_eucl_, point_eucl)
-        assert_close(point_harm_, point_harm)
-        assert_close(point_, affine_invariant_mean_2points(point_eucl, point_harm))
+        assert_close(point_eucl_auto, point_eucl)
+        assert_close(point_harm_auto, point_harm)
+        assert_close(point_auto, affine_invariant_mean_2points(point_eucl, point_harm))
+
+        assert_close(point_eucl_manual, point_eucl)
+        assert_close(point_harm_manual, point_harm)
+        assert_close(
+            point_manual, affine_invariant_mean_2points(point_eucl, point_harm)
+        )
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_diagonal_matrices(self, n_features, cond, device, dtype, generator):
@@ -205,8 +277,13 @@ class TestGeometricArithmeticHarmonicAdaptiveUpdate:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point, point_eucl, point_harm = (
+        point_auto, point_eucl_auto, point_harm_auto = (
             kullback_leibler_symmetrized.geometric_arithmetic_harmonic_adaptive_update(
+                point1_eucl, point1_harm, point2_eucl, point2_harm, t
+            )
+        )
+        point_manual, point_eucl_manual, point_harm_manual = (
+            kullback_leibler_symmetrized.GeometricArithmeticHarmonicAdaptiveUpdate(
                 point1_eucl, point1_harm, point2_eucl, point2_harm, t
             )
         )
@@ -218,9 +295,13 @@ class TestGeometricArithmeticHarmonicAdaptiveUpdate:
         expected_harm = torch.diag(expected_diag_harm)
         expected = torch.diag(expected_diag)
 
-        assert_close(point_eucl, expected_eucl)
-        assert_close(point_harm, expected_harm)
-        assert_close(point, expected)
+        assert_close(point_eucl_auto, expected_eucl)
+        assert_close(point_harm_auto, expected_harm)
+        assert_close(point_auto, expected)
+
+        assert_close(point_eucl_manual, expected_eucl)
+        assert_close(point_harm_manual, expected_harm)
+        assert_close(point_manual, expected)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_commuting_matrices(self, n_features, cond, device, dtype, generator):
@@ -261,8 +342,13 @@ class TestGeometricArithmeticHarmonicAdaptiveUpdate:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point, point_eucl, point_harm = (
+        point_auto, point_eucl_auto, point_harm_auto = (
             kullback_leibler_symmetrized.geometric_arithmetic_harmonic_adaptive_update(
+                point1_eucl, point1_harm, point2_eucl, point2_harm, t
+            )
+        )
+        point_manual, point_eucl_manual, point_harm_manual = (
+            kullback_leibler_symmetrized.GeometricArithmeticHarmonicAdaptiveUpdate(
                 point1_eucl, point1_harm, point2_eucl, point2_harm, t
             )
         )
@@ -278,9 +364,13 @@ class TestGeometricArithmeticHarmonicAdaptiveUpdate:
         )
         expected = eigvecs @ torch.diag(expected_diag) @ eigvecs.transpose(-1, -2)
 
-        assert_close(point_eucl, expected_eucl)
-        assert_close(point_harm, expected_harm)
-        assert_close(point, expected)
+        assert_close(point_eucl_auto, expected_eucl)
+        assert_close(point_harm_auto, expected_harm)
+        assert_close(point_auto, expected)
+
+        assert_close(point_eucl_manual, expected_eucl)
+        assert_close(point_harm_manual, expected_harm)
+        assert_close(point_manual, expected)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_identity_to_general(self, n_features, cond, device, dtype, generator):
@@ -302,8 +392,13 @@ class TestGeometricArithmeticHarmonicAdaptiveUpdate:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_, point_eucl_, point_harm_ = (
+        point_auto, point_eucl_auto, point_harm_auto = (
             kullback_leibler_symmetrized.geometric_arithmetic_harmonic_adaptive_update(
+                Id, Id, point_eucl, point_harm, t
+            )
+        )
+        point_manual, point_eucl_manual, point_harm_manual = (
+            kullback_leibler_symmetrized.GeometricArithmeticHarmonicAdaptiveUpdate(
                 Id, Id, point_eucl, point_harm, t
             )
         )
@@ -314,9 +409,59 @@ class TestGeometricArithmeticHarmonicAdaptiveUpdate:
         )
         expected = affine_invariant_mean_2points(expected_eucl, expected_harm)
 
-        assert_close(point_eucl_, expected_eucl)
-        assert_close(point_harm_, expected_harm)
-        assert_close(point_, expected)
+        assert_close(point_eucl_auto, expected_eucl)
+        assert_close(point_harm_auto, expected_harm)
+        assert_close(point_auto, expected)
+
+        assert_close(point_eucl_manual, expected_eucl)
+        assert_close(point_harm_manual, expected_harm)
+        assert_close(point_manual, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_features, cond, device, dtype, generator):
+        """
+        Test that backward works and that automatic and manual differentiation yield same results
+        """
+        # generate some random SPD matrices
+        X = random_SPD(
+            n_features,
+            n_matrices=4,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+        # random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        G_auto, _, _ = (
+            kullback_leibler_symmetrized.geometric_arithmetic_harmonic_adaptive_update(
+                X_auto[0], X_auto[1], X_auto[2], X_auto[3], t
+            )
+        )
+        G_manual, _, _ = (
+            kullback_leibler_symmetrized.GeometricArithmeticHarmonicAdaptiveUpdate(
+                X_manual[0], X_manual[1], X_manual[2], X_manual[3], t
+            )
+        )
+        assert_close(G_auto, G_manual)
+
+        loss_manual = torch.norm(G_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(G_auto)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
 
 
 class TestGeometricEuclideanHarmonicCurve:
@@ -343,14 +488,24 @@ class TestGeometricEuclideanHarmonicCurve:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+        point_auto = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+            point1, point2, t
+        )
+        point_manual = kullback_leibler_symmetrized.GeometricEuclideanHarmonicCurve(
             point1, point2, t
         )
 
-        assert point.shape == point1.shape
-        assert point.device == point1.device
-        assert point.dtype == point1.dtype
-        assert is_spd(point)
+        assert point_auto.shape == point1.shape
+        assert point_auto.device == point1.device
+        assert point_auto.dtype == point1.dtype
+        assert is_spd(point_auto)
+
+        assert point_manual.shape == point1.shape
+        assert point_manual.device == point1.device
+        assert point_manual.dtype == point1.dtype
+        assert is_spd(point_manual)
+
+        assert_close(point_auto, point_manual)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_extremities(self, n_features, cond, device, dtype, generator):
@@ -369,15 +524,23 @@ class TestGeometricEuclideanHarmonicCurve:
         point1 = points[0]
         point2 = points[1]
 
-        point1_ = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+        point1_auto = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
             point1, point2, 0
         )
-        point2_ = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+        point2_auto = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+            point1, point2, 1
+        )
+        point1_manual = kullback_leibler_symmetrized.GeometricEuclideanHarmonicCurve(
+            point1, point2, 0
+        )
+        point2_manual = kullback_leibler_symmetrized.GeometricEuclideanHarmonicCurve(
             point1, point2, 1
         )
 
-        assert_close(point1_, point1)
-        assert_close(point2_, point2)
+        assert_close(point1_auto, point1)
+        assert_close(point2_auto, point2)
+        assert_close(point1_manual, point1)
+        assert_close(point2_manual, point2)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_symmetry(self, n_features, cond, device, dtype, generator):
@@ -397,14 +560,21 @@ class TestGeometricEuclideanHarmonicCurve:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_12 = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+        point_12_auto = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
             point1, point2, t
         )
-        point_21 = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+        point_21_auto = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+            point2, point1, 1 - t
+        )
+        point_12_manual = kullback_leibler_symmetrized.GeometricEuclideanHarmonicCurve(
+            point1, point2, t
+        )
+        point_21_manual = kullback_leibler_symmetrized.GeometricEuclideanHarmonicCurve(
             point2, point1, 1 - t
         )
 
-        assert_close(point_12, point_21)
+        assert_close(point_12_auto, point_21_auto)
+        assert_close(point_12_manual, point_21_manual)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_identical_points(self, n_features, cond, device, dtype, generator):
@@ -423,11 +593,15 @@ class TestGeometricEuclideanHarmonicCurve:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_ = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+        point_auto = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+            point, point, t
+        )
+        point_manual = kullback_leibler_symmetrized.GeometricEuclideanHarmonicCurve(
             point, point, t
         )
 
-        assert_close(point_, point)
+        assert_close(point_auto, point)
+        assert_close(point_manual, point)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_diagonal_matrices(self, n_features, cond, device, dtype, generator):
@@ -450,7 +624,10 @@ class TestGeometricEuclideanHarmonicCurve:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+        point_auto = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+            point1, point2, t
+        )
+        point_manual = kullback_leibler_symmetrized.GeometricEuclideanHarmonicCurve(
             point1, point2, t
         )
 
@@ -461,7 +638,8 @@ class TestGeometricEuclideanHarmonicCurve:
         )
         expected = torch.diag(expected_diag)
 
-        assert_close(point, expected)
+        assert_close(point_auto, expected)
+        assert_close(point_manual, expected)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_commuting_matrices(self, n_features, cond, device, dtype, generator):
@@ -496,7 +674,10 @@ class TestGeometricEuclideanHarmonicCurve:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+        point_auto = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+            point1, point2, t
+        )
+        point_manual = kullback_leibler_symmetrized.GeometricEuclideanHarmonicCurve(
             point1, point2, t
         )
 
@@ -507,7 +688,8 @@ class TestGeometricEuclideanHarmonicCurve:
         )
         expected = eigvecs @ torch.diag(expected_diag) @ eigvecs.transpose(-1, -2)
 
-        assert_close(point, expected)
+        assert_close(point_auto, expected)
+        assert_close(point_manual, expected)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_identity_to_general(self, n_features, cond, device, dtype, generator):
@@ -527,7 +709,10 @@ class TestGeometricEuclideanHarmonicCurve:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_ = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+        point_auto = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+            Id, point, t
+        )
+        point_manual = kullback_leibler_symmetrized.GeometricEuclideanHarmonicCurve(
             Id, point, t
         )
 
@@ -536,7 +721,50 @@ class TestGeometricEuclideanHarmonicCurve:
             torch.linalg.inv((1 - t) * Id + t * torch.linalg.inv(point)),
         )
 
-        assert_close(point_, expected)
+        assert_close(point_auto, expected)
+        assert_close(point_manual, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_features, cond, device, dtype, generator):
+        """
+        Test that backward works and that automatic and manual differentiation yield same results
+        """
+        # generate some random SPD matrices
+        X = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+        # random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        G_auto = kullback_leibler_symmetrized.geometric_euclidean_harmonic_curve(
+            X_auto[0], X_auto[1], t
+        )
+        G_manual = kullback_leibler_symmetrized.GeometricEuclideanHarmonicCurve(
+            X_manual[0], X_manual[1], t
+        )
+        assert_close(G_auto, G_manual)
+
+        loss_manual = torch.norm(G_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(G_auto)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
 
 
 class TestGeometricArithmeticHarmonicMean:

@@ -275,9 +275,9 @@ class TestAffineInvariantGeodesic:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        G_auto = affine_invariant.affine_invariant_geodesic(X_manual[0], X_manual[1], t)
+        G_auto = affine_invariant.affine_invariant_geodesic(X_auto[0], X_auto[1], t)
         G_manual = affine_invariant.AffineInvariantGeodesic.apply(
-            X_auto[0], X_auto[1], t
+            X_manual[0], X_manual[1], t
         )
 
         loss_manual = torch.norm(G_manual)
@@ -496,6 +496,8 @@ class TestAffineInvariantMean2points:
 
         assert_close(G_geodesic, G_2points_auto)
         assert_close(G_fixedpoint_auto, G_2points_auto)
+
+    # TODO: Also add comparison of gradients adequation between the 3
 
 
 class TestAffineInvariantMean:
