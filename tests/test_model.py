@@ -419,8 +419,8 @@ class TestSPDnet:
         assert "output_dim=3" in repr_str
         assert repr_str == str_str
 
-    def test_show_layers(self, device, dtype, generator):
-        """Test show_layers method"""
+    def test_layers_str(self, device, dtype, generator):
+        """Test layers_str method"""
         model = SPDnet(
             input_dim=10,
             hidden_layers_size=[8],
@@ -430,7 +430,7 @@ class TestSPDnet:
             generator=generator,
         )
 
-        layers_str = model.show_layers()
+        layers_str = model.layers_str()
 
         assert "SPDnet Layers:" in layers_str
         assert "BiMap" in layers_str

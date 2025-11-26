@@ -294,7 +294,7 @@ class SPDnet(nn.Module):
         """
         return self.__repr__()
 
-    def show_layers(self) -> str:
+    def layers_str(self) -> str:
         """Return a formatted string listing the layers of SPDnet."""
         string = self.__repr__() + "\n\nSPDnet Layers:\n"
         string += "---------------\n"
@@ -313,7 +313,6 @@ class SPDnet(nn.Module):
         if self.softmax:
             string += f"  ({len(self.spdnet_layers) + 2}). Softmax(dim=-1)\n"
 
-        print(string)
         return string
 
     def get_last_tensor(self, X: torch.Tensor) -> torch.Tensor:
