@@ -6,6 +6,7 @@ from functools import partial
 
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     GeometricArithmeticHarmonicMean,
+    GeometricEuclideanHarmonicCurve,
     geometric_arithmetic_harmonic_mean,
     geometric_euclidean_harmonic_curve,
 )
@@ -18,12 +19,14 @@ from ..functions.spd_linalg import (
 )
 
 from ..functions.spd_geometries.affine_invariant import (
+    AffineInvariantGeodesic,
     AffineInvariantMean,
     affine_invariant_mean,
     affine_invariant_geodesic,
 )
 
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
+    LogEuclideanGeodesic,
     LogEuclideanMean,
     log_euclidean_geodesic,
     log_euclidean_mean,
@@ -31,6 +34,8 @@ from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
 
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     ArithmeticMean,
+    EuclideanGeodesic,
+    HarmonicCurve,
     HarmonicMean,
     arithmetic_mean,
     harmonic_mean,
@@ -48,6 +53,8 @@ class BatchNormSPDMean(nn.Module):
         mean_type: str = "affine_invariant",
         mean_options: dict | None = None,
         momentum: float = 0.01,
+        norm_strategy: str = "classical",
+        minibatch_momentum: float = 0.01,
         use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
@@ -75,6 +82,15 @@ class BatchNormSPDMean(nn.Module):
             Momentum for running mean update.
             Default is 0.01
 
+        norm_strategy : str, optional
+            Strategy for normalization.
+            Default is "classical".
+            Choices are: "classical" and "minibatch"
+
+        minibatch_momentum : float, optional
+            Momentum for mean regularization in minibatch normalization strategy
+            Default is 0.01
+
         use_autograd : bool, optional
             Use torch autograd for the computation of the gradient rather than
             the analytical formula.
@@ -100,8 +116,11 @@ class BatchNormSPDMean(nn.Module):
         self.mean_options = mean_options
         self.momentum = momentum
         self._init_mean()
+        self._init_adaptive_fun()
 
-        self.norm_type = "classical"
+        self.norm_strategy = norm_strategy
+        self.minibatch_momentum = minibatch_momentum
+        self._init_norm_strategy()
 
         # bias parameter
         self.Covbias = torch.nn.Parameter(
@@ -118,7 +137,7 @@ class BatchNormSPDMean(nn.Module):
 
     def _init_mean(self) -> None:
         """
-        Auxiliary function to select mean and adaptive mean functions
+        Auxiliary function to select mean function
         """
         assert self.mean_type in [
             "affine_invariant",
@@ -148,27 +167,79 @@ class BatchNormSPDMean(nn.Module):
                 self.mean_fun = (
                     affine_invariant_mean if self.use_autograd else AffineInvariantMean
                 )
-            self.adaptive_fun = affine_invariant_geodesic
         elif self.mean_type == "log_euclidean":
             self.mean_fun = (
                 log_euclidean_mean if self.use_autograd else LogEuclideanMean
             )
-            self.adaptive_fun = log_euclidean_geodesic
         elif self.mean_type == "arithmetic":
             self.mean_fun = (
                 arithmetic_mean if self.use_autograd else ArithmeticMean.apply
             )
-            self.adaptive_fun = euclidean_geodesic
         elif self.mean_type == "harmonic":
             self.mean_fun = harmonic_mean if self.use_autograd else HarmonicMean.apply
-            self.adaptive_fun = harmonic_curve
         elif self.mean_type == "geometric_arithmetic_harmonic":
             self.mean_fun = (
                 geometric_arithmetic_harmonic_mean
                 if self.use_autograd
                 else GeometricArithmeticHarmonicMean
             )
+
+    def _init_adaptive_fun(self) -> None:
+        """
+        Auxiliary function to select adaptive mean update function
+        """
+        if self.mean_type == "affine_invariant":
+            self.adaptive_fun = affine_invariant_geodesic
+        elif self.mean_type == "log_euclidean":
+            self.adaptive_fun = log_euclidean_geodesic
+        elif self.mean_type == "arithmetic":
+            self.adaptive_fun = euclidean_geodesic
+        elif self.mean_type == "harmonic":
+            self.adaptive_fun = harmonic_curve
+        elif self.mean_type == "geometric_arithmetic_harmonic":
             self.adaptive_fun = geometric_euclidean_harmonic_curve
+
+    def _init_norm_strategy(self) -> None:
+        """
+        Auxiliary function to select normalization strategy
+        """
+        assert self.norm_strategy in [
+            "classical",
+            "minibatch",
+        ], f"formula must be in ['classical', 'minibatch', got {self.mean_type}"
+
+        if self.norm_strategy == "classical":
+            pass
+        elif self.norm_strategy == "minibatch":
+            self.mean_regularizer = torch.eye(
+                self.n_features, device=self.device, dtype=self.dtype
+            )
+            if self.mean_type == "affine_invariant":
+                self.regularize_fun = (
+                    affine_invariant_geodesic
+                    if self.use_autograd
+                    else AffineInvariantGeodesic.apply
+                )
+            elif self.mean_type == "log_euclidean":
+                self.regularize_fun = (
+                    log_euclidean_geodesic
+                    if self.use_autograd
+                    else LogEuclideanGeodesic
+                )
+            elif self.mean_type == "arithmetic":
+                self.regularize_fun = (
+                    euclidean_geodesic if self.use_autograd else EuclideanGeodesic.apply
+                )
+            elif self.mean_type == "harmonic":
+                self.regularize_fun = (
+                    harmonic_curve if self.use_autograd else HarmonicCurve.apply
+                )
+            elif self.mean_type == "geometric_arithmetic_harmonic":
+                self.regularize_fun = (
+                    geometric_euclidean_harmonic_curve
+                    if self.use_autograd
+                    else GeometricEuclideanHarmonicCurve
+                )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -186,10 +257,14 @@ class BatchNormSPDMean(nn.Module):
         """
         if self.training:
             mean_batch = self.mean_fun(data)
-            if self.norm_type == "classical":
+            if self.norm_strategy == "classical":
                 mean = mean_batch
-            elif self.norm_type == "minibatch":
-                raise ValueError("not implemented yet")
+            elif self.norm_strategy == "minibatch":
+                mean = self.regularize_fun(
+                    self.mean_regularizer, mean_batch, self.minibatch_momentum
+                )
+                with torch.no_grad():
+                    self.mean_regularizer = mean
             with torch.no_grad():
                 self.running_mean = self.adaptive_fun(
                     self.running_mean, mean_batch, self.momentum
@@ -217,6 +292,7 @@ class BatchNormSPDMean(nn.Module):
             f"BatchNormSPDMean(n_features={self.n_features}, "
             f"mean_type={self.mean_type}, mean_options={self.mean_options}, "
             f"momentum={self.momentum}, "
+            f"norm_strategy={self.norm_strategy}, minibatch_momentum={self.minibatch_momentum}, "
             f"use_autograd={self.use_autograd}, device={self.device}, "
             f"dtype={self.dtype})"
         )

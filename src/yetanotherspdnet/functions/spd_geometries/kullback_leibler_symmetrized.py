@@ -2,6 +2,7 @@ import torch
 
 from .affine_invariant import (
     AffineInvariantGeodesic,
+    affine_invariant_geodesic,
     affine_invariant_mean_2points,
     AffineInvariantMean2Points,
 )
@@ -139,7 +140,7 @@ def geometric_euclidean_harmonic_curve(
     """
     point_euclidean = euclidean_geodesic(point1, point2, t)
     point_harmonic = harmonic_curve(point1, point2, t)
-    return affine_invariant_mean_2points(point_euclidean, point_harmonic)
+    return affine_invariant_geodesic(point_euclidean, point_harmonic, 0.5)
 
 
 def GeometricEuclideanHarmonicCurve(
@@ -166,7 +167,7 @@ def GeometricEuclideanHarmonicCurve(
     """
     point_euclidean = EuclideanGeodesic.apply(point1, point2, t)
     point_harmonic = HarmonicCurve.apply(point1, point2, t)
-    return AffineInvariantMean2Points.apply(point_euclidean, point_harmonic)
+    return AffineInvariantGeodesic.apply(point_euclidean, point_harmonic, 0.5)
 
 
 # -----------------------------------------------

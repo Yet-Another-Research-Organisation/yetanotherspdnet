@@ -95,8 +95,8 @@ class AffineInvariantGeodesic(Function):
             eigvecs_middle_term1,
             point1,
             point2,
-            t,
         )
+        ctx.t = t
         return point1_sqrtm @ middle_term1 @ point1_sqrtm
 
     @staticmethod
@@ -136,8 +136,8 @@ class AffineInvariantGeodesic(Function):
             eigvecs_middle_term1,
             point1,
             point2,
-            t,
         ) = ctx.saved_tensors
+        t = ctx.t
         eigvals2, eigvecs2 = torch.linalg.eigh(point2)
         point2_sqrtm = eigh_operation(eigvals2, eigvecs2, torch.sqrt)
         inv_sqrt = lambda x: 1 / torch.sqrt(x)
