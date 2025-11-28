@@ -1,0 +1,58 @@
+# Configuration for resnet18spdnet on fusar
+# Model: resnet18spdnet
+# Dataset: fusar
+
+
+epochs: 200
+lr: 0.0005
+optimizer: adam
+scheduler: plateau
+scheduler_patience: 3
+scheduler_factor: 0.3
+scheduler_min_lr: 1.0e-05
+early_stopping_patience: 20
+storage_path: results/experiments
+group_id: backbone_fusar
+save_best_model: true
+device: cuda
+dtype: float64
+seed: 42
+verbose: true
+preload: false
+skip_label_check: true 
+dataset_config:
+  name: fusar
+  path: ~/Documents/DATASET/FUSAR_Ship1.0
+  train_ratio: 0.8
+  val_ratio: 0.1
+  batch_size: 32
+  shuffle: true
+  num_workers: 2
+  resize_mode: fixed_size
+  target_size: 
+  - 224
+  - 224
+  max_samples: 300
+  min_samples: 30
+  channels: single
+  class_level: basic
+  drop: false
+model_name: resnetspdnet
+model_config:
+  resnet_type: resnet18
+  num_layers: 2
+  hidden_layers_size:
+  - 64
+  - 30
+  pretrained: true
+  shrinkage: none
+  lbda: optimal
+  eps: 0.01
+  batchnorm: true
+  batchnorm_method: geometric_arithmetic_harmonic
+  use_chunking: false
+  chunk_size: null
+  use_vech: false
+  momentum: 0.1
+  dropout_rate: 0.3
+

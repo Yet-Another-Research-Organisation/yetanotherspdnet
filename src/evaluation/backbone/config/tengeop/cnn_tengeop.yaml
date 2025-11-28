@@ -1,0 +1,51 @@
+# Configuration for cnnspdnet on tengeop
+# Model: cnnspdnet
+# Dataset: tengeop
+
+epochs: 200
+lr: 0.00075
+optimizer: adam
+scheduler: plateau
+scheduler_patience: 3
+scheduler_factor: 0.3
+scheduler_min_lr: 1.0e-05
+early_stopping_patience: 10
+storage_path: results/experiments
+group_id: tengeop_analysis
+save_best_model: true
+device: cuda
+dtype: float64
+seed: 42
+verbose: true
+skip_label_check: true
+preload: false
+dataset_config:
+  name: tengeop
+  path: ~/Documents/DATASET/TenGeoP-SARwv
+  val_ratio: 0.1
+  batch_size: 48
+  shuffle: true
+  num_workers: 4
+  max_samples: 250
+  resize_mode: fixed_size
+  target_size:
+  - 224
+  - 224
+  channels: single
+  load_metadata: true
+model_name: cnn
+model_config:
+  feature_channels:
+  - 64
+  - 96
+  - 128
+  hidden_layers_size:
+  - 96
+  - 48
+  - 20
+  shrinkage: none
+  lbda: optimal
+  use_chunking: false
+  chunk_size: null
+  use_vech: false
+  dropout_rate: 0.3

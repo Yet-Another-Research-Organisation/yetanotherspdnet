@@ -1,0 +1,58 @@
+# Base configuration for SPDNet on HyperLeaf dataset
+# This file serves as the template for grid search experiments
+
+epochs: 200
+lr: 0.00025
+optimizer: adam
+scheduler: plateau
+scheduler_patience: 4
+scheduler_factor: 0.5
+scheduler_min_lr: 1.0e-06
+early_stopping_patience: 25
+storage_path: results/experiments
+group_id: no_backbone_hyperleaf
+save_best_model: true
+device: cuda
+dtype: float64
+seed: 42
+verbose: false
+preload: false
+skip_label_check: true
+
+dataset_config:
+  name: hyperleaf
+  path: ~/Documents/DATASET/HyperLeaf2024
+  val_ratio: 0.1
+  test_ratio: 0.2
+  batch_size: 64
+  shuffle: true
+  max_samples: 1000
+  num_workers: 6
+  train_transform: None
+  test_transform: None
+  task_type: classification
+  load_metadata: false
+  images_dir: cov  # 'cov' for precomputed covariances, 'images' for raw data
+  target_size:
+  - 204
+  - 204
+
+model_name: spdnet
+
+model_config:
+  input_dim: 204
+  input_channels: 1
+  hidden_layers_size:
+  - 186
+  - 120
+  eps: 0.6
+  batchnorm: false
+  batchnorm_method: geometric_arithmetic_harmonic
+  batchnorm_adaptive_mean_type: null  # If null, uses same as batchnorm_method
+  softmax: false
+  use_autograd: false
+  use_logeig: true
+  dropout_rate: 0.0
+  use_vech: false
+  bimap_parametrized: true
+  bimap_parametrization_name: orthogonal  # 'orthogonal' or 'StiefelProjectionQRParametrization'
