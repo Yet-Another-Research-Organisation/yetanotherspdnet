@@ -24,7 +24,6 @@ class SPDnet(nn.Module):
         batchnorm: bool = False,
         batchnorm_mean_type: str = "geometric_arithmetic_harmonic",
         batchnorm_mean_options: dict | None = None,
-        batchnorm_adaptive_mean_type: str = "geometric_arithmetic_harmonic_simple",
         batchnorm_momentum: float = 0.01,
         vec_type: str = "vec",
         device: torch.device = torch.device("cpu"),
@@ -79,12 +78,6 @@ class SPDnet(nn.Module):
             Currently, for others, no options available.
             Default is None
 
-        batchnorm_adaptive_mean_type : str, optional
-            Choice of adaptive mean update in BatchNormSPDMean. Default is "affine_invariant".
-            Choices are: "affine_invariant", "log_Euclidean",
-            "arithmetic", "harmonic", "geometric_arithmetic_harmonic_exact",
-            "geometric_arithmetic_harmonic_simple"
-
         batchnorm_momentum : float, optional
             Momentum for running mean update.
             Default is 0.01
@@ -124,7 +117,6 @@ class SPDnet(nn.Module):
         self.batchnorm = batchnorm
         self.batchnorm_mean_type = batchnorm_mean_type
         self.batchnorm_mean_options = batchnorm_mean_options
-        self.batchnorm_adaptive_mean_type = batchnorm_adaptive_mean_type
         self.batchnorm_momentum = batchnorm_momentum
 
         self.vec_type = vec_type
@@ -166,7 +158,6 @@ class SPDnet(nn.Module):
                     n_features=self.hidden_layers_size[0],
                     mean_type=self.batchnorm_mean_type,
                     mean_options=self.batchnorm_mean_options,
-                    adaptive_mean_type=self.batchnorm_adaptive_mean_type,
                     momentum=self.batchnorm_momentum,
                     use_autograd=self.use_autograd,
                     device=self.device,
@@ -201,7 +192,6 @@ class SPDnet(nn.Module):
                         n_features=self.hidden_layers_size[i],
                         mean_type=self.batchnorm_mean_type,
                         mean_options=self.batchnorm_mean_options,
-                        adaptive_mean_type=self.batchnorm_adaptive_mean_type,
                         momentum=self.batchnorm_momentum,
                         use_autograd=self.use_autograd,
                         device=self.device,
@@ -273,7 +263,6 @@ class SPDnet(nn.Module):
             f"  batchnorm={self.batchnorm},\n"
             f"  batchnorm_mean_type='{self.batchnorm_mean_type}',\n"
             f"  batchnorm_mean_options={self.batchnorm_mean_options},\n"
-            f"  batchnorm_adaptive_mean_type='{self.batchnorm_adaptive_mean_type}',\n"
             f"  batchnorm_momentum={self.batchnorm_momentum},\n"
             f"  vec_type='{self.vec_type}',\n"
             f"  device={self.device},\n"
