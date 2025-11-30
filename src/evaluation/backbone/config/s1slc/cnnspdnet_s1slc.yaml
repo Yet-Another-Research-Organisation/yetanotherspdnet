@@ -1,0 +1,54 @@
+# Configuration for cnnspdnet on s1slc
+# Model: cnnspdnet
+# Dataset: s1slc
+
+epochs: 200
+lr: 0.0001
+optimizer: adam
+scheduler: plateau
+scheduler_patience: 3
+scheduler_factor: 0.3
+scheduler_min_lr: 1.0e-06
+early_stopping_patience: 20
+storage_path: results/experiments
+group_id: backbone_s1slc
+save_best_model: true
+device: cuda
+dtype: float64
+seed: 42
+verbose: true
+preload: false
+skip_label_check: true
+dataset_config:
+  name: s1slc
+  path: ~/Documents/DATASET/S1SLC_CVDL/complex_HHHV.zarr
+  train_ratio: 0.8
+  val_ratio: 0.1
+  batch_size: 32
+  shuffle: true
+  num_workers: 4
+  max_samples_per_class: 500
+  channels: complex_dual
+  mode: domain_adaptation
+  train_cities:
+  - Chicago
+  - Sao Paulo
+  test_city: Houston
+model_name: cnnspdnet
+model_config:
+  feature_channels:
+  - 48
+  - 64
+  hidden_layers_size:
+  - 32
+  - 21
+  shrinkage: none
+  lbda: optimal
+  eps: 0.01
+  batchnorm: true
+  batchnorm_method: geometric_arithmetic_harmonic
+  use_chunking: false
+  chunk_size: null
+  use_vech: false
+  dropout_rate: 0.4
+  momentum: 0.1

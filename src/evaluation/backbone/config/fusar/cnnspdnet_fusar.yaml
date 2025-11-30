@@ -1,0 +1,56 @@
+# Configuration for cnnspdnet on fusar
+# Model: cnnspdnet
+# Dataset: fusar
+
+epochs: 200
+lr: 0.0001
+optimizer: adam
+scheduler: plateau
+scheduler_patience: 3
+scheduler_factor: 0.3
+scheduler_min_lr: 1.0e-06
+early_stopping_patience: 20
+storage_path: results/experiments
+group_id: backbone_fusar
+save_best_model: true
+device: cuda
+dtype: float64
+seed: 42
+verbose: true
+preload: false
+skip_label_check: true 
+dataset_config:
+  name: fusar
+  path: ~/Documents/DATASET/FUSAR_Ship1.0
+  train_ratio: 0.8
+  val_ratio: 0.1
+  batch_size: 32
+  shuffle: true
+  num_workers: 4
+  resize_mode: fixed_size
+  target_size: 
+  - 224
+  - 224
+  max_samples: 250
+  min_samples: 50
+  channels: single
+  class_level: basic
+  drop: false
+model_name: cnnspdnet
+model_config:
+  feature_channels:
+  - 64
+  - 96
+  hidden_layers_size:
+  - 32
+  - 16
+  shrinkage: none
+  lbda: optimal
+  eps: 0.001
+  batchnorm: true
+  batchnorm_method: geometric_arithmetic_harmonic
+  softmax: false
+  use_autograd: true
+  dropout_rate: 0.4
+  use_vech: false
+  momentum: 0.1

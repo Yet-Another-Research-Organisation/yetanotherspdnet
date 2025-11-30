@@ -1,0 +1,51 @@
+# Configuration for mobilenetv3largespdnet on tengeop
+# Model: mobilenetv3largespdnet
+# Dataset: tengeop
+
+
+epochs: 500
+lr: 0.0001
+optimizer: adam
+scheduler: plateau
+scheduler_patience: 3
+scheduler_factor: 0.5
+scheduler_min_lr: 1.0e-05
+early_stopping_patience: 7
+storage_path: results/experiments
+group_id: tengeop_analysis
+save_best_model: true
+device: cuda
+dtype: float64
+seed: 42
+verbose: true
+skip_label_check: true
+preload: false
+dataset_config:
+  name: tengeop
+  path: ~/Documents/DATASET/TenGeoP-SARwv
+  val_ratio: 0.1
+  batch_size: 48
+  shuffle: true
+  num_workers: 2
+  max_samples: 200
+  resize_mode: fixed_size
+  target_size:
+  - 224
+  - 224
+  channels: single
+  load_metadata: true
+model_name: mobilenetspdnet
+model_config:
+  num_layers: 13
+  hidden_layers_size:
+  - 56
+  - 30
+  pretrained: true
+  shrinkage: none
+  lbda: optimal
+  eps: 0.001
+  batchnorm: false
+  batchnorm_method: geometric_arithmetic_harmonic
+  use_chunking: false
+  chunk_size: null
+  use_vech: false
