@@ -3,7 +3,7 @@ import zlib
 from collections.abc import Callable
 
 import torch
-from torch import nn
+from torch import nn, norm
 from torch.nn.utils import parametrizations
 
 from yetanotherspdnet.nn.base import BiMap, LogEig, ReEig, Vec, Vech
@@ -24,8 +24,9 @@ class SPDnet(nn.Module):
         batchnorm: bool = False,
         batchnorm_mean_type: str = "geometric_arithmetic_harmonic",
         batchnorm_mean_options: dict | None = None,
-        batchnorm_adaptive_mean_type: str | None = "geometric_arithmetic_harmonic_simple",
         batchnorm_momentum: float = 0.01,
+        batchnorm_norm_strategy: str = "classical",
+        batchnorm_minibatch_momentum: float = 0.01,
         vec_type: str = "vec",
         use_logeig: bool = True,
         device: torch.device = torch.device("cpu"),
@@ -80,15 +81,17 @@ class SPDnet(nn.Module):
             Currently, for others, no options available.
             Default is None
 
-        batchnorm_adaptive_mean_type : str | None, optional
-            Choice of adaptive mean update in BatchNormSPDMean. If None, uses same as batchnorm_mean_type.
-            Default is "geometric_arithmetic_harmonic_simple".
-            Choices are: "affine_invariant", "log_Euclidean",
-            "arithmetic", "harmonic", "geometric_arithmetic_harmonic_exact",
-            "geometric_arithmetic_harmonic_simple"
-
         batchnorm_momentum : float, optional
             Momentum for running mean update.
+            Default is 0.01
+
+        batchnorm_norm_strategy : str, optional
+            Strategy for normalization.
+            Default is "classical".
+            Choices are: "classical" and "minibatch"
+
+        batchnorm_minibatch_momentum : float, optional
+            Momentum for mean regularization in minibatch normalization strategy
             Default is 0.01
 
         vec_type : str, optional
@@ -130,15 +133,9 @@ class SPDnet(nn.Module):
         self.batchnorm = batchnorm
         self.batchnorm_mean_type = batchnorm_mean_type
         self.batchnorm_mean_options = batchnorm_mean_options
-        # Fallback to batchnorm_mean_type if adaptive type is None
-        # For geometric_arithmetic_harmonic, append _simple suffix for adaptive mean
-        if batchnorm_adaptive_mean_type is not None:
-            self.batchnorm_adaptive_mean_type = batchnorm_adaptive_mean_type
-        elif batchnorm_mean_type == "geometric_arithmetic_harmonic":
-            self.batchnorm_adaptive_mean_type = "geometric_arithmetic_harmonic_simple"
-        else:
-            self.batchnorm_adaptive_mean_type = batchnorm_mean_type
         self.batchnorm_momentum = batchnorm_momentum
+        self.batchnorm_norm_strategy = batchnorm_norm_strategy
+        self.batchnorm_minibatch_momentum = batchnorm_minibatch_momentum
 
         self.vec_type = vec_type
         assert self.vec_type in ["vec", "vech"], (
@@ -202,9 +199,11 @@ class SPDnet(nn.Module):
                     n_features=self.hidden_layers_size[0],
                     mean_type=self.batchnorm_mean_type,
                     mean_options=self.batchnorm_mean_options,
-                    adaptive_mean_type=self.batchnorm_adaptive_mean_type,
                     momentum=self.batchnorm_momentum,
                     use_autograd=self.use_autograd['batchnorm'],
+                    norm_strategy=self.batchnorm_norm_strategy,
+                    minibatch_momentum=self.batchnorm_minibatch_momentum,
+                    use_autograd=self.use_autograd,
                     device=self.device,
                     dtype=self.dtype,
                 )
@@ -237,9 +236,11 @@ class SPDnet(nn.Module):
                         n_features=self.hidden_layers_size[i],
                         mean_type=self.batchnorm_mean_type,
                         mean_options=self.batchnorm_mean_options,
-                        adaptive_mean_type=self.batchnorm_adaptive_mean_type,
                         momentum=self.batchnorm_momentum,
                         use_autograd=self.use_autograd['batchnorm'],
+                        norm_strategy=self.batchnorm_norm_strategy,
+                        minibatch_momentum=self.batchnorm_minibatch_momentum,
+                        use_autograd=self.use_autograd,
                         device=self.device,
                         dtype=self.dtype,
                     )
@@ -312,8 +313,9 @@ class SPDnet(nn.Module):
             f"  batchnorm={self.batchnorm},\n"
             f"  batchnorm_mean_type='{self.batchnorm_mean_type}',\n"
             f"  batchnorm_mean_options={self.batchnorm_mean_options},\n"
-            f"  batchnorm_adaptive_mean_type='{self.batchnorm_adaptive_mean_type}',\n"
             f"  batchnorm_momentum={self.batchnorm_momentum},\n"
+            f"  batchnorm_norm_strategy={self.batchnorm_norm_strategy}, \n"
+            f"  batchnorm_minibatch_momentum={self.batchnorm_minibatch_momentum}, \n"
             f"  vec_type='{self.vec_type}',\n"
             f"  use_logeig={self.use_logeig},\n"
             f"  device={self.device},\n"

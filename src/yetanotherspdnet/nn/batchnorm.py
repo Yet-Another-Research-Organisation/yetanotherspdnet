@@ -6,7 +6,7 @@ from functools import partial
 
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     GeometricArithmeticHarmonicMean,
-    geometric_arithmetic_harmonic_adaptive_update,
+    GeometricEuclideanHarmonicCurve,
     geometric_arithmetic_harmonic_mean,
     geometric_euclidean_harmonic_curve,
 )
@@ -19,12 +19,14 @@ from ..functions.spd_linalg import (
 )
 
 from ..functions.spd_geometries.affine_invariant import (
+    AffineInvariantGeodesic,
     AffineInvariantMean,
     affine_invariant_mean,
     affine_invariant_geodesic,
 )
 
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
+    LogEuclideanGeodesic,
     LogEuclideanMean,
     log_euclidean_geodesic,
     log_euclidean_mean,
@@ -32,6 +34,8 @@ from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
 
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     ArithmeticMean,
+    EuclideanGeodesic,
+    HarmonicCurve,
     HarmonicMean,
     arithmetic_mean,
     harmonic_mean,
@@ -48,8 +52,9 @@ class BatchNormSPDMean(nn.Module):
         n_features: int,
         mean_type: str = "affine_invariant",
         mean_options: dict | None = None,
-        adaptive_mean_type: str = "affine_invariant",
         momentum: float = 0.01,
+        norm_strategy: str = "classical",
+        minibatch_momentum: float = 0.01,
         use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
@@ -73,14 +78,17 @@ class BatchNormSPDMean(nn.Module):
             Currently, for others, no options available.
             Default is None
 
-        adaptive_mean_type : str, optional
-            Choice of adaptive mean update. Default is "affine_invariant".
-            Choices are: "affine_invariant", "log_Euclidean",
-            "arithmetic", "harmonic", "geometric_arithmetic_harmonic_exact",
-            "geometric_arithmetic_harmonic_simple"
-
         momentum : float, optional
             Momentum for running mean update.
+            Default is 0.01
+
+        norm_strategy : str, optional
+            Strategy for normalization.
+            Default is "classical".
+            Choices are: "classical" and "minibatch"
+
+        minibatch_momentum : float, optional
+            Momentum for mean regularization in minibatch normalization strategy
             Default is 0.01
 
         use_autograd : bool, optional
@@ -106,10 +114,13 @@ class BatchNormSPDMean(nn.Module):
         # deal with mean_type and adaptive_mean_type
         self.mean_type = mean_type
         self.mean_options = mean_options
-        self.adaptive_mean_type = adaptive_mean_type
         self.momentum = momentum
         self._init_mean()
-        self._init_adaptive_mean()
+        self._init_adaptive_fun()
+
+        self.norm_strategy = norm_strategy
+        self.minibatch_momentum = minibatch_momentum
+        self._init_norm_strategy()
 
         # bias parameter
         self.Covbias = torch.nn.Parameter(
@@ -119,8 +130,10 @@ class BatchNormSPDMean(nn.Module):
         # normalize and add bias functions
         self.normalize = whitening if self.use_autograd else Whitening.apply
         self.add_bias = congruence_SPD if self.use_autograd else CongruenceSPD.apply
-        # set running parameters
-        self._init_running_parameters()
+        # set running mean
+        self.running_mean = torch.eye(
+            self.n_features, dtype=self.dtype, device=self.device
+        )
 
     def _init_mean(self) -> None:
         """
@@ -165,89 +178,68 @@ class BatchNormSPDMean(nn.Module):
         elif self.mean_type == "harmonic":
             self.mean_fun = harmonic_mean if self.use_autograd else HarmonicMean.apply
         elif self.mean_type == "geometric_arithmetic_harmonic":
-            if self.adaptive_mean_type == "geometric_arithmetic_harmonic_exact":
-                self.mean_fun = (
-                    geometric_arithmetic_harmonic_mean
-                    if self.use_autograd
-                    else GeometricArithmeticHarmonicMean
-                )
-            else:
-                if self.use_autograd:
-                    self.mean_fun = lambda data: geometric_arithmetic_harmonic_mean(
-                        data
-                    )[0]
-                else:
-                    self.mean_fun = lambda data: GeometricArithmeticHarmonicMean(data)[
-                        0
-                    ]
-        else:
-            raise ValueError("not implemented yet")
+            self.mean_fun = (
+                geometric_arithmetic_harmonic_mean
+                if self.use_autograd
+                else GeometricArithmeticHarmonicMean
+            )
 
-    def _init_adaptive_mean(self) -> None:
+    def _init_adaptive_fun(self) -> None:
         """
         Auxiliary function to select adaptive mean update function
         """
-        assert self.adaptive_mean_type in [
-            "affine_invariant",
-            "log_euclidean",
-            "arithmetic",
-            "harmonic",
-            "geometric_arithmetic_harmonic_exact",
-            "geometric_arithmetic_harmonic_simple",
-        ], (
-            f"formula must be in ['affine_invariant', 'log_euclidean', "
-            f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic_exact', geometric_arithmetic_harmonic_simple],"
-            f"got {self.adaptive_mean_type}"
-        )
-
-        if self.adaptive_mean_type == "affine_invariant":
+        if self.mean_type == "affine_invariant":
             self.adaptive_fun = affine_invariant_geodesic
-        elif self.adaptive_mean_type == "log_euclidean":
+        elif self.mean_type == "log_euclidean":
             self.adaptive_fun = log_euclidean_geodesic
-        elif self.adaptive_mean_type == "arithmetic":
+        elif self.mean_type == "arithmetic":
             self.adaptive_fun = euclidean_geodesic
-        elif self.adaptive_mean_type == "harmonic":
+        elif self.mean_type == "harmonic":
             self.adaptive_fun = harmonic_curve
-        elif self.adaptive_mean_type == "geometric_arithmetic_harmonic_exact":
-            if not self.mean_type == "geometric_arithmetic_harmonic":
-                raise ValueError(
-                    "adaptive_mean_type can be 'geometric_arithmetic_harmonic_exact' only with mean_type 'geometric_arithmetic_harmonic'"
-                )
-            self.adaptive_fun = (
-                lambda running_param,
-                mean_param,
-                momentum: geometric_arithmetic_harmonic_adaptive_update(
-                    running_param[1],
-                    running_param[2],
-                    mean_param[1],
-                    mean_param[2],
-                    momentum,
-                )
-            )
-        elif self.adaptive_mean_type == "geometric_arithmetic_harmonic_simple":
+        elif self.mean_type == "geometric_arithmetic_harmonic":
             self.adaptive_fun = geometric_euclidean_harmonic_curve
-        else:
-            raise ValueError("not implemented yet")
 
-    def _init_running_parameters(self) -> None:
+    def _init_norm_strategy(self) -> None:
         """
-        Auxiliary function to initialize running parameters
+        Auxiliary function to select normalization strategy
         """
-        if (
-            self.mean_type == "geometric_arithmetic_harmonic"
-            and self.adaptive_mean_type == "geometric_arithmetic_harmonic_exact"
-        ):
-            self.running_param = (
-                torch.eye(self.n_features, dtype=self.dtype, device=self.device),
-                torch.eye(self.n_features, dtype=self.dtype, device=self.device),
-                torch.eye(self.n_features, dtype=self.dtype, device=self.device),
+        assert self.norm_strategy in [
+            "classical",
+            "minibatch",
+        ], f"formula must be in ['classical', 'minibatch', got {self.mean_type}"
+
+        if self.norm_strategy == "classical":
+            pass
+        elif self.norm_strategy == "minibatch":
+            self.mean_regularizer = torch.eye(
+                self.n_features, device=self.device, dtype=self.dtype
             )
-            self.get_running_mean = lambda x: x[0]
-        else:
-            self.running_param = torch.eye(
-                self.n_features, dtype=self.dtype, device=self.device
-            )
-            self.get_running_mean = lambda x: x
+            if self.mean_type == "affine_invariant":
+                self.regularize_fun = (
+                    affine_invariant_geodesic
+                    if self.use_autograd
+                    else AffineInvariantGeodesic.apply
+                )
+            elif self.mean_type == "log_euclidean":
+                self.regularize_fun = (
+                    log_euclidean_geodesic
+                    if self.use_autograd
+                    else LogEuclideanGeodesic
+                )
+            elif self.mean_type == "arithmetic":
+                self.regularize_fun = (
+                    euclidean_geodesic if self.use_autograd else EuclideanGeodesic.apply
+                )
+            elif self.mean_type == "harmonic":
+                self.regularize_fun = (
+                    harmonic_curve if self.use_autograd else HarmonicCurve.apply
+                )
+            elif self.mean_type == "geometric_arithmetic_harmonic":
+                self.regularize_fun = (
+                    geometric_euclidean_harmonic_curve
+                    if self.use_autograd
+                    else GeometricEuclideanHarmonicCurve
+                )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -264,17 +256,22 @@ class BatchNormSPDMean(nn.Module):
             Batch of transformed (normalized then biased) SPD matrices
         """
         if self.training:
-            mean_param = self.mean_fun(data)
+            mean_batch = self.mean_fun(data)
+            if self.norm_strategy == "classical":
+                mean = mean_batch
+            elif self.norm_strategy == "minibatch":
+                mean = self.regularize_fun(
+                    self.mean_regularizer, mean_batch, self.minibatch_momentum
+                )
+                with torch.no_grad():
+                    self.mean_regularizer = mean
             with torch.no_grad():
-                self.running_param = self.adaptive_fun(
-                    self.running_param, mean_param, self.momentum
+                self.running_mean = self.adaptive_fun(
+                    self.running_mean, mean_batch, self.momentum
                 )
         else:
             # training over, use overall mean learnt on all batches
-            mean_param = self.running_param
-
-        # get mean from mean parameters
-        mean = self.get_running_mean(mean_param)
+            mean = self.running_mean
 
         # Normalize data and add bias
         data_normalized = self.normalize(data, mean)
@@ -294,7 +291,8 @@ class BatchNormSPDMean(nn.Module):
         return (
             f"BatchNormSPDMean(n_features={self.n_features}, "
             f"mean_type={self.mean_type}, mean_options={self.mean_options}, "
-            f"adaptive_mean_type={self.adaptive_mean_type}, momentum={self.momentum}, "
+            f"momentum={self.momentum}, "
+            f"norm_strategy={self.norm_strategy}, minibatch_momentum={self.minibatch_momentum}, "
             f"use_autograd={self.use_autograd}, device={self.device}, "
             f"dtype={self.dtype})"
         )

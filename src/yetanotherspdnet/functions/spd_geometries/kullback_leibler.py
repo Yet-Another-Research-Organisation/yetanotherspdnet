@@ -17,10 +17,10 @@ def euclidean_geodesic(
     Parameters
     ----------
     point1 : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
+        Symmetric matrices
 
     point2 : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
+        Symmetric matrices
 
     t : float | torch.Tensor
         parameter on the path, should be in [0,1]
@@ -28,9 +28,67 @@ def euclidean_geodesic(
     Returns
     -------
     point : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
+        Symmetric matrices
     """
     return symmetrize((1 - t) * point1 + t * point2)
+
+
+class EuclideanGeodesic(Function):
+    """
+    Euclidean geodesic of a batch of symmetric matrices
+    """
+
+    @staticmethod
+    def forward(
+        ctx, point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Forward pass of the Euclidean geodesic
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        point1 : torch.Tensor of shape (..., n_features, n_features)
+            Symmetric matrices
+
+        point2 : torch.Tensor of shape (..., n_features, n_features)
+            Symmetric matrices
+
+        t : float | torch.Tensor
+            parameter on the path, should be in [0,1]
+
+        Returns
+        -------
+        point : torch.Tensor of shape (..., n_features, n_features)
+            Symmetric matrices
+        """
+        ctx.t = t
+        return symmetrize((1 - t) * point1 + t * point2)
+
+    @staticmethod
+    def backward(
+        ctx, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, None]:
+        """
+        Backward pass of the Euclidean geodesic
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+
+        Returns
+        -------
+        grad_input1 : torch.Tensor of shape (..., n_features, n_features)
+
+        grad_input2 : torch.Tensor of shape (..., n_features, n_features)
+        """
+        t = ctx.t
+        return symmetrize((1 - t) * grad_output), symmetrize(t * grad_output), None
 
 
 # ---------------
@@ -38,12 +96,12 @@ def euclidean_geodesic(
 # ---------------
 def arithmetic_mean(data: torch.Tensor) -> torch.Tensor:
     """
-    Arithmetic mean of a batch of SPD matrices
+    Arithmetic mean of a batch of symmetric matrices
 
     Parameters
     ----------
     data : torch.Tensor of shape (..., n_features, n_features)
-        Batch of SPD matrices. The mean is computed along ... axes
+        Batch of symmetric matrices. The mean is computed along ... axes
 
     Returns
     -------
@@ -63,7 +121,7 @@ class ArithmeticMean(Function):
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the arithmetic mean of a batch of SPD matrices
+        Forward pass of the arithmetic mean of a batch of symmetric matrices
 
         Parameters
         ----------
@@ -71,7 +129,7 @@ class ArithmeticMean(Function):
             Context object to retrieve tensors saved during the forward pass
 
         data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of SPD matrices. The mean is computed along ... axes
+            Batch of symmetric matrices. The mean is computed along ... axes
 
         Returns
         -------
@@ -86,7 +144,7 @@ class ArithmeticMean(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the arithmetic mean of a batch of SPD matrices
+        Backward pass of the arithmetic mean of a batch of symmetric matrices
 
         Parameters
         ----------
@@ -99,7 +157,7 @@ class ArithmeticMean(Function):
         Returns
         -------
         grad_input : torch.Tensor of shape (..., n_features, n_features)
-            Gradient of the loss with respect to the input batch of SPD matrices
+            Gradient of the loss with respect to the input batch of symmetric matrices
         """
         shape = ctx.shape
         if len(shape) == 2:
@@ -140,6 +198,74 @@ def harmonic_curve(
     point2_inv = torch.cholesky_inverse(torch.linalg.cholesky(point2))
     point_inv = euclidean_geodesic(point1_inv, point2_inv, t)
     return torch.cholesky_inverse(torch.linalg.cholesky(point_inv))
+
+
+class HarmonicCurve(Function):
+    """
+    Harmonic curve of two batches of SPD matrices
+    """
+
+    @staticmethod
+    def forward(
+        ctx, point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Forward pass of the harmonic curve
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        point1 : torch.Tensor of shape (..., n_features, n_features)
+            SPD matrices
+
+        point2 : torch.Tensor of shape (..., n_features, n_features)
+            SPD matrices
+
+        t : float | torch.Tensor
+            parameter on the path, should be in [0,1]
+
+        Returns
+        -------
+        point : torch.Tensor of shape (..., n_features, n_features)
+            SPD matrices
+        """
+        point1_inv = torch.cholesky_inverse(torch.linalg.cholesky(point1))
+        point2_inv = torch.cholesky_inverse(torch.linalg.cholesky(point2))
+        point_inv = euclidean_geodesic(point1_inv, point2_inv, t)
+        point = torch.cholesky_inverse(torch.linalg.cholesky(point_inv))
+        ctx.t = t
+        ctx.save_for_backward(point1_inv, point2_inv, point)
+        return point
+
+    @staticmethod
+    def backward(
+        ctx, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, None]:
+        """
+        Backward pass of the harmonic curve
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+
+        Returns
+        -------
+        grad_input1 : torch.Tensor of shape (..., n_features, n_features)
+
+        grad_input2 : torch.Tensor of shape (..., n_features, n_features)
+        """
+        t = ctx.t
+        point1_inv, point2_inv, point = ctx.saved_tensors
+        return (
+            (1 - t) * point1_inv @ point @ symmetrize(grad_output) @ point @ point1_inv,
+            t * point2_inv @ point @ symmetrize(grad_output) @ point @ point2_inv,
+            None,
+        )
 
 
 # -------------

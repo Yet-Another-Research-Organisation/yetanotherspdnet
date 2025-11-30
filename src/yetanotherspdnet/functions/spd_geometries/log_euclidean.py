@@ -1,7 +1,9 @@
+from pytest import Function
 import torch
 
 from ..spd_linalg import ExpmSymmetric, LogmSPD, expm_symmetric, logm_SPD
 from .kullback_leibler import (
+    EuclideanGeodesic,
     euclidean_geodesic,
     ArithmeticMean,
     arithmetic_mean,
@@ -38,6 +40,34 @@ def log_euclidean_geodesic(
     point2_logm = logm_SPD(point2)[0]
     point_logm = euclidean_geodesic(point1_logm, point2_logm, t)
     return expm_symmetric(point_logm)[0]
+
+
+def LogEuclideanGeodesic(
+    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
+) -> torch.Tensor:
+    """
+    Log-Euclidean geodesic between two batches of SPD matrices
+
+    Parameters
+    ----------
+    point1 : torch.Tensor of shape (..., nfeatures, nfeatures)
+        SPD matrices
+
+    point2 : torch.Tensor of shape (..., nfeatures, nfeatures)
+        SPD matrices
+
+    t : float | torch.Tensor
+        parameter on the path, should be in [0,1]
+
+    Returns
+    -------
+    point : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+    """
+    point1_logm = LogmSPD.apply(point1)
+    point2_logm = LogmSPD.apply(point2)
+    point_logm = EuclideanGeodesic.apply(point1_logm, point2_logm, t)
+    return ExpmSymmetric.apply(point_logm)
 
 
 # ------------------

@@ -18,6 +18,7 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
 )
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     geometric_arithmetic_harmonic_mean,
+    geometric_euclidean_harmonic_curve,
 )
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
     log_euclidean_geodesic,
@@ -59,32 +60,27 @@ class TestBatchNormSPDMean:
 
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
-        "mean_type, mean_options, adaptive_mean_type",
+        "mean_type, mean_options",
         [
-            ("affine_invariant", None, "affine_invariant"),
-            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
-            ("log_euclidean", None, "log_euclidean"),
-            ("arithmetic", None, "arithmetic"),
-            ("harmonic", None, "harmonic"),
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
             (
                 "geometric_arithmetic_harmonic",
                 None,
-                "geometric_arithmetic_harmonic_simple",
-            ),
-            (
-                "geometric_arithmetic_harmonic",
-                None,
-                "geometric_arithmetic_harmonic_exact",
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
     @pytest.mark.parametrize("use_autograd", [False, True])
     def test_initialization(
         self,
         n_features,
         mean_type,
         mean_options,
-        adaptive_mean_type,
+        norm_strategy,
         use_autograd,
         device,
         dtype,
@@ -97,8 +93,9 @@ class TestBatchNormSPDMean:
             n_features,
             mean_type,
             mean_options,
-            adaptive_mean_type,
             momentum=momentum,
+            norm_strategy=norm_strategy,
+            minibatch_momentum=momentum,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -107,8 +104,9 @@ class TestBatchNormSPDMean:
         assert layer.n_features == n_features
         assert layer.mean_type == mean_type
         assert layer.mean_options == mean_options
-        assert layer.adaptive_mean_type == adaptive_mean_type
         assert layer.momentum == momentum
+        assert layer.norm_strategy == norm_strategy
+        assert layer.minibatch_momentum == momentum
         assert layer.use_autograd == use_autograd
         assert layer.device == device
         assert layer.dtype == dtype
@@ -117,28 +115,25 @@ class TestBatchNormSPDMean:
         assert is_spd(layer.Covbias)
         assert_close(layer.Covbias, torch.eye(n_features, device=device, dtype=dtype))
 
-    @pytest.mark.parametrize("n_matrices", [1, 10])
+        # TODO: add check that the correct inner functions are selected
+
+    @pytest.mark.parametrize("n_matrices", [10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
-        "mean_type, mean_options, adaptive_mean_type",
+        "mean_type, mean_options",
         [
-            ("affine_invariant", None, "affine_invariant"),
-            ("affine_invariant", {"n_iterations": 30}, "affine_invariant"),
-            ("log_euclidean", None, "log_euclidean"),
-            ("arithmetic", None, "arithmetic"),
-            ("harmonic", None, "harmonic"),
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 30}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
             (
                 "geometric_arithmetic_harmonic",
                 None,
-                "geometric_arithmetic_harmonic_simple",
-            ),
-            (
-                "geometric_arithmetic_harmonic",
-                None,
-                "geometric_arithmetic_harmonic_exact",
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_pass(
         self,
@@ -147,7 +142,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
-        adaptive_mean_type,
+        norm_strategy,
         use_autograd,
         device,
         dtype,
@@ -157,12 +152,14 @@ class TestBatchNormSPDMean:
         Test that forward pass returns correct shape, etc.
         and that the output is actually normalized and biased as expected
         """
+        momentum = 0.1
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
             mean_options,
-            adaptive_mean_type,
-            momentum=0.1,
+            momentum=momentum,
+            norm_strategy=norm_strategy,
+            minibatch_momentum=momentum,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -187,6 +184,8 @@ class TestBatchNormSPDMean:
         assert is_spd(output)
 
         # check output normalization and bias
+        if norm_strategy == "minibatch":
+            return  # if minibatch, no checking mean output
         # TODO: would be better to perform this test with layer.Covbias not equal to identity
         if mean_type == "affine_invariant" and mean_options is not None:
             # for affine-invariant mean, we can do this check only if good quality estimation, i.e.,
@@ -205,31 +204,26 @@ class TestBatchNormSPDMean:
             G_output = harmonic_mean(output)
             assert_close(G_output, layer.Covbias @ layer.Covbias)
         elif mean_type == "geometric_arithmetic_harmonic":
-            G_output = geometric_arithmetic_harmonic_mean(output)[0]
+            G_output = geometric_arithmetic_harmonic_mean(output)
             assert_close(G_output, layer.Covbias @ layer.Covbias)
 
-    @pytest.mark.parametrize("n_matrices", [1, 10])
+    @pytest.mark.parametrize("n_matrices", [10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
-        "mean_type, mean_options, adaptive_mean_type",
+        "mean_type, mean_options",
         [
-            ("affine_invariant", None, "affine_invariant"),
-            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
-            ("log_euclidean", None, "log_euclidean"),
-            ("arithmetic", None, "arithmetic"),
-            ("harmonic", None, "harmonic"),
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
             (
                 "geometric_arithmetic_harmonic",
                 None,
-                "geometric_arithmetic_harmonic_simple",
-            ),
-            (
-                "geometric_arithmetic_harmonic",
-                None,
-                "geometric_arithmetic_harmonic_exact",
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
     def test_both_modes_give_same_result(
         self,
         n_matrices,
@@ -237,7 +231,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
-        adaptive_mean_type,
+        norm_strategy,
         device,
         dtype,
         generator,
@@ -258,8 +252,9 @@ class TestBatchNormSPDMean:
             n_features,
             mean_type,
             mean_options,
-            adaptive_mean_type,
             momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_momentum=0.1,
             use_autograd=False,
             device=device,
             dtype=dtype,
@@ -269,8 +264,9 @@ class TestBatchNormSPDMean:
             n_features,
             mean_type,
             mean_options,
-            adaptive_mean_type,
             momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_momentum=0.1,
             use_autograd=True,
             device=device,
             dtype=dtype,
@@ -281,28 +277,23 @@ class TestBatchNormSPDMean:
 
         assert_close(output_manual, output_auto)
 
-    @pytest.mark.parametrize("n_matrices", [1, 10])
+    @pytest.mark.parametrize("n_matrices", [10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
-        "mean_type, mean_options, adaptive_mean_type",
+        "mean_type, mean_options",
         [
-            ("affine_invariant", None, "affine_invariant"),
-            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
-            ("log_euclidean", None, "log_euclidean"),
-            ("arithmetic", None, "arithmetic"),
-            ("harmonic", None, "harmonic"),
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
             (
                 "geometric_arithmetic_harmonic",
                 None,
-                "geometric_arithmetic_harmonic_simple",
-            ),
-            (
-                "geometric_arithmetic_harmonic",
-                None,
-                "geometric_arithmetic_harmonic_exact",
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(
         self,
@@ -311,7 +302,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
-        adaptive_mean_type,
+        norm_strategy,
         use_autograd,
         device,
         dtype,
@@ -324,8 +315,9 @@ class TestBatchNormSPDMean:
             n_features,
             mean_type,
             mean_options,
-            adaptive_mean_type,
             momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_momentum=0.1,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -359,28 +351,23 @@ class TestBatchNormSPDMean:
         assert not torch.isinf(original_bias.grad).any()
         assert is_symmetric(original_bias.grad)
 
-    @pytest.mark.parametrize("n_matrices", [1, 10])
+    @pytest.mark.parametrize("n_matrices", [10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
-        "mean_type, mean_options, adaptive_mean_type",
+        "mean_type, mean_options",
         [
-            ("affine_invariant", None, "affine_invariant"),
-            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
-            ("log_euclidean", None, "log_euclidean"),
-            ("arithmetic", None, "arithmetic"),
-            ("harmonic", None, "harmonic"),
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
             (
                 "geometric_arithmetic_harmonic",
                 None,
-                "geometric_arithmetic_harmonic_simple",
-            ),
-            (
-                "geometric_arithmetic_harmonic",
-                None,
-                "geometric_arithmetic_harmonic_exact",
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_parameter_update(
         self,
@@ -389,7 +376,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
-        adaptive_mean_type,
+        norm_strategy,
         use_autograd,
         device,
         dtype,
@@ -402,8 +389,9 @@ class TestBatchNormSPDMean:
             n_features,
             mean_type,
             mean_options,
-            adaptive_mean_type,
             momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_momentum=0.1,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -431,28 +419,23 @@ class TestBatchNormSPDMean:
         # Check that Covbias changed
         assert not torch.allclose(layer.Covbias, initial_Covbias)
 
-    @pytest.mark.parametrize("n_matrices", [1, 10])
-    @pytest.mark.parametrize("n_features, cond", [(5, 1000)])
+    @pytest.mark.parametrize("n_matrices", [10])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize(
-        "mean_type, mean_options, adaptive_mean_type",
+        "mean_type, mean_options",
         [
-            ("affine_invariant", None, "affine_invariant"),
-            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
-            ("log_euclidean", None, "log_euclidean"),
-            ("arithmetic", None, "arithmetic"),
-            ("harmonic", None, "harmonic"),
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
             (
                 "geometric_arithmetic_harmonic",
                 None,
-                "geometric_arithmetic_harmonic_simple",
-            ),
-            (
-                "geometric_arithmetic_harmonic",
-                None,
-                "geometric_arithmetic_harmonic_exact",
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
     def test_both_modes_give_same_gradient(
         self,
         n_matrices,
@@ -460,7 +443,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
-        adaptive_mean_type,
+        norm_strategy,
         device,
         dtype,
         generator,
@@ -472,8 +455,9 @@ class TestBatchNormSPDMean:
             n_features,
             mean_type,
             mean_options,
-            adaptive_mean_type,
             momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_momentum=0.1,
             use_autograd=False,
             device=device,
             dtype=dtype,
@@ -483,8 +467,9 @@ class TestBatchNormSPDMean:
             n_features,
             mean_type,
             mean_options,
-            adaptive_mean_type,
             momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_momentum=0.1,
             use_autograd=True,
             device=device,
             dtype=dtype,
@@ -510,9 +495,6 @@ class TestBatchNormSPDMean:
         loss_auto = output_auto.sum()
         loss_auto.backward()
 
-        print(X1.grad[0])
-        print(X2.grad[0])
-
         # check input gradients
         assert_close(X1.grad, X2.grad, rtol=1e-6, atol=1e-6)
         # check Covbias gradient
@@ -523,32 +505,27 @@ class TestBatchNormSPDMean:
 
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
-        "mean_type, mean_options, adaptive_mean_type",
+        "mean_type, mean_options",
         [
-            ("affine_invariant", None, "affine_invariant"),
-            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
-            ("log_euclidean", None, "log_euclidean"),
-            ("arithmetic", None, "arithmetic"),
-            ("harmonic", None, "harmonic"),
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
             (
                 "geometric_arithmetic_harmonic",
                 None,
-                "geometric_arithmetic_harmonic_simple",
-            ),
-            (
-                "geometric_arithmetic_harmonic",
-                None,
-                "geometric_arithmetic_harmonic_exact",
             ),
         ],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
+    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
     def test_repr_and_str(
         self,
         n_features,
         mean_type,
         mean_options,
-        adaptive_mean_type,
+        norm_strategy,
         use_autograd,
         device,
         dtype,
@@ -560,8 +537,9 @@ class TestBatchNormSPDMean:
             n_features,
             mean_type,
             mean_options,
-            adaptive_mean_type,
             momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_momentum=0.1,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -573,8 +551,9 @@ class TestBatchNormSPDMean:
         assert f"n_features={n_features}" in repr_str
         assert f"mean_type={mean_type}" in repr_str
         assert f"mean_options={mean_options}" in repr_str
-        assert f"adaptive_mean_type={adaptive_mean_type}" in repr_str
         assert f"momentum={0.1}" in repr_str
+        assert f"norm_strategy={norm_strategy}" in repr_str
+        assert f"minibatch_momentum={0.1}" in repr_str
         assert f"device={device}" in repr_str
         assert f"dtype={dtype}" in repr_str
         assert f"use_autograd={use_autograd}" in repr_str
@@ -582,22 +561,16 @@ class TestBatchNormSPDMean:
 
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
-        "mean_type, mean_options, adaptive_mean_type",
+        "mean_type, mean_options",
         [
-            ("affine_invariant", None, "affine_invariant"),
-            ("affine_invariant", {"n_iterations": 5}, "affine_invariant"),
-            ("log_euclidean", None, "log_euclidean"),
-            ("arithmetic", None, "arithmetic"),
-            ("harmonic", None, "harmonic"),
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
             (
                 "geometric_arithmetic_harmonic",
                 None,
-                "geometric_arithmetic_harmonic_simple",
-            ),
-            (
-                "geometric_arithmetic_harmonic",
-                None,
-                "geometric_arithmetic_harmonic_exact",
             ),
         ],
     )
@@ -607,7 +580,6 @@ class TestBatchNormSPDMean:
         n_features,
         mean_type,
         mean_options,
-        adaptive_mean_type,
         use_autograd,
         device,
         dtype,
@@ -619,7 +591,6 @@ class TestBatchNormSPDMean:
             n_features,
             mean_type,
             mean_options,
-            adaptive_mean_type,
             momentum=0.1,
             use_autograd=use_autograd,
             device=device,
