@@ -719,16 +719,16 @@ class TestAffineInvariantMean:
         assert_close(X_manual.grad, X_auto.grad)
 
 
-class TestAffineInvariantVarianceScalar:
+class TestAffineInvariantStdScalar:
     """
-    Test suite for the scalar variance with respect to the affine-invariant distance
+    Test suite for the scalar standard deviation with respect to the affine-invariant distance
     """
 
     @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_shape(self, n_matrices, n_features, cond, device, dtype, generator):
         """
-        Test that affine_invariant_variance_scalar and AffineInvariantVarianceScalar
+        Test that affine_invariant_std_scalar and AffineInvariantStdScalar
         return correct shape, etc.
         """
         # generate some random SPD matrices
@@ -749,28 +749,26 @@ class TestAffineInvariantVarianceScalar:
             generator=generator,
         )
 
-        var_auto = affine_invariant.affine_invariant_variance_scalar(X, G)
-        var_manual = affine_invariant.AffineInvariantVarianceScalar.apply(X, G)
+        std_auto = affine_invariant.affine_invariant_std_scalar(X, G)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(X, G)
 
-        assert var_auto.shape == torch.Size([])
-        assert var_auto.device == X.device
-        assert var_auto.dtype == X.dtype
-        assert var_auto >= 0
+        assert std_auto.shape == torch.Size([])
+        assert std_auto.device == X.device
+        assert std_auto.dtype == X.dtype
+        assert std_auto >= 0
 
-        assert var_manual.shape == torch.Size([])
-        assert var_manual.device == X.device
-        assert var_manual.dtype == X.dtype
-        assert var_manual >= 0
+        assert std_manual.shape == torch.Size([])
+        assert std_manual.device == X.device
+        assert std_manual.dtype == X.dtype
+        assert std_manual >= 0
 
-        assert_close(var_auto, var_manual)
+        assert_close(std_auto, std_manual)
 
     @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_zero_variance(
-        self, n_matrices, n_features, cond, device, dtype, generator
-    ):
+    def test_zero_std(self, n_matrices, n_features, cond, device, dtype, generator):
         """
-        Test that n_matrices same matrices have zero variance when reference point is the considered matrix
+        Test that n_matrices same matrices have zero std when reference point is the considered matrix
         """
         G = random_SPD(
             n_features,
@@ -782,11 +780,11 @@ class TestAffineInvariantVarianceScalar:
         )
         X = torch.squeeze(G.clone().detach().repeat(n_matrices, 1, 1))
 
-        var_auto = affine_invariant.affine_invariant_variance_scalar(X, G)
-        var_manual = affine_invariant.AffineInvariantVarianceScalar.apply(X, G)
+        std_auto = affine_invariant.affine_invariant_std_scalar(X, G)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(X, G)
 
-        assert_close(var_auto, torch.tensor(0.0, device=device, dtype=dtype))
-        assert_close(var_manual, torch.tensor(0.0, device=device, dtype=dtype))
+        assert_close(std_auto, torch.tensor(0.0, device=device, dtype=dtype))
+        assert_close(std_manual, torch.tensor(0.0, device=device, dtype=dtype))
 
     @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
@@ -815,13 +813,15 @@ class TestAffineInvariantVarianceScalar:
         )
         diagvals_G = G.diagonal(dim1=-1, dim2=-2)
 
-        var_auto = affine_invariant.affine_invariant_variance_scalar(X, G)
-        var_manual = affine_invariant.AffineInvariantVarianceScalar.apply(X, G)
+        std_auto = affine_invariant.affine_invariant_std_scalar(X, G)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(X, G)
 
-        expected = torch.sum(torch.log(diagvals_X / diagvals_G) ** 2) / n_matrices
+        expected = torch.sqrt(
+            torch.sum(torch.log(diagvals_X / diagvals_G) ** 2) / n_matrices
+        )
 
-        assert_close(var_auto, expected)
-        assert_close(var_manual, expected)
+        assert_close(std_auto, expected)
+        assert_close(std_manual, expected)
 
     @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
@@ -862,13 +862,15 @@ class TestAffineInvariantVarianceScalar:
         X = eigvecs @ diag_X @ eigvecs.transpose(-1, -2)
         G = eigvecs @ diag_G @ eigvecs.transpose(-1, -2)
 
-        var_auto = affine_invariant.affine_invariant_variance_scalar(X, G)
-        var_manual = affine_invariant.AffineInvariantVarianceScalar.apply(X, G)
+        std_auto = affine_invariant.affine_invariant_std_scalar(X, G)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(X, G)
 
-        expected = torch.sum(torch.log(diagvals_X / diagvals_G) ** 2) / n_matrices
+        expected = torch.sqrt(
+            torch.sum(torch.log(diagvals_X / diagvals_G) ** 2) / n_matrices
+        )
 
-        assert_close(var_auto, expected)
-        assert_close(var_manual, expected)
+        assert_close(std_auto, expected)
+        assert_close(std_manual, expected)
 
     @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
@@ -901,13 +903,13 @@ class TestAffineInvariantVarianceScalar:
         # get SPD matrices from tangent vectors
         data = G_sqrtm @ spd_linalg.expm_symmetric(tangent_vectors)[0] @ G_sqrtm
 
-        var_auto = affine_invariant.affine_invariant_variance_scalar(data, G)
-        var_manual = affine_invariant.AffineInvariantVarianceScalar.apply(data, G)
+        std_auto = affine_invariant.affine_invariant_std_scalar(data, G)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(data, G)
 
-        expected = torch.linalg.norm(tangent_vectors) ** 2 / n_matrices
+        expected = torch.sqrt(torch.linalg.norm(tangent_vectors) ** 2 / n_matrices)
 
-        assert_close(var_auto, expected)
-        assert_close(var_manual, expected)
+        assert_close(std_auto, expected)
+        assert_close(std_manual, expected)
 
     @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
@@ -941,14 +943,12 @@ class TestAffineInvariantVarianceScalar:
         G_auto = G.clone().detach()
         G_auto.requires_grad = True
 
-        var_auto = affine_invariant.affine_invariant_variance_scalar(X_auto, G_auto)
-        var_manual = affine_invariant.AffineInvariantVarianceScalar.apply(
-            X_manual, G_manual
-        )
+        std_auto = affine_invariant.affine_invariant_std_scalar(X_auto, G_auto)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(X_manual, G_manual)
 
-        loss_manual = var_manual
+        loss_manual = std_manual
         loss_manual.backward()
-        loss_auto = var_auto
+        loss_auto = std_auto
         loss_auto.backward()
 
         assert X_manual.grad is not None

@@ -530,11 +530,11 @@ def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tens
 # ---------------
 # Scalar variance
 # ---------------
-def affine_invariant_variance_scalar(
+def affine_invariant_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> torch.Tensor:
     """
-    Scalar variance with respect to the affine-invariant distance
+    Scalar standard deviation with respect to the affine-invariant distance
 
     Parameters
     ----------
@@ -546,25 +546,25 @@ def affine_invariant_variance_scalar(
 
     Returns
     -------
-    scalar_variance : torch.Tensor of shape (1)
-        scalar variance
+    scalar_std : torch.Tensor of shape ()
+        scalar standard deviation
     """
     n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
     G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
     transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
     eigvals = torch.linalg.eigvalsh(transformed_data)
-    return torch.sum(torch.log(eigvals) ** 2) / n_matrices
+    return torch.sqrt(torch.sum(torch.log(eigvals) ** 2) / n_matrices)
 
 
-class AffineInvariantVarianceScalar(Function):
+class AffineInvariantStdScalar(Function):
     """
-    Scalar variance with respect to the affine-invariant distance
+    Scalar standard deviation with respect to the affine-invariant distance
     """
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the scalar variance with respect to the affine-invariant distance
+        Forward pass of the scalar standard deviation with respect to the affine-invariant distance
 
         Parameters
         ----------
@@ -579,16 +579,16 @@ class AffineInvariantVarianceScalar(Function):
 
         Returns
         -------
-        scalar_variance : torch.Tensor of shape (1)
-            scalar variance
+        scalar_std : torch.Tensor of shape ()
+            scalar standard deviation
         """
         n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
-        eigvals_G, eigvecs_G = torch.linalg.eigh(reference_point)
-        inv_sqrt = lambda x: 1 / torch.sqrt(x)
-        G_inv_sqrtm = eigh_operation(eigvals_G, eigvecs_G, inv_sqrt)
+        G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
         transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
         eigvals_transdat, eigvecs_transdat = torch.linalg.eigh(transformed_data)
-        scalar_variance = torch.sum(torch.log(eigvals_transdat) ** 2) / n_matrices
+        scalar_std = torch.sqrt(
+            torch.sum(torch.log(eigvals_transdat) ** 2) / n_matrices
+        )
         ctx.n_matrices = n_matrices
         ctx.save_for_backward(
             data,
@@ -596,21 +596,22 @@ class AffineInvariantVarianceScalar(Function):
             G_inv_sqrtm,
             eigvals_transdat,
             eigvecs_transdat,
+            scalar_std,
         )
-        return scalar_variance
+        return scalar_std
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the scalar variance with respect to the affine-invariant distance
+        Backward pass of the scalar standard deviation with respect to the affine-invariant distance
 
         Parameters
         ----------
         ctx : torch.autograd.function._ContextMethodMixin
             Context object to retrieve tensors saved during the forward pass
 
-        grad_output : torch.Tensor of shape (1)
-            Gradient of the loss with respect to the output of the scalar variance Function
+        grad_output : torch.Tensor of shape ()
+            Gradient of the loss with respect to the output of the scalar standart deviation Function
 
         Returns
         -------
@@ -627,6 +628,7 @@ class AffineInvariantVarianceScalar(Function):
             G_inv_sqrtm,
             eigvals_transdat,
             eigvecs_transdat,
+            scalar_std,
         ) = ctx.saved_tensors
 
         data_inv_sqrtm = inv_sqrtm_SPD(data)[0]
@@ -639,9 +641,16 @@ class AffineInvariantVarianceScalar(Function):
         middle_term_G = eigh_operation(eigvals_transG, eigvecs_transG, log_inv)
 
         grad_input_data = (
-            2 * grad_output * G_inv_sqrtm @ middle_term_data @ G_inv_sqrtm / n_matrices
+            grad_output
+            * G_inv_sqrtm
+            @ middle_term_data
+            @ G_inv_sqrtm
+            / n_matrices
+            / scalar_std
         )
-        grad_input_G = grad_output * arithmetic_mean(
-            2 * data_inv_sqrtm @ middle_term_G @ data_inv_sqrtm
+        grad_input_G = (
+            grad_output
+            * arithmetic_mean(data_inv_sqrtm @ middle_term_G @ data_inv_sqrtm)
+            / scalar_std
         )
         return grad_input_data, grad_input_G
