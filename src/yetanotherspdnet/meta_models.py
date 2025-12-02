@@ -232,8 +232,8 @@ def _create_spdnet(
     # Batchnorm parameters
     batchnorm_momentum = kwargs.get('momentum', 0.01)
     batchnorm_mean_options = kwargs.get('batchnorm_mean_options', None)
-    # If None, will fallback to batchnorm_mean_type in SPDnet
-    batchnorm_adaptive_mean_type = kwargs.get('batchnorm_adaptive_mean_type', None)
+    batchnorm_norm_strategy = kwargs.get('batchnorm_norm_strategy', 'classical')
+    batchnorm_minibatch_momentum = kwargs.get('batchnorm_minibatch_momentum', 0.01)
     
     # Bimap parametrization parameters
     bimap_parametrized = kwargs.get('bimap_parametrized', True)
@@ -274,8 +274,9 @@ def _create_spdnet(
         batchnorm=batchnorm,
         batchnorm_mean_type=batchnorm_mean_type,
         batchnorm_mean_options=batchnorm_mean_options,
-        batchnorm_adaptive_mean_type=batchnorm_adaptive_mean_type,
         batchnorm_momentum=batchnorm_momentum,
+        batchnorm_norm_strategy=batchnorm_norm_strategy,
+        batchnorm_minibatch_momentum=batchnorm_minibatch_momentum,
         vec_type=vec_type,
         use_logeig=use_logeig,
         device=device,

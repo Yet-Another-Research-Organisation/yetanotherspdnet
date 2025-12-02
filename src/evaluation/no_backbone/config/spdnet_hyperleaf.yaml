@@ -51,6 +51,7 @@ model_config:
   batchnorm_adaptive_mean_type: null  # If null, uses same as batchnorm_method
   softmax: false
   use_autograd: false
+    # batchnorm: true
   use_logeig: true
   dropout_rate: 0.0
   use_vech: false

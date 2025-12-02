@@ -264,7 +264,10 @@ class BatchNormSPDMean(nn.Module):
                     self.mean_regularizer, mean_batch, self.minibatch_momentum
                 )
                 with torch.no_grad():
-                    self.mean_regularizer = mean
+                    # CORRECTION: Détacher mean avant de mettre à jour mean_regularizer
+                    # pour éviter de traverser le graphe deux fois
+                    self.mean_regularizer = mean.detach()
+                    # self.mean_regularizer = mean
             with torch.no_grad():
                 self.running_mean = self.adaptive_fun(
                     self.running_mean, mean_batch, self.momentum

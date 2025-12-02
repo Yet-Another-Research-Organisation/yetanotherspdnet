@@ -203,7 +203,6 @@ class SPDnet(nn.Module):
                     use_autograd=self.use_autograd['batchnorm'],
                     norm_strategy=self.batchnorm_norm_strategy,
                     minibatch_momentum=self.batchnorm_minibatch_momentum,
-                    use_autograd=self.use_autograd,
                     device=self.device,
                     dtype=self.dtype,
                 )
@@ -240,7 +239,6 @@ class SPDnet(nn.Module):
                         use_autograd=self.use_autograd['batchnorm'],
                         norm_strategy=self.batchnorm_norm_strategy,
                         minibatch_momentum=self.batchnorm_minibatch_momentum,
-                        use_autograd=self.use_autograd,
                         device=self.device,
                         dtype=self.dtype,
                     )
