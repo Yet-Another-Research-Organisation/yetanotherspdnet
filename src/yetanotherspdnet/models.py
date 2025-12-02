@@ -146,27 +146,27 @@ class SPDnet(nn.Module):
         self.device = device
         self.dtype = dtype
         self.generator = generator
-        
+
         # Handle use_autograd as bool or dict
         if isinstance(use_autograd, bool):
             self.use_autograd = {
-                'bimap': use_autograd,
-                'reeig': use_autograd,
-                'logeig': use_autograd,
-                'batchnorm': use_autograd,
-                'vec': use_autograd,
+                "bimap": use_autograd,
+                "reeig": use_autograd,
+                "logeig": use_autograd,
+                "batchnorm": use_autograd,
+                "vec": use_autograd,
             }
         else:
             # Default all to False, then update with provided values
             self.use_autograd = {
-                'bimap': False,
-                'reeig': False,
-                'logeig': False,
-                'batchnorm': False,
-                'vec': False,
+                "bimap": False,
+                "reeig": False,
+                "logeig": False,
+                "batchnorm": False,
+                "vec": False,
             }
             self.use_autograd.update(use_autograd)
-        
+
         # Store original for compatibility
         self._use_autograd_original = use_autograd
 
@@ -181,7 +181,7 @@ class SPDnet(nn.Module):
                 device=self.device,
                 dtype=self.dtype,
                 generator=self.generator,
-                use_autograd=self.use_autograd['bimap'],
+                use_autograd=self.use_autograd["bimap"],
             )
         ]
 
@@ -189,7 +189,7 @@ class SPDnet(nn.Module):
             ReEig(
                 eps=self.reeig_eps,
                 dim=self.hidden_layers_size[0],
-                use_autograd=self.use_autograd['reeig'],
+                use_autograd=self.use_autograd["reeig"],
             )
         )
 
@@ -200,7 +200,7 @@ class SPDnet(nn.Module):
                     mean_type=self.batchnorm_mean_type,
                     mean_options=self.batchnorm_mean_options,
                     momentum=self.batchnorm_momentum,
-                    use_autograd=self.use_autograd['batchnorm'],
+                    use_autograd=self.use_autograd["batchnorm"],
                     norm_strategy=self.batchnorm_norm_strategy,
                     minibatch_momentum=self.batchnorm_minibatch_momentum,
                     device=self.device,
@@ -218,14 +218,14 @@ class SPDnet(nn.Module):
                     device=self.device,
                     dtype=self.dtype,
                     generator=self.generator,
-                    use_autograd=self.use_autograd['bimap'],
+                    use_autograd=self.use_autograd["bimap"],
                 )
             )
             spdnet_layers.append(
                 ReEig(
                     eps=self.reeig_eps,
                     dim=self.hidden_layers_size[i],
-                    use_autograd=self.use_autograd['reeig'],
+                    use_autograd=self.use_autograd["reeig"],
                 )
             )
 
@@ -236,23 +236,23 @@ class SPDnet(nn.Module):
                         mean_type=self.batchnorm_mean_type,
                         mean_options=self.batchnorm_mean_options,
                         momentum=self.batchnorm_momentum,
-                        use_autograd=self.use_autograd['batchnorm'],
+                        use_autograd=self.use_autograd["batchnorm"],
                         norm_strategy=self.batchnorm_norm_strategy,
                         minibatch_momentum=self.batchnorm_minibatch_momentum,
                         device=self.device,
                         dtype=self.dtype,
                     )
                 )
-        
+
         # Conditionally add LogEig layer
         if self.use_logeig:
-            spdnet_layers.append(LogEig(use_autograd=self.use_autograd['logeig']))
+            spdnet_layers.append(LogEig(use_autograd=self.use_autograd["logeig"]))
 
         self.spdnet_layers = nn.Sequential(*spdnet_layers)
 
         # Create final layer(s)
         if self.vec_type == "vec":
-            self.vectorization = Vec(use_autograd=self.use_autograd['vec'])
+            self.vectorization = Vec(use_autograd=self.use_autograd["vec"])
             self.linear = nn.Linear(
                 self.hidden_layers_size[-1] ** 2,
                 self.output_dim,
