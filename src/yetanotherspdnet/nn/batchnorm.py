@@ -134,6 +134,7 @@ class BatchNormSPDMean(nn.Module):
         self.running_mean = torch.eye(
             self.n_features, dtype=self.dtype, device=self.device
         )
+        self.running_mean.requires_grad = False
 
     def _init_mean(self) -> None:
         """
@@ -209,11 +210,14 @@ class BatchNormSPDMean(nn.Module):
         ], f"formula must be in ['classical', 'minibatch', got {self.mean_type}"
 
         if self.norm_strategy == "classical":
+            self.get_norm_mean = lambda mean: mean
             pass
         elif self.norm_strategy == "minibatch":
+            self.get_norm_mean = self._handle_mean_minibatch
             self.mean_regularizer = torch.eye(
                 self.n_features, device=self.device, dtype=self.dtype
             )
+            self.mean_regularizer.requires_grad = False
             if self.mean_type == "affine_invariant":
                 self.regularize_fun = (
                     affine_invariant_geodesic
@@ -241,6 +245,17 @@ class BatchNormSPDMean(nn.Module):
                     else GeometricEuclideanHarmonicCurve
                 )
 
+    def _handle_mean_minibatch(self, mean_batch: torch.Tensor) -> torch.Tensor:
+        """
+        Auxiliary function to handle mean used for normalization with minibatch strategy
+        """
+        mean = self.regularize_fun(
+            self.mean_regularizer, mean_batch, self.minibatch_momentum
+        )
+        with torch.no_grad():
+            self.mean_regularizer = mean
+        return mean
+
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the BatchNormSPDMean layer
@@ -257,14 +272,7 @@ class BatchNormSPDMean(nn.Module):
         """
         if self.training:
             mean_batch = self.mean_fun(data)
-            if self.norm_strategy == "classical":
-                mean = mean_batch
-            elif self.norm_strategy == "minibatch":
-                mean = self.regularize_fun(
-                    self.mean_regularizer, mean_batch, self.minibatch_momentum
-                )
-                with torch.no_grad():
-                    self.mean_regularizer = mean
+            mean = self.get_norm_mean(mean_batch)
             with torch.no_grad():
                 self.running_mean = self.adaptive_fun(
                     self.running_mean, mean_batch, self.momentum
