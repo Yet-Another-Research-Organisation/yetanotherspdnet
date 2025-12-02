@@ -253,7 +253,8 @@ class BatchNormSPDMean(nn.Module):
             self.mean_regularizer, mean_batch, self.minibatch_momentum
         )
         with torch.no_grad():
-            self.mean_regularizer = mean
+            # Correction to avoid mean_regularizer to be part of the computational graph
+            self.mean_regularizer = mean.detach()
         return mean
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
