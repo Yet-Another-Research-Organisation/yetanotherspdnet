@@ -55,7 +55,6 @@ class BatchNormSPDMean(nn.Module):
         mean_type: str = "affine_invariant",
         mean_options: dict | None = None,
         momentum: float = 0.01,
-        norm_mode: str = "mean_only",
         norm_strategy: str = "classical",
         minibatch_momentum: float = 0.01,
         use_autograd: bool = False,
@@ -84,11 +83,6 @@ class BatchNormSPDMean(nn.Module):
         momentum : float, optional
             Momentum for running mean update.
             Default is 0.01
-
-        norm_mode : str, optional
-            Normalization mode.
-            Default is "mean_only".
-            Choices are: "mean_only" and "mean_var_scalar"
 
         norm_strategy : str, optional
             Strategy for normalization.
@@ -129,9 +123,6 @@ class BatchNormSPDMean(nn.Module):
         self.norm_strategy = norm_strategy
         self.minibatch_momentum = minibatch_momentum
         self._init_norm_strategy()
-
-        self.norm_mode = norm_mode
-        self._init_norm_mode()
 
         # bias parameter
         self.Covbias = torch.nn.Parameter(
@@ -224,7 +215,6 @@ class BatchNormSPDMean(nn.Module):
 
         if self.norm_strategy == "classical":
             self.get_norm_mean = lambda mean: mean
-            pass
         elif self.norm_strategy == "minibatch":
             self.get_norm_mean = self._handle_mean_minibatch
             self.mean_regularizer = torch.eye(
@@ -258,40 +248,6 @@ class BatchNormSPDMean(nn.Module):
                     else GeometricEuclideanHarmonicCurve
                 )
 
-    def _init_norm_mode(self) -> None:
-        """
-        Auxialiary function to handle the chosen normalization mode,
-        i.e., whether to only normalize the mean or both the mean and variance
-        """
-        assert self.norm_mode in ["mean_only", "mean_var_scalar"], (
-            f"norm_mode must be in ['mean_only', 'mean_var_scalar'], got {self.norm_mode}"
-        )
-        if self.norm_mode == "mean_only":
-            self.param_fun = self.mean_fun
-            self.get_norm_param = self.get_norm_mean
-            self.update_running_param = self.update_running_mean
-            self.norm_and_bias = self.norm_and_bias_mean
-        elif self.norm_mode == "mean_var_scalar":
-            if self.mean_type == "affine_invariant":
-                self.std_fun = (
-                    affine_invariant_std_scalar
-                    if self.use_autograd
-                    else AffineInvariantStdScalar.apply
-                )
-            else:
-                raise ValueError("not implemented yet")
-
-    def param_fun_var_scalar(
-        self, data: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Auxiliary function to get batch parmeters in norm_mode "mean_var_scalar"
-        """
-        mean_batch = self.mean_fun(data)
-        # TODO: NO IT'S NOT WORKING FOR MINIBATCH,
-        # IN THIS CASE, STD MUST BE COMPUTED WITH RESPECT TO REGULARIZED MEAN
-        std_scalar_batch = self.std_fun(data)
-
     def _handle_mean_minibatch(self, mean_batch: torch.Tensor) -> torch.Tensor:
         """
         Auxiliary function to handle mean used for normalization with minibatch strategy
@@ -300,28 +256,8 @@ class BatchNormSPDMean(nn.Module):
             self.mean_regularizer, mean_batch, self.minibatch_momentum
         )
         with torch.no_grad():
-            # Correction to avoid mean_regularizer to be part of the computational graph
             self.mean_regularizer = mean.detach()
         return mean
-
-    def update_running_mean(self, mean_batch: torch.Tensor) -> None:
-        """
-        Auxiliary function to update running mean
-        """
-        with torch.no_grad():
-            self.running_mean = self.adaptive_fun(
-                self.running_mean, mean_batch, self.momentum
-            )
-
-    def norm_and_bias_mean(
-        self, data: torch.Tensor, mean: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Auxiliary function to normalize data and add bias
-        """
-        data_normalized = self.normalize_mean(data, mean)
-        data_transformed = self.add_bias_mean(data_normalized, self.Covbias)
-        return data_transformed
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -338,15 +274,20 @@ class BatchNormSPDMean(nn.Module):
             Batch of transformed (normalized then biased) SPD matrices
         """
         if self.training:
-            param_batch = self.param_fun(data)
-            param = self.get_norm_param(param_batch)
-            self.update_running_param(param_batch)
+            mean_batch = self.mean_fun(data)
+            mean = self.get_norm_mean(mean_batch)
+            # update running mean
+            with torch.no_grad():
+                self.running_mean = self.adaptive_fun(
+                    self.running_mean, mean_batch, self.momentum
+                )
         else:
             # training over, use overall mean learnt on all batches
-            param = self.running_mean
+            mean = self.running_mean
 
         # Normalize data and add bias
-        data_transformed = self.norm_and_bias(data, param)
+        data_normalized = self.normalize_mean(data, mean)
+        data_transformed = self.add_bias_mean(data_normalized, self.Covbias)
 
         return data_transformed
 
