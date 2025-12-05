@@ -6,7 +6,7 @@ from torch.nn.utils import parametrize
 
 from yetanotherspdnet.nn.base import BiMap, ReEig, LogEig, Vec, Vech
 from yetanotherspdnet.nn.batchnorm import BatchNormSPDMean
-from yetanotherspdnet.models import SPDnet
+from yetanotherspdnet.model import SPDnet
 
 from yetanotherspdnet.random.spd import random_SPD
 
