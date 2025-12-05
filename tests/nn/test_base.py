@@ -87,7 +87,7 @@ class TestBiMap:
             assert layer.parametrization is parametrization
         assert layer.weight.shape == (n_in, n_out)
         assert layer.weight.dtype == dtype
-        assert layer.weight.device == device
+        assert layer.weight.device.type == device.type
         assert layer.weight.requires_grad is True
         assert is_orthogonal(layer.weight)
         # check that we have one and only one parameter
