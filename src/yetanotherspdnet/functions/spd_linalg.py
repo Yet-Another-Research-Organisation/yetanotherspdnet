@@ -781,6 +781,97 @@ class ExpmSymmetric(Function):
         return eigh_operation_grad(grad_output, eigvals, eigvecs, torch.exp, torch.exp)
 
 
+# -------------------------
+# Scaled SoftPlus Symmetric
+# -------------------------
+def scaled_softplus_symmetric(
+    data: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Scaled matrix SoftPlus of a batch of symmetric matrices.
+    It is scaled so that: f(0) = 1, f(x) -> 0 as x -> -inf and
+    f'(x) -> 1 as x -> +inf
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    Returns
+    -------
+    softplus_data : torch.Tensor of shape (..., n_features, n_features)
+        Matrix SoftPlus of the input batch of symmetric matrices
+
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues of matrices in data
+
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors of matrices in data
+    """
+    eigvals, eigvecs = torch.linalg.eigh(data)
+    softplus_fun = lambda x: torch.log(
+        torch.tensor(1.0) + torch.pow(torch.tensor(2.0), x)
+    ) / torch.log(torch.tensor(2.0))
+    return eigh_operation(eigvals, eigvecs, softplus_fun), eigvals, eigvecs
+
+
+class ScaledSoftPlusSymmetric(Function):
+    """
+    Scaled matrix SoftPlus of a batch of symmetric matrices.
+    It is scaled so that: f(0) = 1, f(x) -> 0 as x -> -inf and
+    f'(x) -> 1 as x -> +inf
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the scaled matrix SoftPlus of a batch of symmetric matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        Returns
+        -------
+        softplus_data : torch.Tensor of shape (..., n_features, n_features)
+            Matrix SoftPlus of the input batch of symmetric matrices
+        """
+        softplus_data, eigvals, eigvecs = scaled_softplus_symmetric(data)
+        ctx.save_for_backward(eigvals, eigvecs)
+        return softplus_data
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
+        """
+        Backward pass of the scaled matrix SoftPlus of a batch of symmetric matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to matrix SoftPlus of the input batch of symmetric matrices
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input batch of symmetric matrices
+        """
+        eigvals, eigvecs = ctx.saved_tensors
+        softplus_fun = lambda x: torch.log(
+            torch.tensor(1.0) + torch.pow(torch.tensor(2.0), x)
+        ) / torch.log(torch.tensor(2.0))
+        softplus_deriv = lambda x: 1 / (1.0 + torch.pow(torch.tensor(2.0), -x))
+        return eigh_operation_grad(
+            grad_output, eigvals, eigvecs, softplus_fun, softplus_deriv
+        )
+
+
 # -----------------------------------------------------
 # ReLu activation function on eigenvalues of SPD matrix
 # -----------------------------------------------------

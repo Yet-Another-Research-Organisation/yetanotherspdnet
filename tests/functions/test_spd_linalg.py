@@ -1011,15 +1011,13 @@ class TestExpmSymmetric:
     @pytest.mark.parametrize("n_features", [100])
     def test_identity_matrix(self, n_features, device, dtype):
         """
-        Test that the matrix exponential of the identity is the identity
+        Test that the matrix exponential of zero is the identity
         """
-        I = torch.eye(n_features, device=device, dtype=dtype)
-        I_Expm = spd_linalg.ExpmSymmetric.apply(I)
+        Zero = torch.zeros((n_features, n_features), device=device, dtype=dtype)
+        I_Expm = spd_linalg.ExpmSymmetric.apply(Zero)
         assert_close(
             I_Expm,
-            torch.diag(
-                torch.exp(torch.ones((n_features,), device=device, dtype=dtype))
-            ),
+            torch.eye(n_features, device=device, dtype=dtype),
         )
 
     @pytest.mark.parametrize("n_features", [100])
@@ -1036,8 +1034,8 @@ class TestExpmSymmetric:
         expected = torch.diag(torch.exp(diag_vals))
         assert_close(D_Expm, expected)
 
-    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_eigenvalues(self, n_features, cond, device, dtype, generator):
+    @pytest.mark.parametrize("n_features", [100])
+    def test_eigenvalues(self, n_features, device, dtype, generator):
         """
         Test that eigenvalues of the matrix exponential of X are the exponential of the eigenvalues of X
         """
@@ -1085,6 +1083,152 @@ class TestExpmSymmetric:
         loss_manual = torch.norm(X_manual_expm)
         loss_manual.backward()
         loss_auto = torch.norm(X_auto_expm)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+
+# --------
+# SoftPlus
+# --------
+class TestSoftPlusSymmetric:
+    """
+    Test suite for SoftPlus function on eigenvalues of symmetric matrices
+    """
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(1, 100), (50, 100)])
+    def test_forward(self, n_matrices, n_features, device, dtype, generator):
+        """
+        Test of scaled_softplus_symmetric function and forward of ScaledSoftPlusSymmetric Function class
+        """
+        X_symmetric = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        X_softplus, _, _ = spd_linalg.scaled_softplus_symmetric(X_symmetric)
+        X_SoftPlus = spd_linalg.ScaledSoftPlusSymmetric.apply(X_symmetric)
+
+        assert X_softplus.shape == X_symmetric.shape
+        assert X_softplus.device == X_symmetric.device
+        assert X_softplus.dtype == X_symmetric.dtype
+        assert is_spd(X_softplus)
+        inv_softplus = lambda x: torch.log(
+            torch.pow(torch.tensor(2.0), x) - 1.0
+        ) / torch.log(torch.tensor(2.0))
+        eigvals_Xs, eigvecs_Xs = torch.linalg.eigh(X_softplus)
+        assert_close(
+            spd_linalg.eigh_operation(eigvals_Xs, eigvecs_Xs, inv_softplus),
+            X_symmetric,
+            atol=1e-5,
+            rtol=1e-6,
+        )
+
+        assert X_SoftPlus.shape == X_symmetric.shape
+        assert X_SoftPlus.device == X_symmetric.device
+        assert X_SoftPlus.dtype == X_symmetric.dtype
+        assert is_spd(X_SoftPlus)
+        eigvals_XS, eigvecs_XS = torch.linalg.eigh(X_SoftPlus)
+        assert_close(
+            spd_linalg.eigh_operation(eigvals_XS, eigvecs_XS, inv_softplus),
+            X_symmetric,
+            atol=1e-5,
+            rtol=1e-6,
+        )
+        assert_close(X_SoftPlus, X_softplus)
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_identity_matrix(self, n_features, device, dtype):
+        """
+        Test that the matrix SoftPlus of zero is the identity
+        """
+        Zero = torch.zeros((n_features, n_features), device=device, dtype=dtype)
+        I_SoftPlus = spd_linalg.ScaledSoftPlusSymmetric.apply(Zero)
+        assert_close(
+            I_SoftPlus,
+            torch.eye(n_features, device=device, dtype=dtype),
+        )
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_diagonal_matrix(self, n_features, device, dtype, generator):
+        """
+        Test of the matrix SoftPlus of a diagonal matrix
+        """
+        diag_vals = (
+            torch.randn((n_features,), device=device, dtype=dtype, generator=generator)
+            ** 2
+        )
+        D = torch.diag(diag_vals)
+        D_SoftPlus = spd_linalg.ScaledSoftPlusSymmetric.apply(D)
+        softplus_fun = lambda x: torch.log(
+            torch.tensor(1.0) + torch.pow(torch.tensor(2.0), x)
+        ) / torch.log(torch.tensor(2.0))
+        expected = torch.diag(softplus_fun(diag_vals))
+        assert_close(D_SoftPlus, expected)
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_eigenvalues(self, n_features, device, dtype, generator):
+        """
+        Test that eigenvalues of the matrix SoftPlus of X are the SoftPlus of the eigenvalues of X
+        """
+        X = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        eigvals_X = torch.linalg.eigvalsh(X)
+        X_SoftPlus = spd_linalg.ScaledSoftPlusSymmetric.apply(X)
+        eigvals_X_SoftPlus = torch.linalg.eigvalsh(X_SoftPlus)
+        softplus_fun = lambda x: torch.log(
+            torch.tensor(1.0) + torch.pow(torch.tensor(2.0), x)
+        ) / torch.log(torch.tensor(2.0))
+        # Sort for comparison
+        expected = (softplus_fun(eigvals_X)).sort()[0]
+        actual = eigvals_X_SoftPlus.sort()[0]
+        assert_close(actual, expected)
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(1, 100), (50, 100)])
+    def test_backward(self, n_matrices, n_features, device, dtype, generator):
+        """
+        Test of backward of ExpmSymmetric Function class
+        """
+        X_symmetric = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        X_manual = X_symmetric.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X_symmetric.clone().detach()
+        X_auto.requires_grad = True
+
+        X_manual_softplus = spd_linalg.ScaledSoftPlusSymmetric.apply(X_manual)
+        X_auto_softplus, _, _ = spd_linalg.scaled_softplus_symmetric(X_auto)
+
+        loss_manual = torch.norm(X_manual_softplus)
+        loss_manual.backward()
+        loss_auto = torch.norm(X_auto_softplus)
         loss_auto.backward()
 
         assert X_manual.grad is not None
