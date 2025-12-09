@@ -138,6 +138,10 @@ def geometric_euclidean_harmonic_curve(
     point : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
     """
+    if t == 0.0:
+        return point1
+    if t == 1.0:
+        return point2
     point_euclidean = euclidean_geodesic(point1, point2, t)
     point_harmonic = harmonic_curve(point1, point2, t)
     return affine_invariant_geodesic(point_euclidean, point_harmonic, 0.5)
@@ -165,6 +169,10 @@ def GeometricEuclideanHarmonicCurve(
     point : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
     """
+    if t == 0.0:
+        return point1
+    if t == 1.0:
+        return point2
     point_euclidean = EuclideanGeodesic.apply(point1, point2, t)
     point_harmonic = HarmonicCurve.apply(point1, point2, t)
     return AffineInvariantGeodesic.apply(point_euclidean, point_harmonic, 0.5)

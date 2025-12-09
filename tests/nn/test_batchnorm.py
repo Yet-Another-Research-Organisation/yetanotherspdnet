@@ -73,7 +73,15 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
     @pytest.mark.parametrize("use_autograd", [False, True])
     def test_initialization(
         self,
@@ -81,6 +89,7 @@ class TestBatchNormSPDMean:
         mean_type,
         mean_options,
         norm_strategy,
+        minibatch_mode,
         use_autograd,
         device,
         dtype,
@@ -95,6 +104,7 @@ class TestBatchNormSPDMean:
             mean_options,
             momentum=momentum,
             norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
             minibatch_momentum=momentum,
             use_autograd=use_autograd,
             device=device,
@@ -133,7 +143,15 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_pass(
         self,
@@ -143,6 +161,7 @@ class TestBatchNormSPDMean:
         mean_type,
         mean_options,
         norm_strategy,
+        minibatch_mode,
         use_autograd,
         device,
         dtype,
@@ -159,6 +178,7 @@ class TestBatchNormSPDMean:
             mean_options,
             momentum=momentum,
             norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
             minibatch_momentum=momentum,
             use_autograd=use_autograd,
             device=device,
@@ -223,7 +243,15 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
     def test_both_modes_give_same_result(
         self,
         n_matrices,
@@ -232,6 +260,7 @@ class TestBatchNormSPDMean:
         mean_type,
         mean_options,
         norm_strategy,
+        minibatch_mode,
         device,
         dtype,
         generator,
@@ -254,6 +283,7 @@ class TestBatchNormSPDMean:
             mean_options,
             momentum=0.1,
             norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
             use_autograd=False,
             device=device,
@@ -266,6 +296,7 @@ class TestBatchNormSPDMean:
             mean_options,
             momentum=0.1,
             norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
             use_autograd=True,
             device=device,
@@ -293,7 +324,15 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(
         self,
@@ -303,6 +342,7 @@ class TestBatchNormSPDMean:
         mean_type,
         mean_options,
         norm_strategy,
+        minibatch_mode,
         use_autograd,
         device,
         dtype,
@@ -317,11 +357,14 @@ class TestBatchNormSPDMean:
             mean_options,
             momentum=0.1,
             norm_strategy=norm_strategy,
-            minibatch_momentum=0.1,
+            minibatch_mode=minibatch_mode,
+            minibatch_momentum=1.0,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
         )
+        if norm_strategy == "minibatch":
+            print(layer.get_minibatch_momentum())
 
         X = random_SPD(
             n_features,
@@ -367,7 +410,15 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_parameter_update(
         self,
@@ -377,6 +428,7 @@ class TestBatchNormSPDMean:
         mean_type,
         mean_options,
         norm_strategy,
+        minibatch_mode,
         use_autograd,
         device,
         dtype,
@@ -391,6 +443,7 @@ class TestBatchNormSPDMean:
             mean_options,
             momentum=0.1,
             norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
             use_autograd=use_autograd,
             device=device,
@@ -435,7 +488,15 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
     def test_both_modes_give_same_gradient(
         self,
         n_matrices,
@@ -444,6 +505,7 @@ class TestBatchNormSPDMean:
         mean_type,
         mean_options,
         norm_strategy,
+        minibatch_mode,
         device,
         dtype,
         generator,
@@ -457,6 +519,7 @@ class TestBatchNormSPDMean:
             mean_options,
             momentum=0.1,
             norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
             use_autograd=False,
             device=device,
@@ -469,6 +532,7 @@ class TestBatchNormSPDMean:
             mean_options,
             momentum=0.1,
             norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
             use_autograd=True,
             device=device,
@@ -518,14 +582,23 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
-    @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
     def test_repr_and_str(
         self,
         n_features,
         mean_type,
         mean_options,
         norm_strategy,
+        minibatch_mode,
         use_autograd,
         device,
         dtype,
@@ -539,6 +612,7 @@ class TestBatchNormSPDMean:
             mean_options,
             momentum=0.1,
             norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
             use_autograd=use_autograd,
             device=device,
@@ -574,12 +648,23 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_module_mode(
         self,
         n_features,
         mean_type,
         mean_options,
+        norm_strategy,
+        minibatch_mode,
         use_autograd,
         device,
         dtype,
@@ -592,6 +677,9 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
+            minibatch_momentum=0.1,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
