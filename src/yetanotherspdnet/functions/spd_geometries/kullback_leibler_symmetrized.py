@@ -219,7 +219,7 @@ class SymmetrizedKullbackLeiblerStdScalar(Function):
             Context object to retrieve tensors saved during the forward pass
 
         grad_output : torch.Tensor of shape ()
-            Gradient of the loss with respect to the output of the scalar standart deviation Function
+            Gradient of the loss with respect to the output of the scalar standard deviation Function
 
         Returns
         -------
