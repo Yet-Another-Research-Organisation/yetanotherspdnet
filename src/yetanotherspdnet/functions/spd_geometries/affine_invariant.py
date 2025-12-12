@@ -9,7 +9,6 @@ from ..spd_linalg import (
     expm_symmetric,
     logm_SPD,
     solve_sylvester_SPD,
-    symmetrize,
 )
 from .kullback_leibler import arithmetic_mean
 
