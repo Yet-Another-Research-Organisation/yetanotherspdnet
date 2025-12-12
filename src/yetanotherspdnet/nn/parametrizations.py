@@ -15,6 +15,22 @@ from ..functions.stiefel import (
 )
 
 
+class ScalarSoftPlusParametrization(nn.Module):
+    def forward(self, scalar: torch.Tensor) -> torch.Tensor:
+        """
+        Positive definite scalars parametrization using the SoftPlus function
+        (rescaled so that f(0) = 1 as compared to default torch function)
+
+        Parameters
+        ----------
+        scalar : torch.Tensor of shape ()
+            Real number
+        """
+        return torch.log(
+            torch.tensor(1.0) + torch.pow(torch.tensor(2.0), scalar)
+        ) / torch.log(torch.tensor(2.0))
+
+
 class SPDSoftPlusParametrization(nn.Module):
     def __init__(self, use_autograd: bool = False):
         """
