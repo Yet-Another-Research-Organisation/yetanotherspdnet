@@ -4,13 +4,6 @@ from torch.nn.utils.parametrize import register_parametrization
 
 from functools import partial
 
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
-    GeometricArithmeticHarmonicMean,
-    GeometricEuclideanHarmonicCurve,
-    geometric_arithmetic_harmonic_mean,
-    geometric_euclidean_harmonic_curve,
-)
-
 from ..functions.spd_linalg import (
     CongruenceSPD,
     PowmSPD,
@@ -32,8 +25,10 @@ from ..functions.spd_geometries.affine_invariant import (
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
     LogEuclideanGeodesic,
     LogEuclideanMean,
+    LogEuclideanStdScalar,
     log_euclidean_geodesic,
     log_euclidean_mean,
+    log_euclidean_std_scalar,
 )
 
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
@@ -41,10 +36,23 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     EuclideanGeodesic,
     HarmonicCurve,
     HarmonicMean,
+    LeftKullbackLeiblerStdScalar,
+    RightKullbackLeiblerStdScalar,
     arithmetic_mean,
     harmonic_mean,
     euclidean_geodesic,
     harmonic_curve,
+    left_kullback_leibler_std_scalar,
+    right_kullback_leibler_std_scalar,
+)
+
+from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
+    GeometricArithmeticHarmonicMean,
+    GeometricEuclideanHarmonicCurve,
+    SymmetrizedKullbackLeiblerStdScalar,
+    geometric_arithmetic_harmonic_mean,
+    geometric_euclidean_harmonic_curve,
+    symmetrized_kullback_leibler_std_scalar,
 )
 
 from .parametrizations import (
@@ -593,22 +601,38 @@ class BatchNormSPDMeanScalarVariance(nn.Module):
             self.mean_fun = (
                 log_euclidean_mean if self.use_autograd else LogEuclideanMean
             )
-            raise ValueError("var not implemented yet")
+            self.std_fun = (
+                log_euclidean_std_scalar
+                if self.use_autograd
+                else LogEuclideanStdScalar.apply
+            )
         elif self.mean_type == "arithmetic":
             self.mean_fun = (
                 arithmetic_mean if self.use_autograd else ArithmeticMean.apply
             )
-            raise ValueError("var not implemented yet")
+            self.std_fun = (
+                left_kullback_leibler_std_scalar
+                if self.use_autograd
+                else LeftKullbackLeiblerStdScalar.apply
+            )
         elif self.mean_type == "harmonic":
             self.mean_fun = harmonic_mean if self.use_autograd else HarmonicMean.apply
-            raise ValueError("var not implemented yet")
+            self.std_fun = (
+                right_kullback_leibler_std_scalar
+                if self.use_autograd
+                else RightKullbackLeiblerStdScalar.apply
+            )
         elif self.mean_type == "geometric_arithmetic_harmonic":
             self.mean_fun = (
                 geometric_arithmetic_harmonic_mean
                 if self.use_autograd
                 else GeometricArithmeticHarmonicMean
             )
-            raise ValueError("var not implemented yet")
+            self.std_fun = (
+                symmetrized_kullback_leibler_std_scalar
+                if self.use_autograd
+                else SymmetrizedKullbackLeiblerStdScalar.apply
+            )
 
     def _init_adaptive_mean_fun(self) -> None:
         """
