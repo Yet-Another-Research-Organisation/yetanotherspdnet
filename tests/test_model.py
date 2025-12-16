@@ -60,7 +60,7 @@ class TestSPDnet:
         assert model.input_dim == input_dim
         assert model.hidden_layers_size == hidden_layers
         assert model.output_dim == output_dim
-        assert model.device == device
+        assert model.device.type == device.type
         assert model.dtype == dtype
 
     @pytest.mark.parametrize(
@@ -92,7 +92,7 @@ class TestSPDnet:
         expected_shape = (n_samples, output_dim) if n_samples > 1 else (output_dim,)
         assert output.shape == expected_shape
         assert output.dtype == dtype
-        assert output.device == device
+        assert output.device.type == device.type
 
     @pytest.mark.parametrize("vec_type", ["vec", "vech"])
     def test_vec_type(self, vec_type, device, dtype, generator):
@@ -228,7 +228,7 @@ class TestSPDnet:
     def test_use_autograd(self, vec_type, device, dtype, generator):
         """Test that autograd and manual gradient give same results"""
         # Create two models with same initialization
-        gen1 = torch.Generator(device=device if device.type == "cpu" else None)
+        gen1 = torch.Generator(device=device)
         gen1.manual_seed(777)
         model_manual = SPDnet(
             input_dim=10,
@@ -242,7 +242,7 @@ class TestSPDnet:
             generator=gen1,
         )
 
-        gen2 = torch.Generator(device=device if device.type == "cpu" else None)
+        gen2 = torch.Generator(device=device)
         gen2.manual_seed(777)
         model_autograd = SPDnet(
             input_dim=10,
