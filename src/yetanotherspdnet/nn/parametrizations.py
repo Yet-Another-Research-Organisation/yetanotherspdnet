@@ -27,8 +27,8 @@ class ScalarSoftPlusParametrization(nn.Module):
             Real number
         """
         return torch.log(
-            torch.tensor(1.0) + torch.pow(torch.tensor(2.0), scalar)
-        ) / torch.log(torch.tensor(2.0))
+            1.0 + torch.pow(2.0, scalar)
+        ) / torch.log(torch.as_tensor(2.0, dtype=scalar.dtype, device=scalar.device))
 
 
 class SPDSoftPlusParametrization(nn.Module):
