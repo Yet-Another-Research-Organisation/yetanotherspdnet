@@ -5,7 +5,10 @@ from torch.testing import assert_close
 from torch.nn.utils import parametrize
 
 from yetanotherspdnet.nn.base import BiMap, ReEig, LogEig, Vec, Vech
-from yetanotherspdnet.nn.batchnorm import BatchNormSPDMean
+from yetanotherspdnet.nn.batchnorm import (
+    BatchNormSPDMean,
+    BatchNormSPDMeanScalarVariance,
+)
 from yetanotherspdnet.models import SPDnet
 
 from yetanotherspdnet.random.spd import random_SPD
@@ -206,7 +209,8 @@ class TestSPDnet:
         assert reeig_count == len(hidden_layers)
         assert logeig_count == 1
 
-    def test_layer_count_with_batchnorm(self, device, dtype, generator):
+    @pytest.mark.parametrize("batchnorm_type", ["mean_only", "mean_var_scalar"])
+    def test_layer_count_with_batchnorm(self, batchnorm_type, device, dtype, generator):
         """Test layer count with batch normalization"""
         hidden_layers = [8, 6]
         model = SPDnet(
@@ -214,6 +218,7 @@ class TestSPDnet:
             hidden_layers_size=hidden_layers,
             output_dim=3,
             batchnorm=True,
+            batchnorm_type=batchnorm_type,
             device=device,
             dtype=dtype,
             generator=generator,
@@ -225,16 +230,22 @@ class TestSPDnet:
         assert len(model.spdnet_layers) == expected_layers
 
     @pytest.mark.parametrize("vec_type", ["vec", "vech"])
-    def test_use_autograd(self, vec_type, device, dtype, generator):
+    @pytest.mark.parametrize("batchnorm_type", ["mean_only", "mean_var_scalar"])
+    def test_use_autograd(self, vec_type, batchnorm_type, device, dtype, generator):
         """Test that autograd and manual gradient give same results"""
         # Create two models with same initialization
-        gen1 = torch.Generator(device=device) if device.type == "cuda" else torch.Generator()
+        gen1 = (
+            torch.Generator(device=device)
+            if device.type == "cuda"
+            else torch.Generator()
+        )
         gen1.manual_seed(777)
         model_manual = SPDnet(
             input_dim=10,
             hidden_layers_size=[5],
             output_dim=3,
             batchnorm=True,
+            batchnorm_type=batchnorm_type,
             vec_type=vec_type,
             use_autograd=False,
             device=device,
@@ -242,13 +253,18 @@ class TestSPDnet:
             generator=gen1,
         )
 
-        gen2 = torch.Generator(device=device) if device.type == "cuda" else torch.Generator()
+        gen2 = (
+            torch.Generator(device=device)
+            if device.type == "cuda"
+            else torch.Generator()
+        )
         gen2.manual_seed(777)
         model_autograd = SPDnet(
             input_dim=10,
             hidden_layers_size=[5],
             output_dim=3,
             batchnorm=True,
+            batchnorm_type=batchnorm_type,
             vec_type=vec_type,
             use_autograd=True,
             device=device,
@@ -296,21 +312,24 @@ class TestSPDnet:
         # Compare gradients - should be the same
         assert_close(X_manual.grad, X_autograd.grad, atol=1e-5, rtol=1e-5)
 
-    @pytest.mark.parametrize("use_autograd", [True, False])
     @pytest.mark.parametrize("vec_type", ["vec", "vech"])
-    def test_backward_pass(self, vec_type, use_autograd, device, dtype, generator):
+    @pytest.mark.parametrize("batchnorm_type", ["mean_only", "mean_var_scalar"])
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_backward_pass(
+        self, vec_type, batchnorm_type, use_autograd, device, dtype, generator
+    ):
         """Test that gradients flow through the network"""
         model = SPDnet(
             input_dim=10,
             hidden_layers_size=[8, 6],
             output_dim=3,
             batchnorm=True,
+            batchnorm_type=batchnorm_type,
             vec_type=vec_type,
             device=device,
             dtype=dtype,
             generator=generator,
             use_autograd=use_autograd,
-            # vec_type="vech",
         )
 
         X = random_SPD(10, 5, device=device, dtype=dtype, generator=generator)
@@ -579,13 +598,15 @@ class TestSPDnet:
 
         assert output.shape == (batch_size, 3)
 
-    def test_gradient_flow_all_layers(self, device, dtype, generator):
+    @pytest.mark.parametrize("batchnorm_type", ["mean_only", "mean_var_scalar"])
+    def test_gradient_flow_all_layers(self, batchnorm_type, device, dtype, generator):
         """Test that gradients flow through all layers"""
         model = SPDnet(
             input_dim=10,
             hidden_layers_size=[8, 6],
             output_dim=3,
             batchnorm=True,
+            batchnorm_type=batchnorm_type,
             device=device,
             dtype=dtype,
             generator=generator,
@@ -598,7 +619,7 @@ class TestSPDnet:
         loss = output.mean()
         loss.backward()
 
-        # Check all BiMap weights have gradients
+        # Check all BiMap weights and BatchNorm Covbias (and stdScalarbias) have gradients
         for i, layer in enumerate(model.spdnet_layers):
             if isinstance(layer, BiMap):
                 assert layer.parametrizations.weight.original.grad is not None, (
@@ -607,6 +628,20 @@ class TestSPDnet:
                 assert layer.parametrizations.weight.original.grad.abs().sum() > 0, (
                     f"BiMap layer {i} has zero gradient"
                 )
+            elif isinstance(layer, (BatchNormSPDMean, BatchNormSPDMeanScalarVariance)):
+                assert layer.parametrizations.Covbias.original.grad is not None, (
+                    f"BatchNormSPDMean layer {i} Covbias has no gradient"
+                )
+                assert layer.parametrizations.Covbias.original.grad.abs().sum() > 0, (
+                    f"BatchNormSPDMean layer {i} Covbias has zero gradient"
+                )
+            elif isinstance(layer, BatchNormSPDMeanScalarVariance):
+                assert layer.parametrizations.stdScalarbias.original.grad is not None, (
+                    f"BatchNormSPDMeanScalarVariance layer {i} stdScalarbias has no gradient"
+                )
+                assert (
+                    layer.parametrizations.stdScalarbias.original.grad.abs().sum() > 0
+                ), f"BatchNormSPDMeanScalarVariance layer {i} has zero gradient"
 
     @pytest.mark.parametrize("invalid_vec_type", ["invalid", "vector", ""])
     def test_invalid_vec_type(self, invalid_vec_type, device, dtype, generator):

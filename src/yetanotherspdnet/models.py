@@ -3,7 +3,7 @@ import zlib
 from collections.abc import Callable
 
 import torch
-from torch import nn, norm
+from torch import nn
 from torch.nn.utils import parametrizations
 
 from yetanotherspdnet.nn.base import BiMap, LogEig, ReEig, Vec, Vech
