@@ -371,6 +371,7 @@ class StiefelAdaptiveParametrization(nn.Module):
             Mapping to obtain a point on Stiefel from a tangent vector.
             Default is "QR".
             Choices are: "QR" and "polar"
+            WARNING: with "polar", use_autograd needs to be False
 
         use_autograd : bool | dict, optional
             Use torch autograd for gradient computation. Can be bool for all layers,
@@ -460,10 +461,12 @@ class StiefelAdaptiveParametrization(nn.Module):
         weight : torch.Tensor of shape (n_in, n_out)
             Orthogonal matrix
         """
+        # Need this to have a correct computation graph and gradient computation
+        ref_point = self.reference_point.detach().clone()
         # ensure weight_tangent is on the tangent space
-        weight_tangent = self.projectionTangent(weight_tangent, self.reference_point)
+        test = self.projectionTangent(weight_tangent, ref_point)
         # map weight_tangent on the manifold
-        weight = self.projectionStiefel(self.reference_point + weight_tangent)
+        weight = self.projectionStiefel(ref_point + test)
         # store weight value during training (for reference update)
         if self.training:
             self.last_stiefel_value.copy_(weight.detach())
