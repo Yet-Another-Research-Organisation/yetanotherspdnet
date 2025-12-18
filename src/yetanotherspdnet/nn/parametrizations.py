@@ -5,11 +5,13 @@ from yetanotherspdnet.random.stiefel import random_stiefel
 
 from ..functions.spd_linalg import (
     ExpmSymmetric,
-    InvSqrtmSPD,
+    InvScaledSoftPlusSPD,
+    LogmSPD,
     ScaledSoftPlusSymmetric,
-    SqrtmSPD,
     expm_symmetric,
+    inv_scaled_softplus_SPD,
     inv_sqrtm_SPD,
+    logm_SPD,
     scaled_softplus_symmetric,
     sqrtm_SPD,
     symmetrize,
@@ -35,45 +37,87 @@ class ScalarSoftPlusParametrization(nn.Module):
         scalar : torch.Tensor of shape ()
             Real number
         """
-        return torch.log(
-            1.0 + torch.pow(2.0, scalar)
-        ) / torch.log(torch.as_tensor(2.0, dtype=scalar.dtype, device=scalar.device))
+        return torch.log(1.0 + torch.pow(2.0, scalar)) / torch.log(
+            torch.as_tensor(2.0, dtype=scalar.dtype, device=scalar.device)
+        )
 
 
-class SPDSoftPlusParametrization(nn.Module):
-    def __init__(self, use_autograd: bool = False):
+class SPDParametrization(nn.Module):
+    def __init__(self, mapping: str = "softplus", use_autograd: bool = False) -> None:
         """
-        SPD parametrization using the SoftPlus map
+        SPD Parametrization
 
         Parameters
         ----------
+        mapping : str, optional
+            Mapping to obtain a SPD point from a symmetric matrix.
+            Default is "softplus".
+            Choices are: "softplus" and "exp"
+
         use_autograd : bool, optional
             Use torch autograd for the computation of the gradient rather than
             the analytical formula. Default is False.
         """
         super().__init__()
-        self.use_autograd = use_autograd
-        self.softplusSymmetric = (
-            (lambda data: scaled_softplus_symmetric(data)[0])
-            if self.use_autograd
-            else ScaledSoftPlusSymmetric.apply
+        assert mapping in ["softplus", "exp"], (
+            f"mapping must be in ['softplus', 'exp'], got {mapping}"
         )
+        self.mapping = mapping
+        self.use_autograd = use_autograd
 
-    def forward(self, data: torch.Tensor) -> torch.Tensor:
+        # deal with mapping
+        if self.mapping == "softplus":
+            self.spd_fun = (
+                (lambda data: scaled_softplus_symmetric(data)[0])
+                if self.use_autograd
+                else ScaledSoftPlusSymmetric.apply
+            )
+            self.tangent_fun = (
+                (lambda data: inv_scaled_softplus_SPD(data)[0])
+                if self.use_autograd
+                else InvScaledSoftPlusSPD.apply
+            )
+        elif self.mapping == "exp":
+            self.spd_fun = (
+                (lambda data: expm_symmetric(data)[0])
+                if self.use_autograd
+                else ExpmSymmetric.apply
+            )
+            self.tangent_fun = (
+                (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
+            )
+
+    def forward(self, tangent_vector: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the SPDLogEuclideanParametrization layer
+        Mapping from the tangent space at identity to the SPD manifold
 
         Parameters
         ----------
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of symmetric matrices
+        tangent_vector : torch.Tensor of shape (n_features, n_features)
+            Symmetric matrix
 
         Returns
         -------
-        data_expm : torch.Tensor of shape (..., n_features, n_features)
-            Batch of SPD matrices
+        spd_matrix : torch.Tensor of shape (n_features, n_features)
+            SPD matrix
         """
-        return self.softplusSymmetric(data)
+        return self.spd_fun(tangent_vector)
+
+    def right_inverse(self, spd_matrix: torch.Tensor) -> torch.Tensor:
+        """
+        Mapping from the SPD manifold to the tangent space at identity
+
+        Parameters
+        ----------
+        spd_matrix : torch.Tensor of shape (n_features, n_features)
+            SPD matrix
+
+        Returns
+        -------
+        tangent_vector : torch.Tensor of shape (n_features, n_features)
+            Symmetric matrix
+        """
+        return self.tangent_fun(spd_matrix)
 
     def __repr__(self) -> str:
         """
@@ -84,179 +128,7 @@ class SPDSoftPlusParametrization(nn.Module):
         str
             Representation of the layer
         """
-        return f"SPDSoftPlusParametrization(use_autograd={self.use_autograd})"
-
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
-
-class SPDLogEuclideanParametrization(nn.Module):
-    def __init__(self, use_autograd: bool = False):
-        """
-        SPD parametrization using the log-Euclidean exponential mapping
-
-        Parameters
-        ----------
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula. Default is False.
-        """
-        super().__init__()
-        self.use_autograd = use_autograd
-        self.expmSymmetric = (
-            (lambda data: expm_symmetric(data)[0])
-            if self.use_autograd
-            else ExpmSymmetric.apply
-        )
-
-    def forward(self, data: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the SPDLogEuclideanParametrization layer
-
-        Parameters
-        ----------
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of symmetric matrices
-
-        Returns
-        -------
-        data_expm : torch.Tensor of shape (..., n_features, n_features)
-            Batch of SPD matrices
-        """
-        return self.expmSymmetric(data)
-
-    def __repr__(self) -> str:
-        """
-        Representation of the layer
-
-        Returns
-        -------
-        str
-            Representation of the layer
-        """
-        return f"SPDLogEuclideanParametrization(use_autograd={self.use_autograd})"
-
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
-
-class StiefelProjectionPolarParametrization(nn.Module):
-    def __init__(self, use_autograd: bool = False):
-        """
-        Stiefel parametrization using the projection based on the polar decomposition
-
-        Parameters
-        ----------
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula. Default is False.
-        """
-        super().__init__()
-        self.use_autograd = use_autograd
-        self.projectionStiefel = (
-            stiefel_projection_polar
-            if self.use_autograd
-            else StiefelProjectionPolar.apply
-        )
-
-    def forward(self, weight: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the StiefelProjectionParametrization layer
-
-        Parameters
-        ----------
-        weight : torch.Tensor of shape (n_in, n_out)
-            Rectangular matrix
-
-        Returns
-        -------
-        projected_weight : torch.Tensor (n_in, n_out)
-            Orthogonal matrix
-        """
-        return self.projectionStiefel(weight)
-
-    def __repr__(self) -> str:
-        """
-        Representation of the layer
-
-        Returns
-        -------
-        str
-            Representation of the layer
-        """
-        return f"StiefelProjectionParametrization(use_autograd={self.use_autograd})"
-
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
-
-class StiefelProjectionQRParametrization(nn.Module):
-    def __init__(self, use_autograd: bool = False):
-        """
-        Stiefel parametrization using the projection based on the QR decomposition
-
-        Parameters
-        ----------
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula. Default is False.
-        """
-        super().__init__()
-        self.use_autograd = use_autograd
-        self.projectionStiefel = (
-            stiefel_projection_qr if self.use_autograd else StiefelProjectionQR.apply
-        )
-
-    def forward(self, weight: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the StiefelProjectionParametrization layer
-
-        Parameters
-        ----------
-        weight : torch.Tensor of shape (n_in, n_out)
-            Rectangular matrix
-
-        Returns
-        -------
-        projected_weight : torch.Tensor (n_in, n_out)
-            Orthogonal matrix
-        """
-        return self.projectionStiefel(weight)
-
-    def __repr__(self) -> str:
-        """
-        Representation of the layer
-
-        Returns
-        -------
-        str
-            Representation of the layer
-        """
-        return f"StiefelProjectionParametrization(use_autograd={self.use_autograd})"
+        return f"SPDParametrization(mapping={self.mapping}, use_autograd={self.use_autograd})"
 
     def __str__(self) -> str:
         """
@@ -351,12 +223,8 @@ class SPDAdaptiveParametrization(nn.Module):
                 inv_sqrtm_SPD(self.initial_reference.clone())[0],
             )
 
-        # Track epoch changes
-        self.register_buffer(
-            "current_epoch", torch.tensor(0, dtype=torch.long, device=self.device)
-        )
+        # Last SPD value (for reference point update)
         self.register_buffer("last_spd_value", self.reference_point.detach())
-        self._epoch_updated = False
 
         # Deal with mapping
         if self.mapping == "softplus":
@@ -365,11 +233,19 @@ class SPDAdaptiveParametrization(nn.Module):
                 if self.use_autograd
                 else ScaledSoftPlusSymmetric.apply
             )
+            self.tangent_fun = (
+                (lambda data: inv_scaled_softplus_SPD(data)[0])
+                if self.use_autograd
+                else InvScaledSoftPlusSPD.apply
+            )
         elif self.mapping == "exp":
             self.spd_fun = (
                 (lambda data: expm_symmetric(data)[0])
                 if self.use_autograd
                 else ExpmSymmetric.apply
+            )
+            self.tangent_fun = (
+                (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
             )
 
     def forward(self, tangent_vector: torch.Tensor) -> torch.Tensor:
@@ -398,15 +274,72 @@ class SPDAdaptiveParametrization(nn.Module):
             @ self.reference_point_sqrtm
         )
         # store spd value during training (for reference update)
-        if self.training and not self._epoch_updated:
+        if self.training:
             self.last_spd_value.copy_(spd_matrix.detach())
 
         return spd_matrix
 
-    # TODO: for right inverse, need to implement Inverse SoftPlus function in spd_linalg
+    def right_inverse(self, spd_matrix: torch.Tensor) -> torch.Tensor:
+        """
+        Mapping from SPD manifold onto the tangent space at reference_point
+
+        Parameters
+        ----------
+        spd_matrix : torch.Tensor of shape (n_features, n_features)
+            SPD matrix
+
+        Returns
+        -------
+        tangent_vector : torch.Tensor of shape (n_features, n_features)
+            Symmetric matrix
+        """
+        return (
+            self.reference_point_sqrtm
+            @ self.tangent_fun(
+                self.reference_point_inv_sqrtm
+                @ spd_matrix
+                @ self.reference_point_inv_sqrtm
+            )
+            @ self.reference_point_sqrtm
+        )
+
+    def update_reference_point(self) -> None:
+        """
+        Update reference point with last SPD value
+        """
+        self.reference_point.copy_(self.last_spd_value)
+        self.reference_point_sqrtm.copy_(sqrtm_SPD(self.last_spd_value)[0])
+        self.reference_point_inv_sqrtm.copy_(inv_sqrtm_SPD(self.last_spd_value)[0])
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return (
+            f"SPDAdaptiveParametrization(n_features={self.n_features}, "
+            f"initial_reference={self.initial_reference}, mapping={self.mapping}, "
+            f"use_autograd={self.use_autograd}), "
+            f"device={self.device}, dtype={self.dtype})"
+        )
+
+    def __str__(self) -> str:
+        """
+        String representation of the layer
+
+        Returns
+        -------
+        str
+            String representation of the layer
+        """
+        return self.__repr__()
 
 
-class StiefelProjectionAdaptiveParametrization(nn.Module):
+class StiefelAdaptiveParametrization(nn.Module):
     def __init__(
         self,
         n_in: int,
@@ -491,12 +424,8 @@ class StiefelProjectionAdaptiveParametrization(nn.Module):
             )
             self.register_buffer("reference_point", self.initial_reference.clone())
 
-        # Track epoch changes
-        self.register_buffer(
-            "current_epoch", torch.tensor(0, dtype=torch.long, device=self.device)
-        )
+        # Last Stiefel value (for reference point update)
         self.register_buffer("last_stiefel_value", self.reference_point.detach())
-        self._epoch_updated = False
 
         # Deal with retraction and tangent projection functions
         self.projectionTangent = (
@@ -536,7 +465,7 @@ class StiefelProjectionAdaptiveParametrization(nn.Module):
         # map weight_tangent on the manifold
         weight = self.projectionStiefel(self.reference_point + weight_tangent)
         # store weight value during training (for reference update)
-        if self.training and not self._epoch_updated:
+        if self.training:
             self.last_stiefel_value.copy_(weight.detach())
         return weight
 
@@ -559,17 +488,35 @@ class StiefelProjectionAdaptiveParametrization(nn.Module):
             weight - self.reference_point, self.reference_point
         )
 
-    def on_epoch_end(self) -> None:
+    def update_reference_point(self) -> None:
         """
-        Called at the end of an epoch to update the reference point
+        Update reference point with last Stiefel value
         """
-        if self.training:
-            self.reference_point.copy_(self.last_stiefel_value)
-            self.current_epoch += 1
-            self._epoch_updated = True
+        self.reference_point.copy_(self.last_stiefel_value)
 
-    def on_epoch_start(self) -> None:
+    def __repr__(self) -> str:
         """
-        Called at the start of an epoch to reset the update flag
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
         """
-        self._epoch_updated = False
+        return (
+            f"StiefelAdaptiveParametrization(n_in={self.n_in}, n_out={self.n_out}, "
+            f"initial_reference={self.initial_reference}, mapping={self.mapping}, "
+            f"use_autograd={self.use_autograd}), "
+            f"device={self.device}, dtype={self.dtype}, generator={self.generator})"
+        )
+
+    def __str__(self) -> str:
+        """
+        String representation of the layer
+
+        Returns
+        -------
+        str
+            String representation of the layer
+        """
+        return self.__repr__()

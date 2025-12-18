@@ -872,6 +872,93 @@ class ScaledSoftPlusSymmetric(Function):
         )
 
 
+# ---------------------------
+# Inverse Scaled SoftPlus SPD
+# ---------------------------
+def inv_scaled_softplus_SPD(
+    data: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Inverse scaled SoftPlus of a batch of SPD matrices
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    Returns
+    -------
+    inv_softplus_data : torch.Tensor of shape (..., n_features, n_features)
+        Matrix logarithms of the input batch of SPD matrices
+
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues of matrices in data
+
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors of matrices in data
+    """
+    eigvals, eigvecs = torch.linalg.eigh(data)
+    inv_softplus_fun = lambda x: torch.log(
+        torch.pow(torch.tensor(2.0), x) - torch.tensor(1.0)
+    ) / torch.log(torch.tensor(2.0))
+    return eigh_operation(eigvals, eigvecs, inv_softplus_fun), eigvals, eigvecs
+
+
+class InvScaledSoftPlusSPD(Function):
+    """
+    Matrix inverse scaled SoftPlus of a batch of SPD matrices
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the matrix inverse scaled SoftPlus of a batch of SPD matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        Returns
+        -------
+        inv_softplus_data : torch.Tensor of shape (..., n_features, n_features)
+            Matrix logarithms of the input batch of SPD matrices
+        """
+        inv_softplus_data, eigvals, eigvecs = inv_scaled_softplus_SPD(data)
+        ctx.save_for_backward(eigvals, eigvecs)
+        return inv_softplus_data
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
+        """
+        Backward pass of the matrix inverse scaled SoftPlus of a batch of SPD matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to matrix inverse SoftPlus of the input batch of SPD matrices
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input batch of SPD matrices
+        """
+        eigvals, eigvecs = ctx.saved_tensors
+        inv_softplus_fun = lambda x: torch.log(
+            torch.pow(torch.tensor(2.0), x) - torch.tensor(1.0)
+        ) / torch.log(torch.tensor(2.0))
+        inv_softplus_deriv = lambda x: 1 / (1.0 - torch.pow(torch.tensor(2.0), -x))
+        return eigh_operation_grad(
+            grad_output, eigvals, eigvecs, inv_softplus_fun, inv_softplus_deriv
+        )
+
+
 # -----------------------------------------------------
 # ReLu activation function on eigenvalues of SPD matrix
 # -----------------------------------------------------

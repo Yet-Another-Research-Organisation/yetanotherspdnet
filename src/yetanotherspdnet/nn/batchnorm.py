@@ -55,11 +55,11 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized impo
     symmetrized_kullback_leibler_std_scalar,
 )
 
-from .parametrizations import (
-    SPDLogEuclideanParametrization,
-    SPDSoftPlusParametrization,
-    ScalarSoftPlusParametrization,
-)
+# from .parametrizations import (
+#     SPDLogEuclideanParametrization,
+#     SPDSoftPlusParametrization,
+#     ScalarSoftPlusParametrization,
+# )
 
 
 class BatchNormSPDMean(nn.Module):
