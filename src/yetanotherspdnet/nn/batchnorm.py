@@ -55,11 +55,11 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized impo
     symmetrized_kullback_leibler_std_scalar,
 )
 
-# from .parametrizations import (
-#     SPDLogEuclideanParametrization,
-#     SPDSoftPlusParametrization,
-#     ScalarSoftPlusParametrization,
-# )
+from .parametrizations import (
+    SPDAdaptiveParametrization,
+    SPDParametrization,
+    ScalarSoftPlusParametrization,
+)
 
 
 class BatchNormSPDMean(nn.Module):
@@ -169,12 +169,11 @@ class BatchNormSPDMean(nn.Module):
             f"formula must be in ['softplus', 'exp'], got {self.parametrization}"
         )
         self.Covbias = torch.nn.Parameter(
-            torch.zeros(n_features, n_features, dtype=self.dtype, device=self.device)
+            torch.eye(n_features, dtype=self.dtype, device=self.device)
         )
-        if self.parametrization == "softplus":
-            register_parametrization(self, "Covbias", SPDSoftPlusParametrization())
-        elif self.parametrization == "exp":
-            register_parametrization(self, "Covbias", SPDLogEuclideanParametrization())
+        register_parametrization(
+            self, "Covbias", SPDParametrization(mapping=self.parametrization)
+        )
 
         # normalize and add bias functions
         self.normalize_mean = whitening if self.use_autograd else Whitening.apply
@@ -527,15 +526,14 @@ class BatchNormSPDMeanScalarVariance(nn.Module):
             f"formula must be in ['softplus', 'exp'], got {self.parametrization}"
         )
         self.Covbias = torch.nn.Parameter(
-            torch.zeros(n_features, n_features, dtype=self.dtype, device=self.device)
+            torch.eye(n_features, dtype=self.dtype, device=self.device)
         )
-        if self.parametrization == "softplus":
-            register_parametrization(self, "Covbias", SPDSoftPlusParametrization())
-        elif self.parametrization == "exp":
-            register_parametrization(self, "Covbias", SPDLogEuclideanParametrization())
+        register_parametrization(
+            self, "Covbias", SPDParametrization(mapping=self.parametrization)
+        )
         # scalar variance bias parameter
         self.stdScalarbias = torch.nn.Parameter(
-            torch.zeros((), dtype=self.dtype, device=self.device)
+            torch.ones((), dtype=self.dtype, device=self.device)
         )
         register_parametrization(self, "stdScalarbias", ScalarSoftPlusParametrization())
         # normalize and add bias functions

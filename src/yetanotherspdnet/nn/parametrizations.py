@@ -35,11 +35,35 @@ class ScalarSoftPlusParametrization(nn.Module):
         Parameters
         ----------
         scalar : torch.Tensor of shape ()
-            Real number
+            Real scalar
+
+        Returns
+        -------
+        scalar_pd : torch.Tensor of shape ()
+            Positive definite scalar
         """
         return torch.log(1.0 + torch.pow(2.0, scalar)) / torch.log(
             torch.as_tensor(2.0, dtype=scalar.dtype, device=scalar.device)
         )
+
+    def right_inverse(self, scalar_pd: torch.Tensor) -> torch.Tensor:
+        """
+        Mapping from positive definite scalar onto real scalars through
+        the inverse SoftPlus function
+
+        Parameters
+        ----------
+        scalar_pd : torch.Tensor of shape ()
+            Positive definite scalar
+
+        Returns
+        -------
+        scalar : torch.Tensor of shape ()
+            Real scalar
+        """
+        return torch.log(
+            torch.pow(torch.tensor(2.0), scalar_pd) - torch.tensor(1.0)
+        ) / torch.log(torch.tensor(2.0))
 
 
 class SPDParametrization(nn.Module):
