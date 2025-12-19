@@ -6,10 +6,7 @@ from torch.testing import assert_close
 from torch.nn.utils import parametrizations
 
 import yetanotherspdnet.nn.base as nn_spd_base
-from yetanotherspdnet.nn.parametrizations import (
-    StiefelProjectionQRParametrization,
-    StiefelProjectionPolarParametrization,
-)
+from yetanotherspdnet.nn.parametrizations import StiefelAdaptiveParametrization
 from yetanotherspdnet.functions.spd_linalg import symmetrize
 from yetanotherspdnet.random.spd import random_SPD
 
@@ -48,8 +45,6 @@ class TestBiMap:
     @pytest.mark.parametrize(
         "parametrization",
         [
-            StiefelProjectionPolarParametrization,
-            StiefelProjectionQRParametrization,
             parametrizations.orthogonal,
         ],
     )
@@ -108,8 +103,6 @@ class TestBiMap:
     @pytest.mark.parametrize(
         "parametrization",
         [
-            StiefelProjectionPolarParametrization,
-            StiefelProjectionQRParametrization,
             parametrizations.orthogonal,
         ],
     )
@@ -161,8 +154,6 @@ class TestBiMap:
     @pytest.mark.parametrize(
         "parametrization",
         [
-            StiefelProjectionPolarParametrization,
-            StiefelProjectionQRParametrization,
             parametrizations.orthogonal,
         ],
     )
@@ -221,8 +212,6 @@ class TestBiMap:
     @pytest.mark.parametrize(
         "parametrization",
         [
-            StiefelProjectionPolarParametrization,
-            StiefelProjectionQRParametrization,
             parametrizations.orthogonal,
         ],
     )
@@ -242,13 +231,6 @@ class TestBiMap:
         """
         Test that backward pass works and updates gradients
         """
-        if (parametrization is StiefelProjectionPolarParametrization) and (
-            use_autograd is True
-        ):
-            pytest.skip(
-                "Skipping Polar parametrization with autograd because it is highly unstable (probably due to use of svd)."
-            )
-
         layer = nn_spd_base.BiMap(
             n_in=n_in,
             n_out=n_out,
@@ -294,8 +276,6 @@ class TestBiMap:
     @pytest.mark.parametrize(
         "parametrization",
         [
-            StiefelProjectionPolarParametrization,
-            StiefelProjectionQRParametrization,
             parametrizations.orthogonal,
         ],
     )
@@ -315,13 +295,6 @@ class TestBiMap:
         """
         Test that parameters can be updated via optimization
         """
-        if (parametrization is StiefelProjectionPolarParametrization) and (
-            use_autograd is True
-        ):
-            pytest.skip(
-                "Skipping Polar parametrization with autograd because it is highly unstable (probably due to use of svd)."
-            )
-
         layer = nn_spd_base.BiMap(
             n_in=n_in,
             n_out=n_out,
@@ -356,8 +329,6 @@ class TestBiMap:
     @pytest.mark.parametrize(
         "parametrization",
         [
-            StiefelProjectionPolarParametrization,
-            StiefelProjectionQRParametrization,
             parametrizations.orthogonal,
         ],
     )
@@ -376,11 +347,6 @@ class TestBiMap:
         """
         Test that parameters are updated the same way in both modes
         """
-        if parametrization is StiefelProjectionPolarParametrization:
-            pytest.skip(
-                "Skipping Polar parametrization because it is highly unstable with autograd (probably due to use of svd)."
-            )
-
         # For parametrization.orthogonal, we need to set use_trivialization option to False when n_in > n_out
         # because it appears that the corresponding module then use a torch.randn that we cannot control
         # which makes it impossible to get the same results.
@@ -449,8 +415,6 @@ class TestBiMap:
     @pytest.mark.parametrize(
         "parametrization",
         [
-            StiefelProjectionPolarParametrization,
-            StiefelProjectionQRParametrization,
             parametrizations.orthogonal,
         ],
     )
@@ -498,8 +462,6 @@ class TestBiMap:
     @pytest.mark.parametrize(
         "parametrization",
         [
-            StiefelProjectionPolarParametrization,
-            StiefelProjectionQRParametrization,
             parametrizations.orthogonal,
         ],
     )
