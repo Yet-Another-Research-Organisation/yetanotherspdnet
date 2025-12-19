@@ -536,6 +536,40 @@ class TestSPDAdaptiveParametrization:
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize("mapping", ["softplus", "exp"])
     @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_right_inverse(
+        self, n_features, mapping, use_autograd, device, dtype, generator
+    ):
+        """
+        Test that right inverse works, i.e., actually yields a tangent vector
+        """
+        layer = nn_parametrizations.SPDAdaptiveParametrization(
+            n_features,
+            initial_reference=None,
+            mapping=mapping,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+        )
+        # random SPD matrix
+        X = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=100,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        right_inv = layer.right_inverse(X)
+
+        assert right_inv.shape == X.shape
+        assert right_inv.device == X.device
+        assert right_inv.dtype == X.dtype
+        assert is_symmetric(right_inv)
+
+    @pytest.mark.parametrize("n_features", [100])
+    @pytest.mark.parametrize("mapping", ["softplus", "exp"])
+    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_repr_and_str(self, n_features, mapping, use_autograd, device, dtype):
         """
         Test string representations
@@ -913,6 +947,41 @@ class TestStiefelAdaptiveParametrization:
 
         assert not torch.allclose(layer.reference_point, initial_reference)
         assert_close(layer.reference_point, output)
+
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    @pytest.mark.parametrize("mapping", ["QR", "polar"])
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_right_inverse(
+        self, n_in, n_out, mapping, use_autograd, device, dtype, generator
+    ):
+        """
+        Test that right_inverse works, i.e., that it actually yields a tangent vector
+        """
+        layer = nn_parametrizations.StiefelAdaptiveParametrization(
+            n_in,
+            n_out,
+            initial_reference=None,
+            mapping=mapping,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # random orthogonal matrix
+        X = random_stiefel(
+            n_in, n_out, n_matrices=1, device=device, dtype=dtype, generator=generator
+        )
+
+        right_inv = layer.right_inverse(X)
+
+        assert right_inv.shape == X.shape
+        assert right_inv.device == X.device
+        assert right_inv.dtype == X.dtype
+        assert_close(
+            layer.reference_point.transpose(-2, -1) @ right_inv
+            + right_inv.transpose(-2, -1) @ layer.reference_point,
+            torch.zeros((n_out, n_out), device=device, dtype=dtype),
+        )
 
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("mapping", ["QR", "polar"])
