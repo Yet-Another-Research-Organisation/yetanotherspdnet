@@ -59,6 +59,7 @@ docs = [
     "myst-parser>=2.0.0",
     "sphinx-autoapi>=3.0.0",
     "linkify-it-py>=2.0.0",
+    "sphinxawesome-theme>=5.0.0",
 ]
 all = [
     "yetanotherspdnet[test,dev,docs]",
