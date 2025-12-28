@@ -1,12 +1,11 @@
 name: Sync to Production Repo
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'  # Triggers on semantic version tags like v1.0.0, v2.1.3, etc.
+  release:
+    types: [published]  # Triggers when a release is published
 
 jobs:
-  sync-tag:
+  sync-release:
     runs-on: ubuntu-latest
     
     steps:
@@ -17,14 +16,14 @@ jobs:
           fetch-depth: 1  # Fetch only the latest commit
           persist-credentials: false  # Don't persist the default GITHUB_TOKEN
       
-      - name: Extract tag name
-        id: tag
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: Extract release version
+        id: release
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
       
-      - name: Sync code and tag to production repository
+      - name: Sync code and release to production repository
         env:
           PROD_REPO_TOKEN: ${{ secrets.PROD_REPO_TOKEN }}
-          TAG_NAME: ${{ steps.tag.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           # Configure git
           git config --global user.name "GitHub Actions"
@@ -43,7 +42,7 @@ jobs:
           if [[ -n $(git status --porcelain) ]]; then
             # Commit changes
             git add .
-            git commit -m "Sync from dev: ${TAG_NAME}"
+            git commit -m "Sync from dev: ${RELEASE_VERSION}"
             
             # Push changes
             git push origin main
@@ -53,18 +52,24 @@ jobs:
             echo "No changes to sync"
           fi
           
-          # Create and push the tag in production repo
-          git tag -a ${TAG_NAME} -m "Release ${TAG_NAME}"
-          git push origin ${TAG_NAME}
+          # Delete tag if it exists (locally and remotely)
+          if git rev-parse ${RELEASE_VERSION} >/dev/null 2>&1; then
+            git tag -d ${RELEASE_VERSION}
+            git push origin :refs/tags/${RELEASE_VERSION} || true
+          fi
           
-          echo "✅ Tag ${TAG_NAME} synced to production repository"
+          # Create and push the tag in production repo
+          git tag -a ${RELEASE_VERSION} -m "Release ${RELEASE_VERSION}"
+          git push origin ${RELEASE_VERSION}
+          
+          echo "✅ Release ${RELEASE_VERSION} synced to production repository"
       
       - name: Summary
         run: |
           echo "### Synchronization Complete! 🚀" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Tag:** \`${{ steps.tag.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Release:** \`${{ steps.release.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Branch:** main" >> $GITHUB_STEP_SUMMARY
           echo "**Target:** yetanotherspdnet (production)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "All source files and the version tag have been synced to the production repository." >> $GITHUB_STEP_SUMMARY
+          echo "All source files and the release tag have been synced to the production repository." >> $GITHUB_STEP_SUMMARY
