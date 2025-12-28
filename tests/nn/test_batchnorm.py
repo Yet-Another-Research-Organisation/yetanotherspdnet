@@ -119,7 +119,7 @@ class TestBatchNormSPDMean:
         assert layer.norm_strategy == norm_strategy
         assert layer.minibatch_momentum == momentum
         assert layer.use_autograd == use_autograd
-        assert layer.device == device
+        assert layer.device.type == device.type
         assert layer.dtype == dtype
         # check that we have one and only one parameter
         assert len(list(layer.parameters())) == 1

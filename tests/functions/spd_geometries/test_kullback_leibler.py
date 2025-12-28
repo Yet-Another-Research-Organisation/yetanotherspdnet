@@ -338,7 +338,9 @@ class TestArithmeticMean:
             )
         )
         tangent_vectors_last = -torch.sum(tangent_vectors_, dim=0)
-        tangent_vectors = torch.zeros((n_matrices, n_features, n_features), device=device, dtype=dtype)
+        tangent_vectors = torch.zeros(
+            (n_matrices, n_features, n_features), device=device
+        )
         tangent_vectors[:-1] = tangent_vectors_
         tangent_vectors[-1] = tangent_vectors_last
         data = Id + tangent_vectors
@@ -435,7 +437,9 @@ class TestArithmeticMean:
             )
         )
         tangent_vectors_last = -torch.sum(tangent_vectors_, dim=0)
-        tangent_vectors = torch.zeros((n_matrices, n_features, n_features), device=device, dtype=dtype)
+        tangent_vectors = torch.zeros(
+            (n_matrices, n_features, n_features), device=device
+        )
         tangent_vectors[:-1] = tangent_vectors_
         tangent_vectors[-1] = tangent_vectors_last
         # get SPD matrices from tangent vectors

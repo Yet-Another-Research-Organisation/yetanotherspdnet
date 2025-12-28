@@ -234,15 +234,7 @@ class TestSPDnet:
     def test_use_autograd(self, vec_type, batchnorm_type, device, dtype, generator):
         """Test that autograd and manual gradient give same results"""
         # Create two models with same initialization
-<<<<<<< HEAD
-        gen1 = torch.Generator(device=device) if device.type == "cuda" else torch.Generator()
-=======
-        gen1 = (
-            torch.Generator(device=device)
-            if device.type == "cuda"
-            else torch.Generator()
-        )
->>>>>>> origin/mini_batch
+        gen1 = torch.Generator(device=device)
         gen1.manual_seed(777)
         model_manual = SPDnet(
             input_dim=10,
@@ -257,15 +249,7 @@ class TestSPDnet:
             generator=gen1,
         )
 
-<<<<<<< HEAD
-        gen2 = torch.Generator(device=device) if device.type == "cuda" else torch.Generator()
-=======
-        gen2 = (
-            torch.Generator(device=device)
-            if device.type == "cuda"
-            else torch.Generator()
-        )
->>>>>>> origin/mini_batch
+        gen2 = torch.Generator(device=device)
         gen2.manual_seed(777)
         model_autograd = SPDnet(
             input_dim=10,
