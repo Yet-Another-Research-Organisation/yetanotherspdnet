@@ -3,20 +3,19 @@ from torch.autograd import Function
 
 from .affine_invariant import (
     AffineInvariantGeodesic,
+    AffineInvariantMean2Points,
     affine_invariant_geodesic,
     affine_invariant_mean_2points,
-    AffineInvariantMean2Points,
 )
-
 from .kullback_leibler import (
+    ArithmeticMean,
     EuclideanGeodesic,
     HarmonicCurve,
-    euclidean_geodesic,
+    HarmonicMean,
     arithmetic_mean,
-    ArithmeticMean,
+    euclidean_geodesic,
     harmonic_curve,
     harmonic_mean,
-    HarmonicMean,
 )
 
 

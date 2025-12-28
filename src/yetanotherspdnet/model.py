@@ -1,5 +1,4 @@
 import zlib
-
 from collections.abc import Callable
 
 import torch
@@ -159,9 +158,10 @@ class SPDnet(nn.Module):
 
         self.batchnorm = batchnorm
         self.batchnorm_type = batchnorm_type
-        assert self.batchnorm_type in ["mean_only", "mean_var_scalar"], (
-            f"expected formula in ['mean_only', 'mean_var_scalar'], got {self.batchnorm_type}"
-        )
+        assert self.batchnorm_type in [
+            "mean_only",
+            "mean_var_scalar",
+        ], f"expected formula in ['mean_only', 'mean_var_scalar'], got {self.batchnorm_type}"
         self.batchnorm_mean_type = batchnorm_mean_type
         self.batchnorm_mean_options = batchnorm_mean_options
         self.batchnorm_momentum = batchnorm_momentum
@@ -172,9 +172,10 @@ class SPDnet(nn.Module):
         self.batchnorm_parametrization = batchnorm_parametrization
 
         self.vec_type = vec_type
-        assert self.vec_type in ["vec", "vech"], (
-            f"vec_type must be 'vec' or 'vech', got {self.vec_type}"
-        )
+        assert self.vec_type in [
+            "vec",
+            "vech",
+        ], f"vec_type must be 'vec' or 'vech', got {self.vec_type}"
 
         self.use_logeig = use_logeig
         self.device = device

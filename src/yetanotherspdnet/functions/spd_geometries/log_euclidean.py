@@ -9,10 +9,10 @@ from ..spd_linalg import (
     logm_SPD,
 )
 from .kullback_leibler import (
-    EuclideanGeodesic,
-    euclidean_geodesic,
     ArithmeticMean,
+    EuclideanGeodesic,
     arithmetic_mean,
+    euclidean_geodesic,
 )
 
 

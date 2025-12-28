@@ -1,16 +1,12 @@
 import pytest
-
 import torch
+from torch.nn.utils import parametrizations
 from torch.testing import assert_close
 
-from torch.nn.utils import parametrizations
-
 import yetanotherspdnet.nn.base as nn_spd_base
-from yetanotherspdnet.nn.parametrizations import StiefelAdaptiveParametrization
+from utils import is_orthogonal, is_spd, is_symmetric
 from yetanotherspdnet.functions.spd_linalg import symmetrize
 from yetanotherspdnet.random.spd import random_SPD
-
-from utils import is_symmetric, is_spd, is_orthogonal
 
 
 @pytest.fixture(scope="module")

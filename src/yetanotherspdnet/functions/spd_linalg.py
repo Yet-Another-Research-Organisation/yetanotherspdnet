@@ -810,7 +810,8 @@ def scaled_softplus_symmetric(
     """
     eigvals, eigvecs = torch.linalg.eigh(data)
     softplus_fun = lambda x: torch.log(
-        torch.tensor(1.0, device=data.device, dtype=data.dtype) + torch.pow(torch.tensor(2.0, device=data.device, dtype=data.dtype), x)
+        torch.tensor(1.0, device=data.device, dtype=data.dtype)
+        + torch.pow(torch.tensor(2.0, device=data.device, dtype=data.dtype), x)
     ) / torch.log(torch.tensor(2.0, device=data.device, dtype=data.dtype))
     return eigh_operation(eigvals, eigvecs, softplus_fun), eigvals, eigvecs
 
@@ -865,9 +866,12 @@ class ScaledSoftPlusSymmetric(Function):
         eigvals, eigvecs = ctx.saved_tensors
         device, dtype = eigvals.device, eigvals.dtype
         softplus_fun = lambda x: torch.log(
-            torch.tensor(1.0, device=device, dtype=dtype) + torch.pow(torch.tensor(2.0, device=device, dtype=dtype), x)
+            torch.tensor(1.0, device=device, dtype=dtype)
+            + torch.pow(torch.tensor(2.0, device=device, dtype=dtype), x)
         ) / torch.log(torch.tensor(2.0, device=device, dtype=dtype))
-        softplus_deriv = lambda x: 1 / (1.0 + torch.pow(torch.tensor(2.0, device=device, dtype=dtype), -x))
+        softplus_deriv = lambda x: 1 / (
+            1.0 + torch.pow(torch.tensor(2.0, device=device, dtype=dtype), -x)
+        )
         return eigh_operation_grad(
             grad_output, eigvals, eigvecs, softplus_fun, softplus_deriv
         )
@@ -900,7 +904,8 @@ def inv_scaled_softplus_SPD(
     """
     eigvals, eigvecs = torch.linalg.eigh(data)
     inv_softplus_fun = lambda x: torch.log(
-        torch.pow(torch.tensor(2.0, device=data.device, dtype=data.dtype), x) - torch.tensor(1.0, device=data.device, dtype=data.dtype)
+        torch.pow(torch.tensor(2.0, device=data.device, dtype=data.dtype), x)
+        - torch.tensor(1.0, device=data.device, dtype=data.dtype)
     ) / torch.log(torch.tensor(2.0, device=data.device, dtype=data.dtype))
     return eigh_operation(eigvals, eigvecs, inv_softplus_fun), eigvals, eigvecs
 
@@ -953,9 +958,12 @@ class InvScaledSoftPlusSPD(Function):
         eigvals, eigvecs = ctx.saved_tensors
         device, dtype = eigvals.device, eigvals.dtype
         inv_softplus_fun = lambda x: torch.log(
-            torch.pow(torch.tensor(2.0, device=device, dtype=dtype), x) - torch.tensor(1.0, device=device, dtype=dtype)
+            torch.pow(torch.tensor(2.0, device=device, dtype=dtype), x)
+            - torch.tensor(1.0, device=device, dtype=dtype)
         ) / torch.log(torch.tensor(2.0, device=device, dtype=dtype))
-        inv_softplus_deriv = lambda x: 1 / (1.0 - torch.pow(torch.tensor(2.0, device=device, dtype=dtype), -x))
+        inv_softplus_deriv = lambda x: 1 / (
+            1.0 - torch.pow(torch.tensor(2.0, device=device, dtype=dtype), -x)
+        )
         return eigh_operation_grad(
             grad_output, eigvals, eigvecs, inv_softplus_fun, inv_softplus_deriv
         )
@@ -1244,9 +1252,9 @@ def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Te
     data_transformed : torch.Tensor of shape (..., n_out, n_out)
         Transformed batch of SPD matrices
     """
-    assert weight.shape[-2] >= weight.shape[-1], (
-        "weight must reduce the dimension of data, i.e., n_in >= n_out"
-    )
+    assert (
+        weight.shape[-2] >= weight.shape[-1]
+    ), "weight must reduce the dimension of data, i.e., n_in >= n_out"
     return weight.transpose(-1, -2) @ data @ weight
 
 

@@ -2,18 +2,13 @@ import pytest
 import torch
 from torch.testing import assert_close
 
+import yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized as kullback_leibler_symmetrized
+from utils import is_spd, is_symmetric
 from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
     affine_invariant_mean_2points,
 )
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler import arithmetic_mean
-import yetanotherspdnet.functions.spd_linalg as spd_linalg
-
-import yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized as kullback_leibler_symmetrized
-
-from yetanotherspdnet.random.spd import random_SPD, random_DPD
+from yetanotherspdnet.random.spd import random_DPD, random_SPD
 from yetanotherspdnet.random.stiefel import random_stiefel
-
-from utils import is_symmetric, is_spd
 
 
 @pytest.fixture(scope="module")

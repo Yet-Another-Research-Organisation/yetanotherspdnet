@@ -1,35 +1,8 @@
+from functools import partial
+
 import torch
 from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
-
-from functools import partial
-
-from ..functions.spd_linalg import (
-    CongruenceSPD,
-    PowmSPD,
-    Whitening,
-    congruence_SPD,
-    powm_SPD,
-    whitening,
-)
-
-from ..functions.spd_geometries.affine_invariant import (
-    AffineInvariantGeodesic,
-    AffineInvariantMean,
-    AffineInvariantStdScalar,
-    affine_invariant_mean,
-    affine_invariant_geodesic,
-    affine_invariant_std_scalar,
-)
-
-from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
-    LogEuclideanGeodesic,
-    LogEuclideanMean,
-    LogEuclideanStdScalar,
-    log_euclidean_geodesic,
-    log_euclidean_mean,
-    log_euclidean_std_scalar,
-)
 
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     ArithmeticMean,
@@ -39,13 +12,12 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     LeftKullbackLeiblerStdScalar,
     RightKullbackLeiblerStdScalar,
     arithmetic_mean,
-    harmonic_mean,
     euclidean_geodesic,
     harmonic_curve,
+    harmonic_mean,
     left_kullback_leibler_std_scalar,
     right_kullback_leibler_std_scalar,
 )
-
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     GeometricArithmeticHarmonicMean,
     GeometricEuclideanHarmonicCurve,
@@ -54,11 +26,34 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized impo
     geometric_euclidean_harmonic_curve,
     symmetrized_kullback_leibler_std_scalar,
 )
+from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
+    LogEuclideanGeodesic,
+    LogEuclideanMean,
+    LogEuclideanStdScalar,
+    log_euclidean_geodesic,
+    log_euclidean_mean,
+    log_euclidean_std_scalar,
+)
 
+from ..functions.spd_geometries.affine_invariant import (
+    AffineInvariantGeodesic,
+    AffineInvariantMean,
+    AffineInvariantStdScalar,
+    affine_invariant_geodesic,
+    affine_invariant_mean,
+    affine_invariant_std_scalar,
+)
+from ..functions.spd_linalg import (
+    CongruenceSPD,
+    PowmSPD,
+    Whitening,
+    congruence_SPD,
+    powm_SPD,
+    whitening,
+)
 from .parametrizations import (
-    SPDAdaptiveParametrization,
-    SPDParametrization,
     ScalarSoftPlusParametrization,
+    SPDParametrization,
 )
 
 
@@ -165,9 +160,10 @@ class BatchNormSPDMean(nn.Module):
 
         # bias parameter
         self.parametrization = parametrization
-        assert self.parametrization in ["softplus", "exp"], (
-            f"formula must be in ['softplus', 'exp'], got {self.parametrization}"
-        )
+        assert self.parametrization in [
+            "softplus",
+            "exp",
+        ], f"formula must be in ['softplus', 'exp'], got {self.parametrization}"
         self.Covbias = torch.nn.Parameter(
             torch.eye(n_features, dtype=self.dtype, device=self.device)
         )
@@ -299,9 +295,11 @@ class BatchNormSPDMean(nn.Module):
         """
         Auxiliary function to deal with initialization of minibatch mode
         """
-        assert self.minibatch_mode in ["constant", "decay", "growth"], (
-            f"formula must be in ['constant', 'decay', 'growth'], got {self.minibatch_mode}"
-        )
+        assert self.minibatch_mode in [
+            "constant",
+            "decay",
+            "growth",
+        ], f"formula must be in ['constant', 'decay', 'growth'], got {self.minibatch_mode}"
         if self.minibatch_mode == "constant":
             self.get_minibatch_momentum = lambda: self.minibatch_momentum
         elif self.minibatch_mode == "decay":
@@ -522,9 +520,10 @@ class BatchNormSPDMeanScalarVariance(nn.Module):
 
         # mean covariance bias parameters
         self.parametrization = parametrization
-        assert self.parametrization in ["softplus", "exp"], (
-            f"formula must be in ['softplus', 'exp'], got {self.parametrization}"
-        )
+        assert self.parametrization in [
+            "softplus",
+            "exp",
+        ], f"formula must be in ['softplus', 'exp'], got {self.parametrization}"
         self.Covbias = torch.nn.Parameter(
             torch.eye(n_features, dtype=self.dtype, device=self.device)
         )
@@ -712,9 +711,11 @@ class BatchNormSPDMeanScalarVariance(nn.Module):
         """
         Auxiliary function to deal with initialization of minibatch mode
         """
-        assert self.minibatch_mode in ["constant", "decay", "growth"], (
-            f"formula must be in ['constant', 'decay', 'growth'], got {self.minibatch_mode}"
-        )
+        assert self.minibatch_mode in [
+            "constant",
+            "decay",
+            "growth",
+        ], f"formula must be in ['constant', 'decay', 'growth'], got {self.minibatch_mode}"
         if self.minibatch_mode == "constant":
             self.get_minibatch_momentum = lambda: self.minibatch_momentum
         elif self.minibatch_mode == "decay":

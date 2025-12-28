@@ -3,8 +3,6 @@ import torch
 from torch.testing import assert_close
 
 import yetanotherspdnet.functions.stiefel as stiefel
-from yetanotherspdnet.random.stiefel import _init_weights_stiefel
-
 from utils import is_orthogonal
 
 
@@ -164,9 +162,9 @@ class TestStiefelProjectionPolar:
         """
         Test that the projection of the identity matrix is the identity matrix
         """
-        I = torch.eye(n_in, device=device, dtype=dtype)
-        proj_I = stiefel.stiefel_projection_polar(I)
-        assert_close(I, proj_I)
+        identity_matrix = torch.eye(n_in, device=device, dtype=dtype)
+        proj_I = stiefel.stiefel_projection_polar(identity_matrix)
+        assert_close(identity_matrix, proj_I)
 
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     def test_projection_tangent(self, n_in, n_out, device, dtype, generator):
@@ -272,9 +270,9 @@ class TestStiefelProjectionQR:
         """
         Test that the projection of the identity matrix is the identity matrix
         """
-        I = torch.eye(n_in, device=device, dtype=dtype)
-        proj_I = stiefel.stiefel_projection_qr(I)
-        assert_close(I, proj_I)
+        identity_matrix = torch.eye(n_in, device=device, dtype=dtype)
+        proj_I = stiefel.stiefel_projection_qr(identity_matrix)
+        assert_close(identity_matrix, proj_I)
 
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     def test_differential_and_adjoint(self, n_in, n_out, device, dtype, generator):
