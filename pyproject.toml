@@ -5,14 +5,70 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "yetanotherspdnet"
 version = "0.1.0"
-description = "Yet Another SPDNet - Production Package"
+description = "A robust and tested implementation of SPDNet learning models for Symmetric Positive Definite matrices"
+readme = "README.md"
 requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Ammar Mian", email = "ammar.mian@univ-smb.fr"},
+    {name = "Florent Bouchard"},
+    {name = "Guillaume Ginolhac"},
+    {name = "Matthieu Gallet"},
+]
+keywords = [
+    "deep-learning",
+    "pytorch",
+    "spd-matrices",
+    "riemannian-geometry",
+    "spdnet",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+dependencies = [
+    "mypy>=1.18.2",
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.3",
+    "scipy>=1.16.3",
+    "torch>=2.0.0",
+]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
+test = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "scipy>=1.11.0",
 ]
+dev = [
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+    "pre-commit>=3.4.0",
+]
+docs = [
+    "sphinx>=7.2.0",
+    "myst-parser>=2.0.0",
+    "sphinx-autoapi>=3.0.0",
+    "linkify-it-py>=2.0.0",
+]
+all = [
+    "yetanotherspdnet[test,dev,docs]",
+]
+
+[project.urls]
+Homepage = "https://github.com/Yet-Another-Research-Organisation/yetanotherspdnet"
+Documentation = "https://yet-another-research-organisation.github.io/yetanotherspdnet"
+Repository = "https://github.com/Yet-Another-Research-Organisation/yetanotherspdnet"
+Issues = "https://github.com/Yet-Another-Research-Organisation/yetanotherspdnet/issues"
 
 [tool.setuptools]
 packages = ["yetanotherspdnet"]
@@ -20,7 +76,124 @@ packages = ["yetanotherspdnet"]
 [tool.setuptools.package-dir]
 yetanotherspdnet = "src/yetanotherspdnet"
 
+[tool.setuptools.package-data]
+yetanotherspdnet = ["py.typed"]
+
+# ============================================================================
+# Pytest Configuration
+# ============================================================================
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = "test_*.py"
-python_functions = "test_*"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=yetanotherspdnet",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+    "--cov-fail-under=40",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+# ============================================================================
+# Coverage Configuration
+# ============================================================================
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "def __str__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+# ============================================================================
+# Ruff Configuration (Linting + Formatting)
+# ============================================================================
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+    "NPY",    # NumPy-specific rules
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "B905",   # zip without explicit strict parameter
+    "E731",   # Lambda functions
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+"tests/*" = ["ARG", "S101"]  # Allow assert statements in tests
+
+[tool.ruff.lint.isort]
+known-first-party = ["yetanotherspdnet"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+# ============================================================================
+# MyPy Configuration (Type Checking)
+# ============================================================================
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+follow_imports = "normal"
+ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.3",
+]

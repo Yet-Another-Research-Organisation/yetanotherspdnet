@@ -1,0 +1,71 @@
+# Pre-commit hooks for Yet Another SPDNet
+# See https://pre-commit.com for more information
+
+repos:
+  # Ruff - Fast Python linter and formatter (replaces black, isort, flake8)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.9
+    hooks:
+      # Run the linter
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+      # Run the formatter
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  # General file cleanup
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      # Trims trailing whitespace
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      # Ensures files end with a newline
+      - id: end-of-file-fixer
+      # Checks for files that would conflict in case-insensitive filesystems
+      - id: check-case-conflict
+      # Prevents giant files from being committed
+      - id: check-added-large-files
+        args: [--maxkb=10000]
+      # Checks for merge conflict strings
+      - id: check-merge-conflict
+      # Checks YAML files for parseable syntax
+      - id: check-yaml
+        exclude: ^.github/workflows/
+      # Checks TOML files for parseable syntax
+      - id: check-toml
+      # Checks JSON files for parseable syntax
+      - id: check-json
+      # Makes sure files end with exactly one newline
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      # Checks for debugger imports and py37+ breakpoint()
+      - id: debug-statements
+      # Checks for private key files
+      - id: detect-private-key
+
+  # MyPy - Optional static type checking (warning only)
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.7.1
+    hooks:
+      - id: mypy
+        additional_dependencies: [torch, types-setuptools]
+        args: [--ignore-missing-imports, --no-strict-optional]
+        # Don't fail on mypy errors (just warnings)
+        verbose: true
+        # Only check src directory
+        files: ^src/
+
+# CI settings
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false
