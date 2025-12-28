@@ -52,9 +52,8 @@ autoapi_options = [
     "special-members",
     "imported-members",
 ]
-autoapi_ignore = ["*/tests/*", "*/test_*"]
-autoapi_keep_files = False
-autoapi_add_toctree_entry = True
+autoapi_keep_files = True
+autoapi_add_toctree_entry = False
 
 # Napoleon settings (Google/NumPy style docstrings)
 napoleon_google_docstring = True

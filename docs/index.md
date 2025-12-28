@@ -24,6 +24,7 @@ TODO
 installation
 quickstart
 api
+autoapi/yetanotherspdnet/index
 contributing
 ```
 

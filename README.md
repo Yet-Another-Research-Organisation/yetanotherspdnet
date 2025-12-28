@@ -15,9 +15,6 @@ SPDNet is a neural network architecture designed to work directly with SPD matri
 TODO: Add description
 
 
-## Features
-
-TODO
 
 ## Installation
 

@@ -61,7 +61,7 @@ The complete API documentation with all classes, methods, and parameters is avai
 ```{toctree}
 :maxdepth: 2
 
-autoapi/index
+autoapi/yetanotherspdnet/index
 ```
 
 ## Type Hints
