@@ -1,4 +1,3 @@
-from math import log
 import pytest
 import torch
 from torch.testing import assert_close
@@ -487,3 +486,252 @@ class TestLogEuclideanMean:
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
+
+
+class TestLogEuclideanStdScalar:
+    """
+    Test suite for the scalar standard deviation with respect to the log-Euclidean distance
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_shape(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that affine_invariant_std_scalar and AffineInvariantStdScalar
+        return correct shape, etc.
+        """
+        # generate some random SPD matrices
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        std_auto = log_euclidean.log_euclidean_std_scalar(X, G)
+        std_manual = log_euclidean.LogEuclideanStdScalar.apply(X, G)
+
+        assert std_auto.shape == torch.Size([])
+        assert std_auto.device == X.device
+        assert std_auto.dtype == X.dtype
+        assert std_auto >= 0
+
+        assert std_manual.shape == torch.Size([])
+        assert std_manual.device == X.device
+        assert std_manual.dtype == X.dtype
+        assert std_manual >= 0
+
+        assert_close(std_auto, std_manual)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_zero_std(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that n_matrices same matrices have zero std when reference point is the considered matrix
+        """
+        G = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X = torch.squeeze(G.clone().detach().repeat(n_matrices, 1, 1))
+
+        std_auto = log_euclidean.log_euclidean_std_scalar(X, G)
+        std_manual = log_euclidean.LogEuclideanStdScalar.apply(X, G)
+
+        assert_close(std_auto, torch.tensor(0.0, device=device, dtype=dtype))
+        assert_close(std_manual, torch.tensor(0.0, device=device, dtype=dtype))
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_diagonal_matrices(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for diagonal matrices
+        """
+        X = random_DPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals_X = X.diagonal(dim1=-1, dim2=-2)
+        G = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals_G = G.diagonal(dim1=-1, dim2=-2)
+
+        std_auto = log_euclidean.log_euclidean_std_scalar(X, G)
+        std_manual = log_euclidean.LogEuclideanStdScalar.apply(X, G)
+
+        expected = torch.sqrt(
+            torch.sum((torch.log(diagvals_X) - torch.log(diagvals_G)) ** 2) / n_matrices
+        )
+
+        assert_close(std_auto, expected)
+        assert_close(std_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_commuting_matrices(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for commuting matrices
+        """
+        diag_X = random_DPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals_X = diag_X.diagonal(dim1=-1, dim2=-2)
+        diag_G = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals_G = diag_G.diagonal(dim1=-1, dim2=-2)
+
+        eigvecs = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        X = eigvecs @ diag_X @ eigvecs.transpose(-1, -2)
+        G = eigvecs @ diag_G @ eigvecs.transpose(-1, -2)
+
+        std_auto = log_euclidean.log_euclidean_std_scalar(X, G)
+        std_manual = log_euclidean.LogEuclideanStdScalar.apply(X, G)
+
+        expected = torch.sqrt(
+            torch.sum((torch.log(diagvals_X) - torch.log(diagvals_G)) ** 2) / n_matrices
+        )
+
+        assert_close(std_auto, expected)
+        assert_close(std_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_general_case(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that general case works as expected
+        """
+        # generate a random mean
+        G = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G_logm = spd_linalg.logm_SPD(G)[0]
+        # generate random tangent vectors whose arithmetic mean is exactly zero
+        tangent_vectors = spd_linalg.symmetrize(
+            torch.randn(
+                (n_matrices, n_features, n_features),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        tangent_vectors = tangent_vectors - arithmetic_mean(tangent_vectors)
+        # multiply by some scale so that we don't get too far
+        tangent_vectors = 0.1 * tangent_vectors
+        # get SPD matrices from tangent vectors
+        data = spd_linalg.expm_symmetric(tangent_vectors + G_logm)[0]
+
+        std_auto = log_euclidean.log_euclidean_std_scalar(data, G)
+        std_manual = log_euclidean.LogEuclideanStdScalar.apply(data, G)
+
+        expected = torch.sqrt(torch.linalg.norm(tangent_vectors) ** 2 / n_matrices)
+
+        assert_close(std_auto, expected)
+        assert_close(std_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that manual and automatic gradients are the same
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        G_manual = G.clone().detach()
+        G_manual.requires_grad = True
+        G_auto = G.clone().detach()
+        G_auto.requires_grad = True
+
+        std_auto = log_euclidean.log_euclidean_std_scalar(X_auto, G_auto)
+        std_manual = log_euclidean.LogEuclideanStdScalar.apply(X_manual, G_manual)
+
+        loss_manual = std_manual
+        loss_manual.backward()
+        loss_auto = std_auto
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+        assert G_manual.grad is not None
+        assert G_auto.grad is not None
+        assert torch.isfinite(G_manual.grad).all()
+        assert torch.isfinite(G_auto.grad).all()
+        assert is_symmetric(G_manual.grad)
+        assert is_symmetric(G_auto.grad)
+        assert_close(G_manual.grad, G_auto.grad)

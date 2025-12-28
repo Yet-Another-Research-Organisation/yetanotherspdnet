@@ -168,6 +168,118 @@ class ArithmeticMean(Function):
         return grad_input
 
 
+# ---------------
+# Scalar variance
+# ---------------
+def left_kullback_leibler_std_scalar(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Scalar standard deviation with respect to the left Kullback-Leibler divergence
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix (some kind of mean of data)
+
+    Returns
+    -------
+    scalar_std : torch.Tensor of shape ()
+        scalar standard deviation
+    """
+    n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+    n_features = data.shape[-1]
+    L_G = torch.linalg.cholesky(reference_point)
+    G_inv = torch.cholesky_inverse(L_G)
+    L_data = torch.linalg.cholesky(data)
+    trace = torch.einsum("ik,...ki->", G_inv, data)
+    logdet_data = 2 * L_data.diagonal(dim1=-2, dim2=-1).log().sum()
+    logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
+    var = (trace - logdet_data) / n_matrices + logdet_G - n_features
+    # clamp to avoid small numerical errors yielding small negative variance
+    return torch.sqrt(torch.clamp(var, min=0.0))
+
+
+class LeftKullbackLeiblerStdScalar(Function):
+    """
+    Scalar standard deviation with respect to the left Kullback-Leibler divergence
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the scalar standard deviation with respect to the left Kullback-Leibler divergence
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        reference_point : torch.Tensor of shape (n_features, n_features)
+            SPD matrix (some kind of mean of data)
+
+        Returns
+        -------
+        scalar_std : torch.Tensor of shape ()
+            scalar standard deviation
+        """
+        n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+        n_features = data.shape[-1]
+        L_G = torch.linalg.cholesky(reference_point)
+        G_inv = torch.cholesky_inverse(L_G)
+        L_data = torch.linalg.cholesky(data)
+        trace = torch.einsum("ik,...ki->", G_inv, data)
+        logdet_data = 2 * L_data.diagonal(dim1=-2, dim2=-1).log().sum()
+        logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
+        # clamp to avoid small numerical errors yielding small negative variance
+        std_scalar = torch.sqrt(
+            torch.clamp(
+                (trace - logdet_data) / n_matrices + logdet_G - n_features, min=0.0
+            )
+        )
+        ctx.n_matrices = n_matrices
+        ctx.save_for_backward(data, reference_point, G_inv, L_data, std_scalar)
+        return std_scalar
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Backward pass of the scalar standard deviation with respect to the left Kullback-Leibler divergence
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape ()
+            Gradient of the loss with respect to the output of the scalar standard deviation Function
+
+        Returns
+        -------
+        grad_input_data : torch.Tensor of shape (..., n_features, n_features)
+            gradient of the loss with respect to the input data
+
+        grad_input_reference_point : torch.Tensor of shape (n_features, n_features)
+            gradient of the loss with respect to the input reference point
+        """
+        n_matrices = ctx.n_matrices
+        data, reference_point, G_inv, L_data, std_scalar = ctx.saved_tensors
+        data_inv = torch.cholesky_inverse(L_data)
+        grad_input_data = grad_output * (G_inv - data_inv) / 2 / std_scalar / n_matrices
+        grad_input_G = (
+            grad_output
+            * G_inv
+            @ (reference_point - arithmetic_mean(data))
+            @ G_inv
+            / 2
+            / std_scalar
+        )
+        return grad_input_data, grad_input_G
+
+
 # --------------
 # Harmonic curve
 # --------------
@@ -350,3 +462,118 @@ class HarmonicMean(Function):
         tmp = symmetrize(mean @ grad_output @ mean)
         grad_input = symmetrize(inv_data @ tmp @ inv_data / n_matrices)
         return grad_input
+
+
+# ---------------
+# Scalar variance
+# ---------------
+def right_kullback_leibler_std_scalar(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Scalar standard deviation with respect to the left Kullback-Leibler divergence
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix (some kind of mean of data)
+
+    Returns
+    -------
+    scalar_std : torch.Tensor of shape ()
+        scalar standard deviation
+    """
+    n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+    n_features = data.shape[-1]
+    L_G = torch.linalg.cholesky(reference_point)
+    L_data = torch.linalg.cholesky(data)
+    data_inv = torch.cholesky_inverse(L_data)
+    trace = torch.einsum("...ik,ki->", data_inv, reference_point)
+    logdet_data = 2 * L_data.diagonal(dim1=-2, dim2=-1).log().sum()
+    logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
+    var = (trace + logdet_data) / n_matrices - logdet_G - n_features
+    # clamp to avoid small numerical errors yielding small negative variance
+    return torch.sqrt(torch.clamp(var, min=0.0))
+
+
+class RightKullbackLeiblerStdScalar(Function):
+    """
+    Scalar standard deviation with respect to the left Kullback-Leibler divergence
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the scalar standard deviation with respect to the right Kullback-Leibler divergence
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        reference_point : torch.Tensor of shape (n_features, n_features)
+            SPD matrix (some kind of mean of data)
+
+        Returns
+        -------
+        scalar_std : torch.Tensor of shape ()
+            scalar standard deviation
+        """
+        n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+        n_features = data.shape[-1]
+        L_G = torch.linalg.cholesky(reference_point)
+        L_data = torch.linalg.cholesky(data)
+        data_inv = torch.cholesky_inverse(L_data)
+        trace = torch.einsum("...ik,ki->", data_inv, reference_point)
+        logdet_data = 2 * L_data.diagonal(dim1=-2, dim2=-1).log().sum()
+        logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
+        # clamp to avoid small numerical errors yielding small negative variance
+        std_scalar = torch.sqrt(
+            torch.clamp(
+                (trace + logdet_data) / n_matrices - logdet_G - n_features, min=0.0
+            )
+        )
+        ctx.n_matrices = n_matrices
+        ctx.save_for_backward(data, reference_point, L_G, data_inv, std_scalar)
+        return std_scalar
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Backward pass of the scalar standard deviation with respect to the right Kullback-Leibler divergence
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape ()
+            Gradient of the loss with respect to the output of the scalar standard deviation Function
+
+        Returns
+        -------
+        grad_input_data : torch.Tensor of shape (..., n_features, n_features)
+            gradient of the loss with respect to the input data
+
+        grad_input_reference_point : torch.Tensor of shape (n_features, n_features)
+            gradient of the loss with respect to the input reference point
+        """
+        n_matrices = ctx.n_matrices
+        data, reference_point, L_G, data_inv, std_scalar = ctx.saved_tensors
+        G_inv = torch.cholesky_inverse(L_G)
+        grad_input_data = (
+            grad_output
+            * data_inv
+            @ (data - reference_point)
+            @ data_inv
+            / 2
+            / std_scalar
+            / n_matrices
+        )
+        grad_input_G = (
+            grad_output * (arithmetic_mean(data_inv) - G_inv) / 2 / std_scalar
+        )
+        return grad_input_data, grad_input_G

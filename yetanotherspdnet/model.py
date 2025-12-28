@@ -3,11 +3,14 @@ import zlib
 from collections.abc import Callable
 
 import torch
-from torch import nn, norm
+from torch import nn
 from torch.nn.utils import parametrizations
 
 from yetanotherspdnet.nn.base import BiMap, LogEig, ReEig, Vec, Vech
-from yetanotherspdnet.nn.batchnorm import BatchNormSPDMean
+from yetanotherspdnet.nn.batchnorm import (
+    BatchNormSPDMean,
+    BatchNormSPDMeanScalarVariance,
+)
 
 
 class SPDnet(nn.Module):
@@ -22,11 +25,15 @@ class SPDnet(nn.Module):
         bimap_parametrization: type[nn.Module] | Callable = parametrizations.orthogonal,
         bimap_parametrization_options: dict | None = None,
         batchnorm: bool = False,
+        batchnorm_type: str = "mean_only",
         batchnorm_mean_type: str = "geometric_arithmetic_harmonic",
         batchnorm_mean_options: dict | None = None,
         batchnorm_momentum: float = 0.01,
         batchnorm_norm_strategy: str = "classical",
+        batchnorm_minibatch_mode: str = "constant",
         batchnorm_minibatch_momentum: float = 0.01,
+        batchnorm_minibatch_maxstep: int = 100,
+        batchnorm_parametrization: str = "softplus",
         vec_type: str = "vec",
         use_logeig: bool = True,
         device: torch.device = torch.device("cpu"),
@@ -70,6 +77,11 @@ class SPDnet(nn.Module):
         batchnorm : bool, optional
             Whether to apply BatchNormSPDMean to hidden layers. Default is False
 
+        batchnorm_type : str, optional
+            The type of batch normalization layer to use.
+            Default is "mean_only".
+            Choices are: "mean_only" and "mean_var_scalar"
+
         batchnorm_mean_type : str, optional
             Choice of SPD mean in BatchNormSPDMean. Default is "affine_invariant".
             Choices are: "affine_invariant", "log_euclidean",
@@ -90,9 +102,24 @@ class SPDnet(nn.Module):
             Default is "classical".
             Choices are: "classical" and "minibatch"
 
+        batchnorm_minibatch_mode : str, optional
+            How the minibatch momentum behaves during the training.
+            Default is "constant".
+            Choices are: "constant", "decay", "growth"
+
         batchnorm_minibatch_momentum : float, optional
             Momentum for mean regularization in minibatch normalization strategy
             Default is 0.01
+
+        batchnorm_minibatch_maxstep : int, optional
+            If minibatch_mode is "decay" or "growth", this is the training step at which the minibatch momentum
+            attains its final value.
+            Default is 100
+
+        batchnorm_parametrization : str, optional
+            Parametrization to apply on covariance bias.
+            Default is "softplus".
+            Choices are: "softplus", "exp"
 
         vec_type : str, optional
             Whether to use Vec or Vech module.
@@ -131,11 +158,18 @@ class SPDnet(nn.Module):
         self.bimap_parametrization_options = bimap_parametrization_options
 
         self.batchnorm = batchnorm
+        self.batchnorm_type = batchnorm_type
+        assert self.batchnorm_type in ["mean_only", "mean_var_scalar"], (
+            f"expected formula in ['mean_only', 'mean_var_scalar'], got {self.batchnorm_type}"
+        )
         self.batchnorm_mean_type = batchnorm_mean_type
         self.batchnorm_mean_options = batchnorm_mean_options
         self.batchnorm_momentum = batchnorm_momentum
         self.batchnorm_norm_strategy = batchnorm_norm_strategy
+        self.batchnorm_minibatch_mode = batchnorm_minibatch_mode
         self.batchnorm_minibatch_momentum = batchnorm_minibatch_momentum
+        self.batchnorm_minibatch_maxstep = batchnorm_minibatch_maxstep
+        self.batchnorm_parametrization = batchnorm_parametrization
 
         self.vec_type = vec_type
         assert self.vec_type in ["vec", "vech"], (
@@ -194,19 +228,40 @@ class SPDnet(nn.Module):
         )
 
         if batchnorm:
-            spdnet_layers.append(
-                BatchNormSPDMean(
-                    n_features=self.hidden_layers_size[0],
-                    mean_type=self.batchnorm_mean_type,
-                    mean_options=self.batchnorm_mean_options,
-                    momentum=self.batchnorm_momentum,
-                    use_autograd=self.use_autograd["batchnorm"],
-                    norm_strategy=self.batchnorm_norm_strategy,
-                    minibatch_momentum=self.batchnorm_minibatch_momentum,
-                    device=self.device,
-                    dtype=self.dtype,
+            if self.batchnorm_type == "mean_only":
+                spdnet_layers.append(
+                    BatchNormSPDMean(
+                        n_features=self.hidden_layers_size[0],
+                        mean_type=self.batchnorm_mean_type,
+                        mean_options=self.batchnorm_mean_options,
+                        momentum=self.batchnorm_momentum,
+                        norm_strategy=self.batchnorm_norm_strategy,
+                        minibatch_mode=self.batchnorm_minibatch_mode,
+                        minibatch_momentum=self.batchnorm_minibatch_momentum,
+                        minibatch_maxstep=self.batchnorm_minibatch_maxstep,
+                        parametrization=self.batchnorm_parametrization,
+                        use_autograd=self.use_autograd["batchnorm"],
+                        device=self.device,
+                        dtype=self.dtype,
+                    )
                 )
-            )
+            elif self.batchnorm_type == "mean_var_scalar":
+                spdnet_layers.append(
+                    BatchNormSPDMeanScalarVariance(
+                        n_features=self.hidden_layers_size[0],
+                        mean_type=self.batchnorm_mean_type,
+                        mean_options=self.batchnorm_mean_options,
+                        momentum=self.batchnorm_momentum,
+                        norm_strategy=self.batchnorm_norm_strategy,
+                        minibatch_mode=self.batchnorm_minibatch_mode,
+                        minibatch_momentum=self.batchnorm_minibatch_momentum,
+                        minibatch_maxstep=self.batchnorm_minibatch_maxstep,
+                        parametrization=self.batchnorm_parametrization,
+                        use_autograd=self.use_autograd["batchnorm"],
+                        device=self.device,
+                        dtype=self.dtype,
+                    )
+                )
         for i in range(1, len(hidden_layers_size)):
             spdnet_layers.append(
                 BiMap(
@@ -230,19 +285,40 @@ class SPDnet(nn.Module):
             )
 
             if batchnorm:
-                spdnet_layers.append(
-                    BatchNormSPDMean(
-                        n_features=self.hidden_layers_size[i],
-                        mean_type=self.batchnorm_mean_type,
-                        mean_options=self.batchnorm_mean_options,
-                        momentum=self.batchnorm_momentum,
-                        use_autograd=self.use_autograd["batchnorm"],
-                        norm_strategy=self.batchnorm_norm_strategy,
-                        minibatch_momentum=self.batchnorm_minibatch_momentum,
-                        device=self.device,
-                        dtype=self.dtype,
+                if self.batchnorm_type == "mean_only":
+                    spdnet_layers.append(
+                        BatchNormSPDMean(
+                            n_features=self.hidden_layers_size[i],
+                            mean_type=self.batchnorm_mean_type,
+                            mean_options=self.batchnorm_mean_options,
+                            momentum=self.batchnorm_momentum,
+                            norm_strategy=self.batchnorm_norm_strategy,
+                            minibatch_mode=self.batchnorm_minibatch_mode,
+                            minibatch_momentum=self.batchnorm_minibatch_momentum,
+                            minibatch_maxstep=self.batchnorm_minibatch_maxstep,
+                            parametrization=self.batchnorm_parametrization,
+                            use_autograd=self.use_autograd["batchnorm"],
+                            device=self.device,
+                            dtype=self.dtype,
+                        )
                     )
-                )
+                elif self.batchnorm_type == "mean_var_scalar":
+                    spdnet_layers.append(
+                        BatchNormSPDMeanScalarVariance(
+                            n_features=self.hidden_layers_size[i],
+                            mean_type=self.batchnorm_mean_type,
+                            mean_options=self.batchnorm_mean_options,
+                            momentum=self.batchnorm_momentum,
+                            norm_strategy=self.batchnorm_norm_strategy,
+                            minibatch_mode=self.batchnorm_minibatch_mode,
+                            minibatch_momentum=self.batchnorm_minibatch_momentum,
+                            minibatch_maxstep=self.batchnorm_minibatch_maxstep,
+                            parametrization=self.batchnorm_parametrization,
+                            use_autograd=self.use_autograd["batchnorm"],
+                            device=self.device,
+                            dtype=self.dtype,
+                        )
+                    )
 
         # Conditionally add LogEig layer
         if self.use_logeig:
