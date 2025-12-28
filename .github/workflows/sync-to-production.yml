@@ -53,15 +53,9 @@ jobs:
             echo "No changes to sync"
           fi
           
-          # Go back to dev repo
-          cd ..
-          
-          # Fetch all tags to be able to push them
-          git fetch --tags
-          
-          # Push the specific tag to production repo
-          git remote add prod https://x-access-token:${PROD_REPO_TOKEN}@github.com/Yet-Another-Research-Organisation/yetanotherspdnet.git
-          git push prod ${TAG_NAME}
+          # Create and push the tag in production repo
+          git tag -a ${TAG_NAME} -m "Release ${TAG_NAME}"
+          git push origin ${TAG_NAME}
           
           echo "✅ Tag ${TAG_NAME} synced to production repository"
       
