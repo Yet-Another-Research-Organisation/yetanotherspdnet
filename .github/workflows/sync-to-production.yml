@@ -20,7 +20,7 @@ jobs:
         id: tag
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
       
-      - name: Push tag to production repository
+      - name: Sync code and tag to production repository
         env:
           PROD_REPO_TOKEN: ${{ secrets.PROD_REPO_TOKEN }}
           TAG_NAME: ${{ steps.tag.outputs.tag }}
@@ -32,14 +32,20 @@ jobs:
           # Add production repository as remote
           git remote add prod https://x-access-token:${PROD_REPO_TOKEN}@github.com/Yet-Another-Research-Organisation/yetanotherspdnet.git
           
+          # Push the main branch to production repo (this updates all files)
+          git push prod main:main --force
+          
           # Push the specific tag to production repo
           git push prod ${TAG_NAME}
           
-          echo "✅ Tag ${TAG_NAME} synced to production repository"
+          echo "✅ Code and tag ${TAG_NAME} synced to production repository"
       
       - name: Summary
         run: |
           echo "### Synchronization Complete! 🚀" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tag:** \`${{ steps.tag.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** main" >> $GITHUB_STEP_SUMMARY
           echo "**Target:** yetanotherspdnet (production)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All source files and the version tag have been synced to the production repository." >> $GITHUB_STEP_SUMMARY
