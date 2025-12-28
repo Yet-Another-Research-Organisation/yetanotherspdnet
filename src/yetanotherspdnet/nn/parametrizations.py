@@ -18,9 +18,9 @@ from ..functions.spd_linalg import (
 )
 from ..functions.stiefel import (
     StiefelProjectionPolar,
+    StiefelProjectionQR,
     StiefelProjectionTangentOrthogonal,
     stiefel_projection_polar,
-    StiefelProjectionQR,
     stiefel_projection_qr,
     stiefel_projection_tangent_orthogonal,
 )
@@ -83,9 +83,10 @@ class SPDParametrization(nn.Module):
             the analytical formula. Default is False.
         """
         super().__init__()
-        assert mapping in ["softplus", "exp"], (
-            f"mapping must be in ['softplus', 'exp'], got {mapping}"
-        )
+        assert mapping in [
+            "softplus",
+            "exp",
+        ], f"mapping must be in ['softplus', 'exp'], got {mapping}"
         self.mapping = mapping
         self.use_autograd = use_autograd
 
@@ -210,9 +211,10 @@ class SPDAdaptiveParametrization(nn.Module):
 
         self.n_features = n_features
         self.initial_reference = initial_reference
-        assert mapping in ["softplus", "exp"], (
-            f"mapping must be in ['softplus', 'exp'], got {mapping}"
-        )
+        assert mapping in [
+            "softplus",
+            "exp",
+        ], f"mapping must be in ['softplus', 'exp'], got {mapping}"
         self.mapping = mapping
         self.use_autograd = use_autograd
         self.device = device
@@ -235,9 +237,7 @@ class SPDAdaptiveParametrization(nn.Module):
         else:
             assert isinstance(self.initial_reference, torch.Tensor) and (
                 self.initial_reference.shape == (n_features, n_features)
-            ), (
-                "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_features, n_features)"
-            )
+            ), "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_features, n_features)"
             self.register_buffer("reference_point", self.initial_reference.clone())
             self.register_buffer(
                 "reference_point_sqrtm", sqrtm_SPD(self.initial_reference.clone())[0]
@@ -418,9 +418,10 @@ class StiefelAdaptiveParametrization(nn.Module):
         self.n_in = n_in
         self.n_out = n_out
         self.initial_reference = initial_reference
-        assert mapping in ["QR", "polar"], (
-            f"mapping must be in ['QR', 'polar'], got {mapping}"
-        )
+        assert mapping in [
+            "QR",
+            "polar",
+        ], f"mapping must be in ['QR', 'polar'], got {mapping}"
         self.mapping = mapping
         self.use_autograd = use_autograd
         self.device = device
@@ -444,9 +445,7 @@ class StiefelAdaptiveParametrization(nn.Module):
         else:
             assert isinstance(self.initial_reference, torch.Tensor) and (
                 self.initial_reference.shape == (n_in, n_out)
-            ), (
-                "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_in, n_out)"
-            )
+            ), "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_in, n_out)"
             self.register_buffer("reference_point", self.initial_reference.clone())
 
         # Last Stiefel value (for reference point update)

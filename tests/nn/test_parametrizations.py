@@ -1,13 +1,10 @@
 import pytest
-
 import torch
 from torch.testing import assert_close
 
-
 import yetanotherspdnet.nn.parametrizations as nn_parametrizations
+from utils import is_orthogonal, is_spd, is_symmetric
 from yetanotherspdnet.functions.spd_linalg import inv_sqrtm_SPD, sqrtm_SPD, symmetrize
-
-from utils import is_symmetric, is_spd, is_orthogonal
 from yetanotherspdnet.random.spd import random_SPD
 from yetanotherspdnet.random.stiefel import random_stiefel
 

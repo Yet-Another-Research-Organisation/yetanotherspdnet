@@ -1,35 +1,21 @@
 import pytest
-
 import torch
 from torch.testing import assert_close
 
-from functools import partial
-
+import yetanotherspdnet.nn.batchnorm as batchnorm
+from utils import is_spd, is_symmetric
 from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
-    AffineInvariantMean,
-    affine_invariant_geodesic,
     affine_invariant_mean,
     affine_invariant_std_scalar,
 )
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     arithmetic_mean,
-    euclidean_geodesic,
-    harmonic_curve,
     harmonic_mean,
 )
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     geometric_arithmetic_harmonic_mean,
-    geometric_euclidean_harmonic_curve,
 )
-from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
-    log_euclidean_geodesic,
-    log_euclidean_mean,
-)
-
-import yetanotherspdnet.nn.batchnorm as batchnorm
 from yetanotherspdnet.random.spd import random_SPD
-
-from utils import is_spd, is_symmetric
 
 
 @pytest.fixture(scope="module")

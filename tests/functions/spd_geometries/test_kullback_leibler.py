@@ -2,14 +2,11 @@ import pytest
 import torch
 from torch.testing import assert_close
 
-import yetanotherspdnet.functions.spd_linalg as spd_linalg
-
 import yetanotherspdnet.functions.spd_geometries.kullback_leibler as kullback_leibler
-
-from yetanotherspdnet.random.spd import random_SPD, random_DPD
+import yetanotherspdnet.functions.spd_linalg as spd_linalg
+from utils import is_spd, is_symmetric
+from yetanotherspdnet.random.spd import random_DPD, random_SPD
 from yetanotherspdnet.random.stiefel import random_stiefel
-
-from utils import is_symmetric, is_spd
 
 
 @pytest.fixture(scope="module")

@@ -32,8 +32,8 @@ jobs:
           # Clone production repository
           git clone https://x-access-token:${PROD_REPO_TOKEN}@github.com/Yet-Another-Research-Organisation/yetanotherspdnet.git prod_repo
           
-          # Copy all files from dev to production (excluding .git)
-          rsync -av --delete --exclude='.git' --exclude='prod_repo' ./ prod_repo/
+          # Copy all files from dev to production (excluding .git, prod_repo, and build files)
+          rsync -av --delete --exclude='.git' --exclude='prod_repo' --exclude='docs/_build' --exclude='htmlcov' --exclude='*.pyc' --exclude='__pycache__' ./ prod_repo/
           
           # Navigate to production repo
           cd prod_repo

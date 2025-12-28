@@ -4,11 +4,11 @@ from torch.autograd import Function
 from ..spd_linalg import (
     eigh_operation,
     eigh_operation_grad,
-    inv_sqrtm_SPD,
-    sqrtm_SPD,
     expm_symmetric,
+    inv_sqrtm_SPD,
     logm_SPD,
     solve_sylvester_SPD,
+    sqrtm_SPD,
 )
 from .kullback_leibler import arithmetic_mean
 
