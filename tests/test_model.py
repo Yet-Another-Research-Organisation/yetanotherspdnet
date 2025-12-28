@@ -3,7 +3,7 @@ import torch
 from torch.nn.utils import parametrize
 from torch.testing import assert_close
 
-from utils import is_symmetric
+# from utils import is_symmetric
 from yetanotherspdnet.model import SPDnet
 from yetanotherspdnet.nn.base import BiMap, LogEig, ReEig, Vec, Vech
 from yetanotherspdnet.nn.batchnorm import (
