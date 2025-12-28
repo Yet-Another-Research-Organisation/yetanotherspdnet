@@ -4,6 +4,7 @@ from torch.autograd import Function
 from ..spd_linalg import (
     eigh_operation,
     eigh_operation_grad,
+    inv_sqrtm_SPD,
     sqrtm_SPD,
     expm_symmetric,
     logm_SPD,
@@ -48,6 +49,129 @@ def affine_invariant_geodesic(
     pow_t = lambda x: torch.pow(x, t)
     middle_term1 = eigh_operation(eigvals_middle_term1, eigvecs_middle_term1, pow_t)
     return point1_sqrtm @ middle_term1 @ point1_sqrtm
+
+
+class AffineInvariantGeodesic(Function):
+    """
+    Affine-invariant geodesic between two batches of SPD matrices
+    """
+
+    @staticmethod
+    def forward(
+        ctx, point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
+    ):
+        """
+        Forward pass of the affine-invariant geodesic between two batches of SPD matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        point1 : torch.Tensor of shape (..., nfeatures, nfeatures)
+            SPD matrices
+
+        point2 : torch.Tensor of shape (..., nfeatures, nfeatures)
+            SPD matrices
+
+        Returns
+        -------
+        point : torch.Tensor of shape (..., n_features, n_features)
+            SPD matrices
+        """
+        eigvals1, eigvecs1 = torch.linalg.eigh(point1)
+        point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
+        inv_sqrt = lambda x: 1 / torch.sqrt(x)
+        point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
+        eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
+            point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
+        )
+        pow_t = lambda x: torch.pow(x, t)
+        middle_term1 = eigh_operation(eigvals_middle_term1, eigvecs_middle_term1, pow_t)
+        ctx.save_for_backward(
+            point1_sqrtm,
+            point1_inv_sqrtm,
+            eigvals_middle_term1,
+            eigvecs_middle_term1,
+            point1,
+            point2,
+        )
+        ctx.t = t
+        return point1_sqrtm @ middle_term1 @ point1_sqrtm
+
+    @staticmethod
+    def backward(
+        ctx, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, None]:
+        """
+        Backward pass of the affine-invariant geodesic
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., nfeatures, nfeatures)
+            Gradient of the loss with respect to the geometric mean of two SPD matrices
+
+        Returns
+        -------
+        grad_input1 : torch.Tensor of shape (..., nfeatures, nfeatures)
+            Gradient of the loss with respect to point1
+
+        grad_input2 : torch.Tensor of shape (..., nfeatures, nfeatures)
+            Gradient of the loss with respect to point2
+        """
+        # TODO: We need to add the backward with respect to t
+        # We need to add conditions to only compute required gradients
+        # condition is made possible by ctx.needs_input_grad
+        # This should be done everywhere
+        # Also, here, probably better to switch roles of point1 and point2
+        # so that we can get the grad of point1 directly with computations from
+        # forward (and set grad2 to None). Maybe more logical, to discuss with Ammar
+        (
+            point1_sqrtm,
+            point1_inv_sqrtm,
+            eigvals_middle_term1,
+            eigvecs_middle_term1,
+            point1,
+            point2,
+        ) = ctx.saved_tensors
+        t = ctx.t
+        eigvals2, eigvecs2 = torch.linalg.eigh(point2)
+        point2_sqrtm = eigh_operation(eigvals2, eigvecs2, torch.sqrt)
+        inv_sqrt = lambda x: 1 / torch.sqrt(x)
+        point2_inv_sqrtm = eigh_operation(eigvals2, eigvecs2, inv_sqrt)
+        eigvals_middle_term2, eigvecs_middle_term2 = torch.linalg.eigh(
+            point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
+        )
+        pow_t = lambda x: torch.pow(x, t)
+        pow_t_deriv = lambda x: t * torch.pow(x, t - 1)
+        pow_1_t = lambda x: torch.pow(x, 1 - t)
+        pow_1_t_deriv = lambda x: (1 - t) * torch.pow(x, -t)
+        grad_input1 = (
+            point2_inv_sqrtm
+            @ eigh_operation_grad(
+                point2_sqrtm @ grad_output @ point2_sqrtm,
+                eigvals_middle_term2,
+                eigvecs_middle_term2,
+                pow_1_t,
+                pow_1_t_deriv,
+            )
+            @ point2_inv_sqrtm
+        )
+        grad_input2 = (
+            point1_inv_sqrtm
+            @ eigh_operation_grad(
+                point1_sqrtm @ grad_output @ point1_sqrtm,
+                eigvals_middle_term1,
+                eigvecs_middle_term1,
+                pow_t,
+                pow_t_deriv,
+            )
+            @ point1_inv_sqrtm
+        )
+        return grad_input1, grad_input2, None
 
 
 # -----------------------------------
@@ -400,3 +524,132 @@ def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tens
         # stepsize = 1
         mean = AffineInvariantMeanIteration.apply(mean, data, stepsize)
     return mean
+
+
+# ---------------
+# Scalar variance
+# ---------------
+def affine_invariant_std_scalar(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Scalar standard deviation with respect to the affine-invariant distance
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix (some kind of mean of data)
+
+    Returns
+    -------
+    scalar_std : torch.Tensor of shape ()
+        scalar standard deviation
+    """
+    n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+    G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
+    transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
+    eigvals = torch.linalg.eigvalsh(transformed_data)
+    return torch.sqrt(torch.sum(torch.log(eigvals) ** 2) / n_matrices)
+
+
+class AffineInvariantStdScalar(Function):
+    """
+    Scalar standard deviation with respect to the affine-invariant distance
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the scalar standard deviation with respect to the affine-invariant distance
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        reference_point : torch.Tensor of shape (n_features, n_features)
+            SPD matrix (some kind of mean of data)
+
+        Returns
+        -------
+        scalar_std : torch.Tensor of shape ()
+            scalar standard deviation
+        """
+        n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+        G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
+        transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
+        eigvals_transdat, eigvecs_transdat = torch.linalg.eigh(transformed_data)
+        scalar_std = torch.sqrt(
+            torch.sum(torch.log(eigvals_transdat) ** 2) / n_matrices
+        )
+        ctx.n_matrices = n_matrices
+        ctx.save_for_backward(
+            data,
+            reference_point,
+            G_inv_sqrtm,
+            eigvals_transdat,
+            eigvecs_transdat,
+            scalar_std,
+        )
+        return scalar_std
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Backward pass of the scalar standard deviation with respect to the affine-invariant distance
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape ()
+            Gradient of the loss with respect to the output of the scalar standard deviation Function
+
+        Returns
+        -------
+        grad_input_data : torch.Tensor of shape (..., n_features, n_features)
+            gradient of the loss with respect to the input data
+
+        grad_input_reference_point : torch.Tensor of shape (n_features, n_features)
+            gradient of the loss with respect to the input reference point
+        """
+        n_matrices = ctx.n_matrices
+        (
+            data,
+            reference_point,
+            G_inv_sqrtm,
+            eigvals_transdat,
+            eigvecs_transdat,
+            scalar_std,
+        ) = ctx.saved_tensors
+
+        data_inv_sqrtm = inv_sqrtm_SPD(data)[0]
+
+        transformed_G = data_inv_sqrtm @ reference_point @ data_inv_sqrtm
+        eigvals_transG, eigvecs_transG = torch.linalg.eigh(transformed_G)
+
+        log_inv = lambda x: torch.log(x) / x
+        middle_term_data = eigh_operation(eigvals_transdat, eigvecs_transdat, log_inv)
+        middle_term_G = eigh_operation(eigvals_transG, eigvecs_transG, log_inv)
+
+        grad_input_data = (
+            grad_output
+            * G_inv_sqrtm
+            @ middle_term_data
+            @ G_inv_sqrtm
+            / n_matrices
+            / scalar_std
+        )
+        grad_input_G = (
+            grad_output
+            * arithmetic_mean(data_inv_sqrtm @ middle_term_G @ data_inv_sqrtm)
+            / scalar_std
+        )
+        return grad_input_data, grad_input_G

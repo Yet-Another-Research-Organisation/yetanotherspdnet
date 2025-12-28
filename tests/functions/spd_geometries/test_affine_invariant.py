@@ -54,12 +54,20 @@ class TestAffineInvariantGeodesic:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point = affine_invariant.affine_invariant_geodesic(point1, point2, t)
+        point_auto = affine_invariant.affine_invariant_geodesic(point1, point2, t)
+        point_manual = affine_invariant.AffineInvariantGeodesic.apply(point1, point2, t)
 
-        assert point.shape == point1.shape
-        assert point.device == point1.device
-        assert point.dtype == point1.dtype
-        assert is_spd(point)
+        assert point_auto.shape == point1.shape
+        assert point_auto.device == point1.device
+        assert point_auto.dtype == point1.dtype
+        assert is_spd(point_auto)
+
+        assert point_manual.shape == point1.shape
+        assert point_manual.device == point1.device
+        assert point_manual.dtype == point1.dtype
+        assert is_spd(point_manual)
+
+        assert_close(point_auto, point_manual)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_extremities(self, n_features, cond, device, dtype, generator):
@@ -78,11 +86,20 @@ class TestAffineInvariantGeodesic:
         point1 = points[0]
         point2 = points[1]
 
-        point1_ = affine_invariant.affine_invariant_geodesic(point1, point2, 0)
-        point2_ = affine_invariant.affine_invariant_geodesic(point1, point2, 1)
+        point1_auto = affine_invariant.affine_invariant_geodesic(point1, point2, 0)
+        point2_auto = affine_invariant.affine_invariant_geodesic(point1, point2, 1)
 
-        assert_close(point1_, point1)
-        assert_close(point2_, point2)
+        point1_manual = affine_invariant.AffineInvariantGeodesic.apply(
+            point1, point2, 0
+        )
+        point2_manual = affine_invariant.AffineInvariantGeodesic.apply(
+            point1, point2, 1
+        )
+
+        assert_close(point1_auto, point1)
+        assert_close(point2_auto, point2)
+        assert_close(point1_manual, point1)
+        assert_close(point2_manual, point2)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_symmetry(self, n_features, cond, device, dtype, generator):
@@ -102,10 +119,19 @@ class TestAffineInvariantGeodesic:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_12 = affine_invariant.affine_invariant_geodesic(point1, point2, t)
-        point_21 = affine_invariant.affine_invariant_geodesic(point2, point1, 1 - t)
+        point_12_auto = affine_invariant.affine_invariant_geodesic(point1, point2, t)
+        point_21_auto = affine_invariant.affine_invariant_geodesic(
+            point2, point1, 1 - t
+        )
+        point_12_manual = affine_invariant.AffineInvariantGeodesic.apply(
+            point1, point2, t
+        )
+        point_21_manual = affine_invariant.AffineInvariantGeodesic.apply(
+            point2, point1, 1 - t
+        )
 
-        assert_close(point_12, point_21)
+        assert_close(point_12_auto, point_21_auto)
+        assert_close(point_12_manual, point_21_manual)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_identical_points(self, n_features, cond, device, dtype, generator):
@@ -124,9 +150,11 @@ class TestAffineInvariantGeodesic:
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_ = affine_invariant.affine_invariant_geodesic(point, point, t)
+        point_auto = affine_invariant.affine_invariant_geodesic(point, point, t)
+        point_manual = affine_invariant.AffineInvariantGeodesic.apply(point, point, t)
 
-        assert_close(point_, point)
+        assert_close(point_auto, point)
+        assert_close(point_manual, point)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_diagonal_matrices(self, n_features, cond, device, dtype, generator):
@@ -149,12 +177,14 @@ class TestAffineInvariantGeodesic:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point = affine_invariant.affine_invariant_geodesic(point1, point2, t)
+        point_auto = affine_invariant.affine_invariant_geodesic(point1, point2, t)
+        point_manual = affine_invariant.AffineInvariantGeodesic.apply(point1, point2, t)
 
         expected_diag = torch.pow(diagvals1, 1 - t) * torch.pow(diagvals2, t)
         expected = torch.diag(expected_diag)
 
-        assert_close(point, expected)
+        assert_close(point_auto, expected)
+        assert_close(point_manual, expected)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_commuting_matrices(self, n_features, cond, device, dtype, generator):
@@ -189,12 +219,14 @@ class TestAffineInvariantGeodesic:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point = affine_invariant.affine_invariant_geodesic(point1, point2, t)
+        point_auto = affine_invariant.affine_invariant_geodesic(point1, point2, t)
+        point_manual = affine_invariant.AffineInvariantGeodesic.apply(point1, point2, t)
 
         expected_diag = torch.pow(diagvals1, 1 - t) * torch.pow(diagvals2, t)
         expected = eigvecs @ torch.diag(expected_diag) @ eigvecs.transpose(-1, -2)
 
-        assert_close(point, expected)
+        assert_close(point_auto, expected)
+        assert_close(point_manual, expected)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_identity_to_general(self, n_features, cond, device, dtype, generator):
@@ -214,11 +246,52 @@ class TestAffineInvariantGeodesic:
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        point_ = affine_invariant.affine_invariant_geodesic(Id, point, t)
+        point_auto = affine_invariant.affine_invariant_geodesic(Id, point, t)
+        point_manual = affine_invariant.AffineInvariantGeodesic.apply(Id, point, t)
 
         expected = spd_linalg.powm_SPD(point, t)[0]
 
-        assert_close(point_, expected)
+        assert_close(point_auto, expected)
+        assert_close(point_manual, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_features, cond, device, dtype, generator):
+        """
+        Test that backward works and that automatic and manual differentiation yield same results
+        """
+        # generate some random SPD matrices
+        X = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+        # random t
+        t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+
+        G_auto = affine_invariant.affine_invariant_geodesic(X_auto[0], X_auto[1], t)
+        G_manual = affine_invariant.AffineInvariantGeodesic.apply(
+            X_manual[0], X_manual[1], t
+        )
+
+        loss_manual = torch.norm(G_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(G_auto)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
 
 
 class TestAffineInvariantMean2points:
@@ -374,44 +447,28 @@ class TestAffineInvariantMean2points:
             dtype=dtype,
             generator=generator,
         )
-        X1 = X[0]
-        X2 = X[1]
-
-        X1_manual = X1.clone().detach()
-        X1_manual.requires_grad = True
-        X1_auto = X1.clone().detach()
-        X1_auto.requires_grad = True
-
-        X2_manual = X2.clone().detach()
-        X2_manual.requires_grad = True
-        X2_auto = X2.clone().detach()
-        X2_auto.requires_grad = True
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
 
         G_manual = affine_invariant.AffineInvariantMean2Points.apply(
-            X1_manual, X2_manual
+            X_manual[0], X_manual[1]
         )
-        G_auto = affine_invariant.affine_invariant_mean_2points(X1_auto, X2_auto)
+        G_auto = affine_invariant.affine_invariant_mean_2points(X_auto[0], X_auto[1])
 
         loss_manual = torch.norm(G_manual)
         loss_manual.backward()
         loss_auto = torch.norm(G_auto)
         loss_auto.backward()
 
-        assert X1_manual.grad is not None
-        assert X1_auto.grad is not None
-        assert torch.isfinite(X1_manual.grad).all()
-        assert torch.isfinite(X1_auto.grad).all()
-        assert is_symmetric(X1_manual.grad)
-        assert is_symmetric(X1_auto.grad)
-        assert_close(X1_manual.grad, X1_auto.grad)
-
-        assert X2_manual.grad is not None
-        assert X2_auto.grad is not None
-        assert torch.isfinite(X2_manual.grad).all()
-        assert torch.isfinite(X2_auto.grad).all()
-        assert is_symmetric(X2_manual.grad)
-        assert is_symmetric(X2_auto.grad)
-        assert_close(X2_manual.grad, X2_auto.grad)
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_adequation_geodesic_fixedpoint(
@@ -438,7 +495,9 @@ class TestAffineInvariantMean2points:
         )
 
         assert_close(G_geodesic, G_2points_auto)
-        assert_close(G_fixedpoint_auto, G_geodesic)
+        assert_close(G_fixedpoint_auto, G_2points_auto)
+
+    # TODO: Also add comparison of gradients adequation between the 3
 
 
 class TestAffineInvariantMean:
@@ -658,3 +717,252 @@ class TestAffineInvariantMean:
         assert is_symmetric(X_manual.grad)
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
+
+
+class TestAffineInvariantStdScalar:
+    """
+    Test suite for the scalar standard deviation with respect to the affine-invariant distance
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_shape(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that affine_invariant_std_scalar and AffineInvariantStdScalar
+        return correct shape, etc.
+        """
+        # generate some random SPD matrices
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        std_auto = affine_invariant.affine_invariant_std_scalar(X, G)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(X, G)
+
+        assert std_auto.shape == torch.Size([])
+        assert std_auto.device == X.device
+        assert std_auto.dtype == X.dtype
+        assert std_auto >= 0
+
+        assert std_manual.shape == torch.Size([])
+        assert std_manual.device == X.device
+        assert std_manual.dtype == X.dtype
+        assert std_manual >= 0
+
+        assert_close(std_auto, std_manual)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_zero_std(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that n_matrices same matrices have zero std when reference point is the considered matrix
+        """
+        G = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X = torch.squeeze(G.clone().detach().repeat(n_matrices, 1, 1))
+
+        std_auto = affine_invariant.affine_invariant_std_scalar(X, G)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(X, G)
+
+        assert_close(std_auto, torch.tensor(0.0, device=device, dtype=dtype))
+        assert_close(std_manual, torch.tensor(0.0, device=device, dtype=dtype))
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_diagonal_matrices(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for diagonal matrices
+        """
+        X = random_DPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals_X = X.diagonal(dim1=-1, dim2=-2)
+        G = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals_G = G.diagonal(dim1=-1, dim2=-2)
+
+        std_auto = affine_invariant.affine_invariant_std_scalar(X, G)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(X, G)
+
+        expected = torch.sqrt(
+            torch.sum(torch.log(diagvals_X / diagvals_G) ** 2) / n_matrices
+        )
+
+        assert_close(std_auto, expected)
+        assert_close(std_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_commuting_matrices(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for commuting matrices
+        """
+        diag_X = random_DPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals_X = diag_X.diagonal(dim1=-1, dim2=-2)
+        diag_G = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals_G = diag_G.diagonal(dim1=-1, dim2=-2)
+
+        eigvecs = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        X = eigvecs @ diag_X @ eigvecs.transpose(-1, -2)
+        G = eigvecs @ diag_G @ eigvecs.transpose(-1, -2)
+
+        std_auto = affine_invariant.affine_invariant_std_scalar(X, G)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(X, G)
+
+        expected = torch.sqrt(
+            torch.sum(torch.log(diagvals_X / diagvals_G) ** 2) / n_matrices
+        )
+
+        assert_close(std_auto, expected)
+        assert_close(std_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_general_case(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that general case works as expected
+        """
+        # generate a random mean
+        G = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G_sqrtm = spd_linalg.sqrtm_SPD(G)[0]
+        # generate random tangent vectors whose arithmetic mean is exactly zero
+        tangent_vectors = spd_linalg.symmetrize(
+            torch.randn(
+                (n_matrices, n_features, n_features),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        tangent_vectors = tangent_vectors - arithmetic_mean(tangent_vectors)
+        # multiply by some scale so that we don't get too far
+        tangent_vectors = 0.1 * tangent_vectors
+        # get SPD matrices from tangent vectors
+        data = G_sqrtm @ spd_linalg.expm_symmetric(tangent_vectors)[0] @ G_sqrtm
+
+        std_auto = affine_invariant.affine_invariant_std_scalar(data, G)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(data, G)
+
+        expected = torch.sqrt(torch.linalg.norm(tangent_vectors) ** 2 / n_matrices)
+
+        assert_close(std_auto, expected)
+        assert_close(std_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that manual and automatic gradients are the same
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        G_manual = G.clone().detach()
+        G_manual.requires_grad = True
+        G_auto = G.clone().detach()
+        G_auto.requires_grad = True
+
+        std_auto = affine_invariant.affine_invariant_std_scalar(X_auto, G_auto)
+        std_manual = affine_invariant.AffineInvariantStdScalar.apply(X_manual, G_manual)
+
+        loss_manual = std_manual
+        loss_manual.backward()
+        loss_auto = std_auto
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+        assert G_manual.grad is not None
+        assert G_auto.grad is not None
+        assert torch.isfinite(G_manual.grad).all()
+        assert torch.isfinite(G_auto.grad).all()
+        assert is_symmetric(G_manual.grad)
+        assert is_symmetric(G_auto.grad)
+        assert_close(G_manual.grad, G_auto.grad)
