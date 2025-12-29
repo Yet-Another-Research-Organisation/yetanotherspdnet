@@ -174,7 +174,7 @@ lines-after-imports = 2
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
-line-ending = "auto"
+line-ending = "lf"
 
 # ============================================================================
 # MyPy Configuration (Type Checking)
