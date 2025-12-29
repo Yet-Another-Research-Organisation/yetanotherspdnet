@@ -237,7 +237,9 @@ class SPDAdaptiveParametrization(nn.Module):
         else:
             assert isinstance(self.initial_reference, torch.Tensor) and (
                 self.initial_reference.shape == (n_features, n_features)
-            ), "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_features, n_features)"
+            ), (
+                "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_features, n_features)"
+            )
             self.register_buffer("reference_point", self.initial_reference.clone())
             self.register_buffer(
                 "reference_point_sqrtm", sqrtm_SPD(self.initial_reference.clone())[0]
@@ -445,7 +447,9 @@ class StiefelAdaptiveParametrization(nn.Module):
         else:
             assert isinstance(self.initial_reference, torch.Tensor) and (
                 self.initial_reference.shape == (n_in, n_out)
-            ), "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_in, n_out)"
+            ), (
+                "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_in, n_out)"
+            )
             self.register_buffer("reference_point", self.initial_reference.clone())
 
         # Last Stiefel value (for reference point update)

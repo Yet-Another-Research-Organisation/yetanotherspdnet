@@ -161,7 +161,9 @@ class SPDnet(nn.Module):
         assert self.batchnorm_type in [
             "mean_only",
             "mean_var_scalar",
-        ], f"expected formula in ['mean_only', 'mean_var_scalar'], got {self.batchnorm_type}"
+        ], (
+            f"expected formula in ['mean_only', 'mean_var_scalar'], got {self.batchnorm_type}"
+        )
         self.batchnorm_mean_type = batchnorm_mean_type
         self.batchnorm_mean_options = batchnorm_mean_options
         self.batchnorm_momentum = batchnorm_momentum

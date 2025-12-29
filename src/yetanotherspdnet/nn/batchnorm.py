@@ -299,7 +299,9 @@ class BatchNormSPDMean(nn.Module):
             "constant",
             "decay",
             "growth",
-        ], f"formula must be in ['constant', 'decay', 'growth'], got {self.minibatch_mode}"
+        ], (
+            f"formula must be in ['constant', 'decay', 'growth'], got {self.minibatch_mode}"
+        )
         if self.minibatch_mode == "constant":
             self.get_minibatch_momentum = lambda: self.minibatch_momentum
         elif self.minibatch_mode == "decay":
@@ -715,7 +717,9 @@ class BatchNormSPDMeanScalarVariance(nn.Module):
             "constant",
             "decay",
             "growth",
-        ], f"formula must be in ['constant', 'decay', 'growth'], got {self.minibatch_mode}"
+        ], (
+            f"formula must be in ['constant', 'decay', 'growth'], got {self.minibatch_mode}"
+        )
         if self.minibatch_mode == "constant":
             self.get_minibatch_momentum = lambda: self.minibatch_momentum
         elif self.minibatch_mode == "decay":

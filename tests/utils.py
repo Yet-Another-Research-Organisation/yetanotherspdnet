@@ -59,6 +59,6 @@ def is_orthogonal(W: torch.Tensor) -> bool:
     """
     assert W.dim() == 2
     assert W.shape[1] <= W.shape[0]
-    WWT = W.transpose(-1,-2) @ W
+    WWT = W.transpose(-1, -2) @ W
     identity_matrix = torch.eye(W.shape[1], device=W.device, dtype=W.dtype)
     return bool(torch.allclose(WWT, identity_matrix))
