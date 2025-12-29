@@ -1252,9 +1252,9 @@ def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Te
     data_transformed : torch.Tensor of shape (..., n_out, n_out)
         Transformed batch of SPD matrices
     """
-    assert (
-        weight.shape[-2] >= weight.shape[-1]
-    ), "weight must reduce the dimension of data, i.e., n_in >= n_out"
+    assert weight.shape[-2] >= weight.shape[-1], (
+        "weight must reduce the dimension of data, i.e., n_in >= n_out"
+    )
     return weight.transpose(-1, -2) @ data @ weight
 
 
