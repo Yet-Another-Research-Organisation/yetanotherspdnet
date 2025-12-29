@@ -1,6 +1,8 @@
 import torch
 from torch.autograd import Function
 
+from yetanotherspdnet.functions.scalar_functions import inv, inv_sqrt
+
 from ..spd_linalg import (
     eigh_operation,
     eigh_operation_grad,
@@ -41,7 +43,6 @@ def affine_invariant_geodesic(
     """
     eigvals1, eigvecs1 = torch.linalg.eigh(point1)
     point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-    inv_sqrt = lambda x: 1 / torch.sqrt(x)
     point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
     eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
         point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
@@ -81,7 +82,6 @@ class AffineInvariantGeodesic(Function):
         """
         eigvals1, eigvecs1 = torch.linalg.eigh(point1)
         point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-        inv_sqrt = lambda x: 1 / torch.sqrt(x)
         point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
         eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
             point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
@@ -140,7 +140,6 @@ class AffineInvariantGeodesic(Function):
         t = ctx.t
         eigvals2, eigvecs2 = torch.linalg.eigh(point2)
         point2_sqrtm = eigh_operation(eigvals2, eigvecs2, torch.sqrt)
-        inv_sqrt = lambda x: 1 / torch.sqrt(x)
         point2_inv_sqrtm = eigh_operation(eigvals2, eigvecs2, inv_sqrt)
         eigvals_middle_term2, eigvecs_middle_term2 = torch.linalg.eigh(
             point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
@@ -201,7 +200,6 @@ def affine_invariant_mean_2points(
     # we don't use sqrtm_SPD and inv_sqrtm_SPD here to avoid an unnecessary evd
     eigvals1, eigvecs1 = torch.linalg.eigh(point1)
     point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-    inv_sqrt = lambda x: 1 / torch.sqrt(x)
     point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
     middle_term1 = sqrtm_SPD(point1_inv_sqrtm @ point2 @ point1_inv_sqrtm)[0]
     return point1_sqrtm @ middle_term1 @ point1_sqrtm
@@ -235,7 +233,6 @@ class AffineInvariantMean2Points(Function):
         """
         eigvals1, eigvecs1 = torch.linalg.eigh(point1)
         point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-        inv_sqrt = lambda x: 1 / torch.sqrt(x)
         point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
         eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
             point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
@@ -284,7 +281,6 @@ class AffineInvariantMean2Points(Function):
         ) = ctx.saved_tensors
         eigvals2, eigvecs2 = torch.linalg.eigh(point2)
         point2_sqrtm = eigh_operation(eigvals2, eigvecs2, torch.sqrt)
-        inv_sqrt = lambda x: 1 / torch.sqrt(x)
         point2_inv_sqrtm = eigh_operation(eigvals2, eigvecs2, inv_sqrt)
         eigvals_middle_term2, eigvecs_middle_term2 = torch.linalg.eigh(
             point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
@@ -335,7 +331,6 @@ def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Te
         # sqrtm and inverse sqrtm of mean
         eigvals_mean, eigvecs_mean = torch.linalg.eigh(mean)
         mean_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, torch.sqrt)
-        inv_sqrt = lambda x: 1 / torch.sqrt(x)
         mean_inv_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, inv_sqrt)
         # transform data
         transformed_data = mean_inv_sqrtm @ data @ mean_inv_sqrtm
@@ -386,7 +381,6 @@ class AffineInvariantMeanIteration(Function):
         mean_iterate_sqrtm = eigh_operation(
             eigvals_mean_iterate, eigvecs_mean_iterate, torch.sqrt
         )
-        inv_sqrt = lambda x: 1 / torch.sqrt(x)
         mean_iterate_inv_sqrtm = eigh_operation(
             eigvals_mean_iterate, eigvecs_mean_iterate, inv_sqrt
         )
@@ -462,7 +456,6 @@ class AffineInvariantMeanIteration(Function):
             torch.exp,
             torch.exp,
         )
-        inv = lambda x: 1 / x
         diff_log_data = eigh_operation_grad(
             diff_exp.expand(shape),
             eigvals_transformed_data,
