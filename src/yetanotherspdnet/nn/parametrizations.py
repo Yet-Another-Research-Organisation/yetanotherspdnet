@@ -491,9 +491,9 @@ class StiefelAdaptiveParametrization(nn.Module):
         # Need this to have a correct computation graph and gradient computation
         ref_point = self.reference_point.detach().clone()
         # ensure weight_tangent is on the tangent space
-        test = self.projectionTangent(weight_tangent, ref_point)
+        weight_tangent = self.projectionTangent(weight_tangent, ref_point)
         # map weight_tangent on the manifold
-        weight = self.projectionStiefel(ref_point + test)
+        weight = self.projectionStiefel(ref_point + weight_tangent)
         # store weight value during training (for reference update)
         if self.training:
             self.last_stiefel_value.copy_(weight.detach())
