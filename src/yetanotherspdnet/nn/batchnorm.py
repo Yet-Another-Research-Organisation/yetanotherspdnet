@@ -19,9 +19,13 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     right_kullback_leibler_std_scalar,
 )
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
+    AdaptiveGeometricArithmeticHarmonicGeodesic,
+    AdaptiveGeometricArithmeticHarmonicMean,
     GeometricArithmeticHarmonicMean,
     GeometricEuclideanHarmonicCurve,
     SymmetrizedKullbackLeiblerStdScalar,
+    adaptive_geometric_arithmetic_harmonic_geodesic,
+    adaptive_geometric_arithmetic_harmonic_mean,
     geometric_arithmetic_harmonic_mean,
     geometric_euclidean_harmonic_curve,
     symmetrized_kullback_leibler_std_scalar,
@@ -52,6 +56,7 @@ from ..functions.spd_linalg import (
     whitening,
 )
 from .parametrizations import (
+    ScalarSigmoidParametrization,
     ScalarSoftPlusParametrization,
     SPDParametrization,
 )
@@ -193,9 +198,11 @@ class BatchNormSPDMean(nn.Module):
             "arithmetic",
             "harmonic",
             "geometric_arithmetic_harmonic",
+            "adaptive_geometric_arithmetic_harmonic",
         ], (
             f"formula must be in ['affine_invariant', 'log_euclidean', "
-            f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic'], "
+            f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic', "
+            f"'adaptive_geometric_arithmetic_harmonic'], "
             f"got {self.mean_type}"
         )
 
@@ -231,6 +238,21 @@ class BatchNormSPDMean(nn.Module):
                 if self.use_autograd
                 else GeometricArithmeticHarmonicMean
             )
+        elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
+            # Register learnable parameter t for adaptive GAH mean
+            # Use sigmoid parametrization to constrain t in [0, 1]
+            self.t_gah = torch.nn.Parameter(
+                torch.tensor(0.5, dtype=self.dtype, device=self.device)
+            )
+            register_parametrization(self, "t_gah", ScalarSigmoidParametrization())
+            if self.use_autograd:
+                self.mean_fun = lambda data: adaptive_geometric_arithmetic_harmonic_mean(
+                    data, self.t_gah
+                )
+            else:
+                self.mean_fun = lambda data: AdaptiveGeometricArithmeticHarmonicMean(
+                    data, self.t_gah
+                )
 
     def _init_adaptive_mean_fun(self) -> None:
         """
@@ -246,6 +268,16 @@ class BatchNormSPDMean(nn.Module):
             self.adaptive_mean_fun = harmonic_curve
         elif self.mean_type == "geometric_arithmetic_harmonic":
             self.adaptive_mean_fun = geometric_euclidean_harmonic_curve
+        elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
+            # Use the adaptive geodesic with learnable t for running mean update
+            if self.use_autograd:
+                self.adaptive_mean_fun = lambda p1, p2, t: adaptive_geometric_arithmetic_harmonic_geodesic(
+                    p1, p2, t
+                )
+            else:
+                self.adaptive_mean_fun = lambda p1, p2, t: AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
+                    p1, p2, torch.tensor(t, dtype=self.dtype, device=self.device)
+                )
 
     def _init_norm_strategy_mean(self) -> None:
         """
@@ -290,6 +322,15 @@ class BatchNormSPDMean(nn.Module):
                     if self.use_autograd
                     else GeometricEuclideanHarmonicCurve
                 )
+            elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
+                if self.use_autograd:
+                    self.regularize_mean_fun = adaptive_geometric_arithmetic_harmonic_geodesic
+                else:
+                    self.regularize_mean_fun = (
+                        lambda p1, p2, t: AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
+                            p1, p2, torch.tensor(t, dtype=self.dtype, device=self.device)
+                        )
+                    )
             self._init_minibatch_mode()
 
     def _init_minibatch_mode(self) -> None:
