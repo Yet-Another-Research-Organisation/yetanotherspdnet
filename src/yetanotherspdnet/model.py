@@ -21,8 +21,9 @@ class SPDnet(nn.Module):
         softmax: bool = False,
         reeig_eps: float = 1e-3,
         bimap_parametrized: bool = True,
-        bimap_parametrization: type[nn.Module] | Callable = parametrizations.orthogonal,
+        bimap_parametrization_mode: str = "static",
         bimap_parametrization_options: dict | None = None,
+        bimap_n_steps_ref_update: int = 100,
         batchnorm: bool = False,
         batchnorm_type: str = "mean_only",
         batchnorm_mean_type: str = "geometric_arithmetic_harmonic",
@@ -64,14 +65,19 @@ class SPDnet(nn.Module):
             Whether to apply parametrization to enforce manifold constraints in BiMap.
             Default is True
 
-        bimap_parametrization : nn.Module or Callable, optional
-            Parametrization to apply in BiMap if bimap_parametrized is True.
-            If not nn.Module, only parametrization.orthogonal is supported.
-            Default is parametrization.orthogonal
+        bimap_parametrization_mode : str, optional
+            Parametrization mode of BiMap if bimap_parametrized is True.
+            Default is "static".
+            Choices are: "static" and "dynamic"
 
         bimap_parametrization_options : dict, optional
             Options for the parametrization function in BiMap.
             Default is None
+
+        bimap_n_steps_ref_update : int, optional
+            If bimap_parametrization_mode is "dynamic",
+            number of steps in between each reference point update.
+            Default is 100
 
         batchnorm : bool, optional
             Whether to apply BatchNormSPDMean to hidden layers. Default is False
@@ -153,8 +159,9 @@ class SPDnet(nn.Module):
         self.reeig_eps = reeig_eps
 
         self.bimap_parametrized = bimap_parametrized
-        self.bimap_parametrization = bimap_parametrization
+        self.bimap_parametrization_mode = bimap_parametrization_mode
         self.bimap_parametrization_options = bimap_parametrization_options
+        self.bimap_n_steps_ref_update = bimap_n_steps_ref_update
 
         self.batchnorm = batchnorm
         self.batchnorm_type = batchnorm_type
@@ -213,12 +220,13 @@ class SPDnet(nn.Module):
                 n_in=self.input_dim,
                 n_out=self.hidden_layers_size[0],
                 parametrized=self.bimap_parametrized,
-                parametrization=self.bimap_parametrization,
+                parametrization_mode=self.bimap_parametrization_mode,
                 parametrization_options=self.bimap_parametrization_options,
+                n_steps_ref_update=self.bimap_n_steps_ref_update,
+                use_autograd=self.use_autograd["bimap"],
                 device=self.device,
                 dtype=self.dtype,
                 generator=self.generator,
-                use_autograd=self.use_autograd["bimap"],
             )
         ]
 
@@ -271,12 +279,13 @@ class SPDnet(nn.Module):
                     n_in=self.hidden_layers_size[i - 1],
                     n_out=self.hidden_layers_size[i],
                     parametrized=self.bimap_parametrized,
-                    parametrization=self.bimap_parametrization,
+                    parametrization_mode=self.bimap_parametrization_mode,
                     parametrization_options=self.bimap_parametrization_options,
+                    n_steps_ref_update=self.bimap_n_steps_ref_update,
+                    use_autograd=self.use_autograd["bimap"],
                     device=self.device,
                     dtype=self.dtype,
                     generator=self.generator,
-                    use_autograd=self.use_autograd["bimap"],
                 )
             )
             spdnet_layers.append(
@@ -385,7 +394,7 @@ class SPDnet(nn.Module):
             f"  softmax={self.softmax},\n"
             f"  reeig_eps={self.reeig_eps},\n"
             f"  bimap_parametrized={self.bimap_parametrized},\n"
-            f"  bimap_parametrization={self.bimap_parametrization},\n"
+            f"  bimap_parametrization_mode={self.bimap_parametrization_mode},\n"
             f"  bimap_parametrization_options={self.bimap_parametrization_options},\n"
             f"  batchnorm={self.batchnorm},\n"
             f"  batchnorm_mean_type='{self.batchnorm_mean_type}',\n"
