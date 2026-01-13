@@ -1,6 +1,5 @@
 import pytest
 import torch
-from torch.nn.utils import parametrizations
 from torch.testing import assert_close
 
 import yetanotherspdnet.nn.base as nn_spd_base

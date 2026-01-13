@@ -52,6 +52,7 @@ from ..functions.spd_linalg import (
     whitening,
 )
 from .parametrizations import (
+    SPDAdaptiveParametrization,
     ScalarSoftPlusParametrization,
     SPDParametrization,
 )
@@ -69,13 +70,15 @@ class BatchNormSPDMean(nn.Module):
         minibatch_momentum: float = 0.01,
         minibatch_maxstep: int = 100,
         parametrization: str = "softplus",
+        parametrization_mode: str = "static",
+        n_steps_ref_update: int = 100,
         use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
         """
         Batch normalization layer for SPDnet relying on a SPD mean.
-        Here, only the SPD mean is normalized
+        Only the SPD mean is normalized
 
         Parameters
         ----------
@@ -123,6 +126,16 @@ class BatchNormSPDMean(nn.Module):
             Default is "softplus".
             Choices are: "softplus", "exp"
 
+        parametrization_mode : str, optional
+            Parametrization mode.
+            Default is "static".
+            Choices are: "static" and "dynamic"
+
+        n_steps_ref_update : int, optional
+            If parametrization_mode is "dynamic",
+            number of steps in between each reference point update.
+            Default is 100
+
         use_autograd : bool, optional
             Use torch autograd for the computation of the gradient rather than
             the analytical formula.
@@ -159,18 +172,34 @@ class BatchNormSPDMean(nn.Module):
         # training steps counter
         self.training_step = 0
 
+        # initialize dynamic parametrization bool
+        self.is_dynamic = False
+
         # bias parameter
         self.parametrization = parametrization
         assert self.parametrization in [
             "softplus",
             "exp",
-        ], f"formula must be in ['softplus', 'exp'], got {self.parametrization}"
+        ], f"parametrization must be in ['softplus', 'exp'], got {self.parametrization}"
+        self.parametrization_mode = parametrization_mode
+        assert self.parametrization_mode in ["static", "dynamic"], (
+            f"parametrization_mode must be in ['static', 'dynamic'], got {self.parametrization_mode}"
+        )
+        self.n_steps_ref_update = n_steps_ref_update
         self.Covbias = torch.nn.Parameter(
             torch.eye(n_features, dtype=self.dtype, device=self.device)
         )
-        register_parametrization(
-            self, "Covbias", SPDParametrization(mapping=self.parametrization)
-        )
+        if parametrization_mode == "static":
+            self.spd_parametrization = SPDParametrization(mapping=self.parametrization)
+        elif parametrization_mode == "dynamic":
+            self.is_dynamic = True
+            self.current_ref_step = 0
+            self.spd_parametrization = SPDAdaptiveParametrization(
+                self.n_features,
+                initial_reference=self.Covbias.clone().detach(),
+                mapping=self.parametrization,
+            )
+        register_parametrization(self, "Covbias", self.spd_parametrization)
 
         # normalize and add bias functions
         self.normalize_mean = whitening if self.use_autograd else Whitening.apply
@@ -387,10 +416,51 @@ class BatchNormSPDMean(nn.Module):
                     self.running_mean, mean_batch, self.momentum
                 )
             self.training_step = self.training_step + 1
+            if self.is_dynamic:
+                self.current_ref_step += 1
         else:
             # training over, use overall mean learnt on all batches
             mean = self.running_mean
         return self.add_bias_mean(self.normalize_mean(data, mean), self.Covbias)
+
+    def _post_optimizer_hook(
+        self, optimizer: torch.optim.Optimizer, *args, **kwargs
+    ) -> None:
+        """
+        Hook that runs after optimizer.step() to handle dynamic parametrization reference point.
+        See torch.optim.Optimizer.register_step_post_hook method for more details
+
+        Parameters
+        ----------
+        optimizer : torch.optim.Optimizer
+            Torch optimizer used for training
+        """
+        if (
+            self.training
+            and self.is_dynamic
+            and self.current_ref_step >= self.n_steps_ref_update
+        ):
+            with torch.no_grad():
+                # update reference point
+                self.spd_parametrization.update_reference_point()
+                # reset tangent vector to zero
+                self.parametrizations.Covbias.original.zero_()
+                # reset counter
+                self.current_ref_step = 0
+
+    def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
+        """
+        Register the post-step hook with the optimizer.
+        If dynamic parametrization, it needs to be called once after creating
+        the optimizer for dynamic parametrization to actually work as expected
+
+        Parameters
+        ----------
+        optimizer : torch.optim.Optimizer
+            Torch optimizer used for training
+        """
+        if self.is_dynamic:
+            optimizer.register_step_post_hook(self._post_optimizer_hook)
 
     def __repr__(self) -> str:
         """
@@ -436,23 +506,100 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         minibatch_momentum: float = 0.01,
         minibatch_maxstep: int = 100,
         parametrization: str = "softplus",
+        parametrization_mode: str = "static",
+        n_steps_ref_update: int = 100,
         use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
+        """
+        Batch normalization layer for SPDnet relying on a SPD mean.
+        Both the SPD mean and scalar variance are normalized
+
+        Parameters
+        ----------
+        n_features : int
+            Number of features
+
+        mean_type : str, optional
+            Choice of SPD mean. Default is "affine_invariant".
+            Choices are: "affine_invariant", "log_euclidean",
+            "arithmetic", "harmonic", "geometric_arithmetic_harmonic"
+
+        mean_options : dict | None, optional
+            Options for the SPD mean computation.
+            For affine-invariant mean, one can typically set {'n_iterations': 5}.
+            Currently, for others, no options available.
+            Default is None
+
+        momentum : float, optional
+            Momentum for running mean update.
+            Default is 0.01
+
+        norm_strategy : str, optional
+            Strategy for normalization.
+            Default is "classical".
+            Choices are: "classical" and "minibatch"
+
+        minibatch_mode : str, optional
+            How the minibatch momentum behaves during the training.
+            Default is "constant".
+            Choices are: "constant", "decay", "growth"
+
+        minibatch_momentum : float, optional
+            Momentum for mean regularization in minibatch normalization strategy.
+            If minibatch_mode is "decay", this momentum corresponds to the minimum momentum that is reached.
+            If minibatch_mode is "growth", this momentum corresponds to the initial momentum.
+            Default is 0.01
+
+        minibatch_maxstep : int, optional
+            If minibatch_mode is "decay" or "growth", this is the training step at which the minibatch momentum
+            attains its final value.
+            Default is 100
+
+        parametrization : str, optional
+            Parametrization to apply on covariance bias.
+            Default is "softplus".
+            Choices are: "softplus", "exp"
+
+        parametrization_mode : str, optional
+            Parametrization mode.
+            Default is "static".
+            Choices are: "static" and "dynamic"
+
+        n_steps_ref_update : int, optional
+            If parametrization_mode is "dynamic",
+            number of steps in between each reference point update.
+            Default is 100
+
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula.
+            Default is False
+
+        device: torch.device, optional
+            Device on which to store the parameters.
+            Default is torch.device("cpu")
+
+        dtype : torch.dtype, optional
+            Data type of the layer.
+            Default is torch.float64
+        """
         super().__init__(
-            n_features,
-            mean_type,
-            mean_options,
-            momentum,
-            norm_strategy,
-            minibatch_mode,
-            minibatch_momentum,
-            minibatch_maxstep,
-            parametrization,
-            use_autograd,
-            device,
-            dtype,
+            n_features=n_features,
+            mean_type=mean_type,
+            mean_options=mean_options,
+            momentum=momentum,
+            norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
+            minibatch_momentum=minibatch_momentum,
+            minibatch_maxstep=minibatch_maxstep,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
+            n_steps_ref_update=n_steps_ref_update,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
         )
 
         self._init_std()

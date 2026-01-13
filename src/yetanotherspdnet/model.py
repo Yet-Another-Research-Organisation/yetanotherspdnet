@@ -1,9 +1,7 @@
 import zlib
-from collections.abc import Callable
 
 import torch
 from torch import nn
-from torch.nn.utils import parametrizations
 
 from yetanotherspdnet.nn.base import BiMap, LogEig, ReEig, Vec, Vech
 from yetanotherspdnet.nn.batchnorm import (
@@ -34,6 +32,8 @@ class SPDnet(nn.Module):
         batchnorm_minibatch_momentum: float = 0.01,
         batchnorm_minibatch_maxstep: int = 100,
         batchnorm_parametrization: str = "softplus",
+        batchnorm_parametrization_mode: str = "static",
+        batchnorm_n_steps_ref_update: int = 100,
         vec_type: str = "vec",
         use_logeig: bool = True,
         device: torch.device = torch.device("cpu"),
@@ -126,6 +126,16 @@ class SPDnet(nn.Module):
             Default is "softplus".
             Choices are: "softplus", "exp"
 
+        batchnorm_parametrization_mode : str, optional
+            Parametrization mode.
+            Default is "static".
+            Choices are: "static" and "dynamic"
+
+        batchnorm_n_steps_ref_update : int, optional
+            If parametrization_mode is "dynamic",
+            number of steps in between each reference point update.
+            Default is 100
+
         vec_type : str, optional
             Whether to use Vec or Vech module.
             Default is "vec".
@@ -179,6 +189,8 @@ class SPDnet(nn.Module):
         self.batchnorm_minibatch_momentum = batchnorm_minibatch_momentum
         self.batchnorm_minibatch_maxstep = batchnorm_minibatch_maxstep
         self.batchnorm_parametrization = batchnorm_parametrization
+        self.batchnorm_parametrization_mode = batchnorm_parametrization_mode
+        self.batchnorm_n_steps_ref_update = batchnorm_n_steps_ref_update
 
         self.vec_type = vec_type
         assert self.vec_type in [
@@ -251,6 +263,8 @@ class SPDnet(nn.Module):
                         minibatch_momentum=self.batchnorm_minibatch_momentum,
                         minibatch_maxstep=self.batchnorm_minibatch_maxstep,
                         parametrization=self.batchnorm_parametrization,
+                        parametrization_mode=self.batchnorm_parametrization_mode,
+                        n_steps_ref_update=self.batchnorm_n_steps_ref_update,
                         use_autograd=self.use_autograd["batchnorm"],
                         device=self.device,
                         dtype=self.dtype,
@@ -268,6 +282,8 @@ class SPDnet(nn.Module):
                         minibatch_momentum=self.batchnorm_minibatch_momentum,
                         minibatch_maxstep=self.batchnorm_minibatch_maxstep,
                         parametrization=self.batchnorm_parametrization,
+                        parametrization_mode=self.batchnorm_parametrization_mode,
+                        n_steps_ref_update=self.batchnorm_n_steps_ref_update,
                         use_autograd=self.use_autograd["batchnorm"],
                         device=self.device,
                         dtype=self.dtype,
@@ -309,6 +325,8 @@ class SPDnet(nn.Module):
                             minibatch_momentum=self.batchnorm_minibatch_momentum,
                             minibatch_maxstep=self.batchnorm_minibatch_maxstep,
                             parametrization=self.batchnorm_parametrization,
+                            parametrization_mode=self.batchnorm_parametrization_mode,
+                            n_steps_ref_update=self.batchnorm_n_steps_ref_update,
                             use_autograd=self.use_autograd["batchnorm"],
                             device=self.device,
                             dtype=self.dtype,
@@ -326,6 +344,8 @@ class SPDnet(nn.Module):
                             minibatch_momentum=self.batchnorm_minibatch_momentum,
                             minibatch_maxstep=self.batchnorm_minibatch_maxstep,
                             parametrization=self.batchnorm_parametrization,
+                            parametrization_mode=self.batchnorm_parametrization_mode,
+                            n_steps_ref_update=self.batchnorm_n_steps_ref_update,
                             use_autograd=self.use_autograd["batchnorm"],
                             device=self.device,
                             dtype=self.dtype,
