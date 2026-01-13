@@ -3,6 +3,17 @@ from collections.abc import Callable
 import torch
 from torch.autograd import Function
 
+from yetanotherspdnet.functions.scalar_functions import (
+    inv,
+    inv_scaled_softplus,
+    inv_scaled_softplus_derivative,
+    inv_sqrt,
+    inv_sqrt_derivative,
+    scaled_softplus,
+    scaled_softplus_derivative,
+    sqrt_derivative,
+)
+
 
 def symmetrize(data: torch.Tensor) -> torch.Tensor:
     """
@@ -432,9 +443,8 @@ class SqrtmSPD(Function):
             Gradient of the loss with respect to the input batch of SPD matrices
         """
         eigvals, eigvecs = ctx.saved_tensors
-        operation_derivative = lambda x: 0.5 / torch.sqrt(x)
         return eigh_operation_grad(
-            grad_output, eigvals, eigvecs, torch.sqrt, operation_derivative
+            grad_output, eigvals, eigvecs, torch.sqrt, sqrt_derivative
         )
 
 
@@ -464,7 +474,6 @@ def inv_sqrtm_SPD(
         Eigenvectors of matrices in data
     """
     eigvals, eigvecs = torch.linalg.eigh(data)
-    inv_sqrt = lambda x: 1 / torch.sqrt(x)
     return eigh_operation(eigvals, eigvecs, inv_sqrt), eigvals, eigvecs
 
 
@@ -515,10 +524,8 @@ class InvSqrtmSPD(Function):
             Gradient of the loss with respect to the input batch of SPD matrices
         """
         eigvals, eigvecs = ctx.saved_tensors
-        inv_sqrt = lambda x: 1 / torch.sqrt(x)
-        operation_derivative = lambda x: -0.5 / (x**1.5)
         return eigh_operation_grad(
-            grad_output, eigvals, eigvecs, inv_sqrt, operation_derivative
+            grad_output, eigvals, eigvecs, inv_sqrt, inv_sqrt_derivative
         )
 
 
@@ -696,10 +703,7 @@ class LogmSPD(Function):
             Gradient of the loss with respect to the input batch of SPD matrices
         """
         eigvals, eigvecs = ctx.saved_tensors
-        operation_derivative = lambda x: 1 / x
-        return eigh_operation_grad(
-            grad_output, eigvals, eigvecs, torch.log, operation_derivative
-        )
+        return eigh_operation_grad(grad_output, eigvals, eigvecs, torch.log, inv)
 
 
 # ----------------------------
@@ -809,11 +813,7 @@ def scaled_softplus_symmetric(
         Eigenvectors of matrices in data
     """
     eigvals, eigvecs = torch.linalg.eigh(data)
-    softplus_fun = lambda x: torch.log(
-        torch.tensor(1.0, device=data.device, dtype=data.dtype)
-        + torch.pow(torch.tensor(2.0, device=data.device, dtype=data.dtype), x)
-    ) / torch.log(torch.tensor(2.0, device=data.device, dtype=data.dtype))
-    return eigh_operation(eigvals, eigvecs, softplus_fun), eigvals, eigvecs
+    return eigh_operation(eigvals, eigvecs, scaled_softplus), eigvals, eigvecs
 
 
 class ScaledSoftPlusSymmetric(Function):
@@ -864,16 +864,8 @@ class ScaledSoftPlusSymmetric(Function):
             Gradient of the loss with respect to the input batch of symmetric matrices
         """
         eigvals, eigvecs = ctx.saved_tensors
-        device, dtype = eigvals.device, eigvals.dtype
-        softplus_fun = lambda x: torch.log(
-            torch.tensor(1.0, device=device, dtype=dtype)
-            + torch.pow(torch.tensor(2.0, device=device, dtype=dtype), x)
-        ) / torch.log(torch.tensor(2.0, device=device, dtype=dtype))
-        softplus_deriv = lambda x: 1 / (
-            1.0 + torch.pow(torch.tensor(2.0, device=device, dtype=dtype), -x)
-        )
         return eigh_operation_grad(
-            grad_output, eigvals, eigvecs, softplus_fun, softplus_deriv
+            grad_output, eigvals, eigvecs, scaled_softplus, scaled_softplus_derivative
         )
 
 
@@ -903,11 +895,7 @@ def inv_scaled_softplus_SPD(
         Eigenvectors of matrices in data
     """
     eigvals, eigvecs = torch.linalg.eigh(data)
-    inv_softplus_fun = lambda x: torch.log(
-        torch.pow(torch.tensor(2.0, device=data.device, dtype=data.dtype), x)
-        - torch.tensor(1.0, device=data.device, dtype=data.dtype)
-    ) / torch.log(torch.tensor(2.0, device=data.device, dtype=data.dtype))
-    return eigh_operation(eigvals, eigvecs, inv_softplus_fun), eigvals, eigvecs
+    return eigh_operation(eigvals, eigvecs, inv_scaled_softplus), eigvals, eigvecs
 
 
 class InvScaledSoftPlusSPD(Function):
@@ -956,16 +944,12 @@ class InvScaledSoftPlusSPD(Function):
             Gradient of the loss with respect to the input batch of SPD matrices
         """
         eigvals, eigvecs = ctx.saved_tensors
-        device, dtype = eigvals.device, eigvals.dtype
-        inv_softplus_fun = lambda x: torch.log(
-            torch.pow(torch.tensor(2.0, device=device, dtype=dtype), x)
-            - torch.tensor(1.0, device=device, dtype=dtype)
-        ) / torch.log(torch.tensor(2.0, device=device, dtype=dtype))
-        inv_softplus_deriv = lambda x: 1 / (
-            1.0 - torch.pow(torch.tensor(2.0, device=device, dtype=dtype), -x)
-        )
         return eigh_operation_grad(
-            grad_output, eigvals, eigvecs, inv_softplus_fun, inv_softplus_deriv
+            grad_output,
+            eigvals,
+            eigvecs,
+            inv_scaled_softplus,
+            inv_scaled_softplus_derivative,
         )
 
 

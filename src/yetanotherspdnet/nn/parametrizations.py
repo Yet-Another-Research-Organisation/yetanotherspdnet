@@ -1,6 +1,10 @@
 import torch
 from torch import nn
 
+from yetanotherspdnet.functions.scalar_functions import (
+    inv_scaled_softplus,
+    scaled_softplus,
+)
 from yetanotherspdnet.random.stiefel import random_stiefel
 
 from ..functions.spd_linalg import (
@@ -42,9 +46,7 @@ class ScalarSoftPlusParametrization(nn.Module):
         scalar_pd : torch.Tensor of shape ()
             Positive definite scalar
         """
-        return torch.log(1.0 + torch.pow(2.0, scalar)) / torch.log(
-            torch.as_tensor(2.0, dtype=scalar.dtype, device=scalar.device)
-        )
+        return scaled_softplus(scalar)
 
     def right_inverse(self, scalar_pd: torch.Tensor) -> torch.Tensor:
         """
@@ -61,9 +63,7 @@ class ScalarSoftPlusParametrization(nn.Module):
         scalar : torch.Tensor of shape ()
             Real scalar
         """
-        return torch.log(
-            torch.pow(torch.tensor(2.0), scalar_pd) - torch.tensor(1.0)
-        ) / torch.log(torch.tensor(2.0))
+        return inv_scaled_softplus(scalar_pd)
 
 
 class SPDParametrization(nn.Module):
@@ -491,9 +491,9 @@ class StiefelAdaptiveParametrization(nn.Module):
         # Need this to have a correct computation graph and gradient computation
         ref_point = self.reference_point.detach().clone()
         # ensure weight_tangent is on the tangent space
-        test = self.projectionTangent(weight_tangent, ref_point)
+        weight_tangent = self.projectionTangent(weight_tangent, ref_point)
         # map weight_tangent on the manifold
-        weight = self.projectionStiefel(ref_point + test)
+        weight = self.projectionStiefel(ref_point + weight_tangent)
         # store weight value during training (for reference update)
         if self.training:
             self.last_stiefel_value.copy_(weight.detach())
