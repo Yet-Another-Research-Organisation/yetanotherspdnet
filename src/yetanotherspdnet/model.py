@@ -36,10 +36,10 @@ class SPDnet(nn.Module):
         batchnorm_n_steps_ref_update: int = 100,
         vec_type: str = "vec",
         use_logeig: bool = True,
+        use_autograd: bool | dict = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
-        use_autograd: bool | dict = False,
     ) -> None:
         """
         Standard SPDnet model with hidden layers
@@ -145,6 +145,12 @@ class SPDnet(nn.Module):
             Whether to apply LogEig layer before vectorization.
             Default is True
 
+        use_autograd : bool | dict, optional
+            Use torch autograd for gradient computation. Can be bool for all layers,
+            or dict with keys: 'bimap', 'reeig', 'logeig', 'batchnorm', 'vec'.
+            Note that Vech module always uses manual gradient.
+            Default is False
+
         device : torch.device, optional
             Device to run model on. Default is torch.device('cpu')
 
@@ -153,12 +159,6 @@ class SPDnet(nn.Module):
 
         generator : torch.Generator, optional
             Generator to ensure reproducibility. Default is None
-
-        use_autograd : bool | dict, optional
-            Use torch autograd for gradient computation. Can be bool for all layers,
-            or dict with keys: 'bimap', 'reeig', 'logeig', 'batchnorm', 'vec'.
-            Note that Vech module always uses manual gradient.
-            Default is False
         """
         super().__init__()
         self.input_dim = input_dim
@@ -438,18 +438,25 @@ class SPDnet(nn.Module):
             f"  bimap_parametrized={self.bimap_parametrized},\n"
             f"  bimap_parametrization_mode={self.bimap_parametrization_mode},\n"
             f"  bimap_parametrization_options={self.bimap_parametrization_options},\n"
+            f"  bimap_n_steps_ref_update={self.bimap_n_steps_ref_update},\n"
             f"  batchnorm={self.batchnorm},\n"
+            f"  batchnorm_type={self.batchnorm_type},\n"
             f"  batchnorm_mean_type='{self.batchnorm_mean_type}',\n"
             f"  batchnorm_mean_options={self.batchnorm_mean_options},\n"
             f"  batchnorm_momentum={self.batchnorm_momentum},\n"
-            f"  batchnorm_norm_strategy={self.batchnorm_norm_strategy}, \n"
-            f"  batchnorm_minibatch_momentum={self.batchnorm_minibatch_momentum}, \n"
+            f"  batchnorm_norm_strategy={self.batchnorm_norm_strategy},\n"
+            f"  batchnorm_minibatch_mode={self.batchnorm_minibatch_mode},\n"
+            f"  batchnorm_minibatch_momentum={self.batchnorm_minibatch_momentum},\n"
+            f"  batchnorm_minibatch_maxstep={self.batchnorm_minibatch_maxstep},\n"
+            f"  batchnorm_parametrization={self.batchnorm_parametrization},\n"
+            f"  batchnorm_parametrization_mode={self.batchnorm_parametrization_mode},\n"
+            f"  batchnorm_n_steps_ref_update={self.batchnorm_n_steps_ref_update},\n"
             f"  vec_type='{self.vec_type}',\n"
             f"  use_logeig={self.use_logeig},\n"
+            f"  use_autograd={self._use_autograd_original}\n"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f"  generator={self.generator},\n"
-            f"  use_autograd={self._use_autograd_original}\n"
             f")"
         )
 
