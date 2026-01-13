@@ -413,14 +413,14 @@ class BatchNormSPDMean(nn.Module):
             mean = self.get_norm_mean(mean_batch)
             with torch.no_grad():
                 self.running_mean = self.adaptive_mean_fun(
-                    self.running_mean, mean_batch, self.momentum
+                    self.running_mean.to(data.device), mean_batch, self.momentum
                 )
             self.training_step = self.training_step + 1
             if self.is_dynamic:
                 self.current_ref_step += 1
         else:
             # training over, use overall mean learnt on all batches
-            mean = self.running_mean
+            mean = self.running_mean.to(data.device)
         return self.add_bias_mean(self.normalize_mean(data, mean), self.Covbias)
 
     def _post_optimizer_hook(
@@ -721,18 +721,18 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             # update running mean
             with torch.no_grad():
                 self.running_mean = self.adaptive_mean_fun(
-                    self.running_mean, mean_batch, self.momentum
+                    self.running_mean.to(data.device), mean_batch, self.momentum
                 )
                 self.running_std_scalar = self.adaptive_std_fun(
-                    self.running_std_scalar, std_batch, self.momentum
+                    self.running_std_scalar.to(data.device), std_batch, self.momentum
                 )
             self.training_step = self.training_step + 1
             if self.is_dynamic:
                 self.current_ref_step += 1
         else:
             # training over, use overall mean learnt on all batches
-            mean = self.running_mean
-            std = self.running_std_scalar
+            mean = self.running_mean.to(data.device)
+            std = self.running_std_scalar.to(data.device)
 
         # Normalize data and add bias
         data_normalized = self.normalize_mean(data, mean)
