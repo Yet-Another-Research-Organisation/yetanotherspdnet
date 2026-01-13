@@ -402,6 +402,28 @@ class SPDnet(nn.Module):
             X = self.softmax_layer(X)
         return X
 
+    def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
+        """
+        Register optimizer hooks for all layers with dynamic parametrization.
+        This method automatically finds all layers that use dynamic parametrization
+        and registers the appropriate hooks
+
+        Parameters
+        ----------
+        optimizer : torch.optim.Optimizer
+            The optimizer used for training
+        """
+        for module in self.modules():
+            # Check if module has register_optimizer_hook method
+            # and module.is_dynamic is True
+            if (
+                hasattr(module, "register_optimizer_hook")
+                and module is not self
+                and hasattr(module, "is_dynamic")
+                and module.is_dynamic is True
+            ):
+                module.register_optimizer_hook(optimizer)
+
     def __repr__(self) -> str:
         """
         String representation of SPDnet

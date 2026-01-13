@@ -150,7 +150,8 @@ class BiMap(nn.Module):
         data_transformed : torch.Tensor of shape (..., n_out, n_out)
             Batch of transformed SPD matrices
         """
-
+        if self.training and self.is_dynamic:
+            self.current_ref_step += 1
         return self.bimap_fun(data, self.weight)
 
     def _post_optimizer_hook(

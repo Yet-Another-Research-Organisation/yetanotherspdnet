@@ -727,6 +727,8 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
                     self.running_std_scalar, std_batch, self.momentum
                 )
             self.training_step = self.training_step + 1
+            if self.is_dynamic:
+                self.current_ref_step += 1
         else:
             # training over, use overall mean learnt on all batches
             mean = self.running_mean

@@ -736,6 +736,8 @@ class TestBatchNormSPDMean:
         # Forward + backward + update
         optimizer.zero_grad()
         output = layer(X1)
+        # check current_ref_step is correct
+        assert layer.current_ref_step == 1
         loss = output.sum()
         loss.backward()
         optimizer.step()
@@ -754,14 +756,21 @@ class TestBatchNormSPDMean:
         # Forward + backward + update
         optimizer.zero_grad()
         output = layer(X2)
+        # check current_ref_step is correct
+        assert layer.current_ref_step == 2
         loss = output.sum()
         loss.backward()
         optimizer.step()
 
-        # Check that reference_point changed
+        # Check that reference_point changed, tangent vector and current_ref_step re-initialized
         assert not torch.allclose(
             layer.spd_parametrization.reference_point, initial_ref
         )
+        assert_close(
+            layer.parametrizations.Covbias.original,
+            torch.zeros((n_features, n_features), dtype=dtype, device=device),
+        )
+        assert layer.current_ref_step == 0
 
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
@@ -1615,6 +1624,8 @@ class TestBatchNormSPDMeanScalarVariance:
         # Forward + backward + update
         optimizer.zero_grad()
         output = layer(X1)
+        # check current_ref_step is correct
+        assert layer.current_ref_step == 1
         loss = output.sum()
         loss.backward()
         optimizer.step()
@@ -1633,14 +1644,21 @@ class TestBatchNormSPDMeanScalarVariance:
         # Forward + backward + update
         optimizer.zero_grad()
         output = layer(X2)
+        # check current_ref_step is correct
+        assert layer.current_ref_step == 2
         loss = output.sum()
         loss.backward()
         optimizer.step()
 
-        # Check that reference_point changed
+        # Check that reference_point changed, tangent vector and current_ref_step re-initialized
         assert not torch.allclose(
             layer.spd_parametrization.reference_point, initial_ref
         )
+        assert_close(
+            layer.parametrizations.Covbias.original,
+            torch.zeros((n_features, n_features), dtype=dtype, device=device),
+        )
+        assert layer.current_ref_step == 0
 
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
