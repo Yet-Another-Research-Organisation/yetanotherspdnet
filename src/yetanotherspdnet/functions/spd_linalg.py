@@ -144,7 +144,7 @@ def unvech_batch(data_vech: torch.Tensor, n_features: int) -> torch.Tensor:
 
     Parameters
     ----------
-    X_vech : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+    data_vech : torch.Tensor of shape (..., n_features*(n_features+1)//2)
         Batch of vectorized matrices
 
     n_features : int
@@ -152,7 +152,7 @@ def unvech_batch(data_vech: torch.Tensor, n_features: int) -> torch.Tensor:
 
     Returns
     -------
-    X : torch.Tensor of shape (..., n_features, n_features)
+    data : torch.Tensor of shape (..., n_features, n_features)
         Batch of symmetric matrices
     """
     indices_l = torch.tril_indices(n_features, n_features)
@@ -218,6 +218,136 @@ class VechBatch(Function):
             Gradient of the loss with respect to the input batch of symmetric matrices
         """
         return unvech_batch(grad_output, ctx.n_features)
+
+
+def sym_matrix_to_coordinates(data: torch.Tensor) -> torch.Tensor:
+    """
+    Extract Euclidean orthonormal coordinates of a batch of symmetric matrices.
+    The difference with vech_batch is that off-diagonal elements are scaled by sqrt(2)
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    Returns
+    -------
+    data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Euclidean orthonormal coordinates of data
+    """
+    n_features = data.shape[-1]
+    indices = torch.tril_indices(n_features, n_features, device=data.device)
+
+    # Precompute scaling vector (can cache this if n_features is fixed)
+    scale = torch.ones(
+        n_features * (n_features + 1) // 2, device=data.device, dtype=data.dtype
+    )
+    off_diag_mask = indices[0] != indices[1]
+    scale[off_diag_mask] = torch.sqrt(
+        torch.tensor(2.0, device=data.device, dtype=data.dtype)
+    )
+
+    # Extract and scale in one operation
+    return data[..., indices[0], indices[1]] * scale
+
+
+def sym_coordinates_to_matrix(
+    data_coordinates: torch.Tensor, n_features: int
+) -> torch.Tensor:
+    """
+    Construct symmetric matrices from a batch of Euclidean orthonormal coordinates.
+    The difference with unvech_batch is that off-diagonal elements are scaled by 1/sqrt(2)
+
+    Parameters
+    ----------
+    data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Euclidean orthonormal coordinates of data
+
+    n_features : int
+        Number of features
+
+    Returns
+    -------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+    """
+    indices = torch.tril_indices(n_features, n_features, device=data_coordinates.device)
+
+    # Precompute inverse scaling vector (can cache this)
+    inv_scale = torch.ones(
+        n_features * (n_features + 1) // 2,
+        device=data_coordinates.device,
+        dtype=data_coordinates.dtype,
+    )
+    off_diag_mask = indices[0] != indices[1]
+    inv_scale[off_diag_mask] = 1.0 / torch.sqrt(
+        torch.tensor(2.0, device=data_coordinates.device, dtype=data_coordinates.dtype)
+    )
+
+    # Scale the vectorized data
+    data_coordinates_scaled = data_coordinates * inv_scale
+
+    # Create output and fill symmetrically
+    data = torch.zeros(
+        *data_coordinates.shape[:-1],
+        n_features,
+        n_features,
+        dtype=data_coordinates.dtype,
+        device=data_coordinates.device,
+    )
+    data[..., indices[0], indices[1]] = data_coordinates_scaled
+    data[..., indices[1], indices[0]] = data_coordinates_scaled
+    data = symmetrize(data)
+
+    return data
+
+
+class SymMatrixToCoordinates(Function):
+    """
+    Extract Euclidean orthonormal coordinates of a batch of symmetric matrices.
+    The difference with vech_batch is that off-diagonal elements are scaled by sqrt(2)
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of extracting Euclidean orthonormal coordinates of a batch of symmetric matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        Returns
+        -------
+        data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Euclidean orthonormal coordinates of data
+        """
+        ctx.n_features = data.shape[-1]
+        return sym_matrix_to_coordinates(data)
+
+    @staticmethod
+    def backward(ctx, data_coordinates: torch.Tensor) -> torch.Tensor:
+        """
+        Backward pass of extracting Euclidean orthonormal coordinates of a batch of symmetric matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Euclidean orthonormal coordinates of data
+
+        Returns
+        -------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+        """
+        return sym_coordinates_to_matrix(data_coordinates, ctx.n_features)
 
 
 # -------------------------

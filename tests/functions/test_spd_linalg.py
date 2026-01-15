@@ -288,6 +288,122 @@ class TestVech:
         assert_close(expected_grad, grad_X_Vech)
 
 
+class TestSymMatrixToCoordinates:
+    """
+    Test suite for Euclidean orthonormal coordinates extraction
+    """
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(1, 100), (50, 100)])
+    def test_sym_matrix_to_coordinates(
+        self, n_matrices, n_features, device, dtype, generator
+    ):
+        """
+        Test of sym_matrix_to_coordinates function
+        """
+        # random batch of symmetric matrices
+        X = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        X_coordinates = spd_linalg.sym_matrix_to_coordinates(X)
+        assert X_coordinates.dim() == X.dim() - 1
+        if n_matrices > 1:
+            assert X_coordinates.shape[0] == n_matrices
+        assert X_coordinates.shape[-1] == n_features * (n_features + 1) // 2
+        assert_close(spd_linalg.sym_coordinates_to_matrix(X_coordinates, n_features), X)
+        assert X_coordinates.device == X.device
+        assert X_coordinates.dtype == X.dtype
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(1, 100), (50, 100)])
+    def test_sym_coordinates_to_matrix(
+        self, n_matrices, n_features, device, dtype, generator
+    ):
+        """
+        Test of sym_coordinates_to_matrix function
+        """
+        dim = n_features * (n_features + 1) // 2
+        X_coordinates = torch.squeeze(
+            torch.randn(
+                (n_matrices, dim), device=device, dtype=dtype, generator=generator
+            )
+        )
+        X = spd_linalg.sym_coordinates_to_matrix(X_coordinates, n_features)
+        assert X.dim() == X_coordinates.dim() + 1
+        if n_matrices > 1:
+            assert X.shape[0] == n_matrices
+        assert X.shape[-2] == n_features
+        assert X.shape[-1] == n_features
+        assert_close(spd_linalg.sym_matrix_to_coordinates(X), X_coordinates)
+        assert X.device == X_coordinates.device
+        assert X.dtype == X_coordinates.dtype
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(1, 100), (50, 100)])
+    def test_forward(self, n_matrices, n_features, device, dtype, generator):
+        """
+        Test forward of SymMatrixToCoordinates Function class
+        """
+        # random batch of symmetric matrices
+        X = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        X_coordinates = spd_linalg.SymMatrixToCoordinates.apply(X)
+        assert X_coordinates.dim() == X.dim() - 1
+        if n_matrices > 1:
+            assert X_coordinates.shape[0] == n_matrices
+        assert X_coordinates.shape[-1] == n_features * (n_features + 1) // 2
+        assert_close(spd_linalg.sym_coordinates_to_matrix(X_coordinates, n_features), X)
+        assert X_coordinates.device == X.device
+        assert X_coordinates.dtype == X.dtype
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(1, 100), (50, 100)])
+    def test_backward(self, n_matrices, n_features, device, dtype, generator):
+        """
+        Test backward of VechBatch Function class
+        Can't rely on automatic differentiation here because it's not working
+        due to the fact that we drop values in forward but still need gradient with respect to these
+        """
+        # random batch of symmetric matrices
+        X = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        X.requires_grad = True
+        X_coordinates = spd_linalg.SymMatrixToCoordinates.apply(X)
+        # create random upstream gradient
+        grad_X_coordinates = torch.squeeze(
+            torch.randn(
+                (n_matrices, n_features * (n_features + 1) // 2),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        # backward
+        X_coordinates.backward(grad_X_coordinates)
+        # we expect vech_batch(X.grad) == grad_X_Vech
+        expected_grad = spd_linalg.sym_matrix_to_coordinates(X.grad)
+        assert_close(expected_grad, grad_X_coordinates)
+
+
 # ----------------------------------------------------------
 # Remark:
 # -------

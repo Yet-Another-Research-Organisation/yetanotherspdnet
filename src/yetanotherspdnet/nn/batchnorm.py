@@ -778,3 +778,39 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             f"  dtype={self.dtype},\n"
             f")"
         )
+
+
+class BatchNormSPDMeanMultivariateVariance(BatchNormSPDMean):
+    def __init__(
+        self,
+        n_features: int,
+        mean_type: str = "affine_invariant",
+        mean_options: dict | None = None,
+        momentum: float = 0.01,
+        norm_strategy: str = "classical",
+        minibatch_mode: str = "constant",
+        minibatch_momentum: float = 0.01,
+        minibatch_maxstep: int = 100,
+        parametrization: str = "softplus",
+        parametrization_mode: str = "static",
+        n_steps_ref_update: int = 100,
+        use_autograd: bool = False,
+        device: torch.device = torch.device("cpu"),
+        dtype: torch.dtype = torch.float64,
+    ) -> None:
+        super().__init__(
+            n_features=n_features,
+            mean_type=mean_type,
+            mean_options=mean_options,
+            momentum=momentum,
+            norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
+            minibatch_momentum=minibatch_momentum,
+            minibatch_maxstep=minibatch_maxstep,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
+            n_steps_ref_update=n_steps_ref_update,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+        )
