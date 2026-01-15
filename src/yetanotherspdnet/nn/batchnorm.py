@@ -246,8 +246,10 @@ class BatchNormSPDMean(nn.Module):
             )
             register_parametrization(self, "t_gah", ScalarSigmoidParametrization())
             if self.use_autograd:
-                self.mean_fun = lambda data: adaptive_geometric_arithmetic_harmonic_mean(
-                    data, self.t_gah
+                self.mean_fun = (
+                    lambda data: adaptive_geometric_arithmetic_harmonic_mean(
+                        data, self.t_gah
+                    )
                 )
             else:
                 self.mean_fun = lambda data: AdaptiveGeometricArithmeticHarmonicMean(
@@ -271,12 +273,16 @@ class BatchNormSPDMean(nn.Module):
         elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
             # Use the adaptive geodesic with learnable t for running mean update
             if self.use_autograd:
-                self.adaptive_mean_fun = lambda p1, p2, t: adaptive_geometric_arithmetic_harmonic_geodesic(
-                    p1, p2, t
+                self.adaptive_mean_fun = (
+                    lambda p1, p2, t: adaptive_geometric_arithmetic_harmonic_geodesic(
+                        p1, p2, t
+                    )
                 )
             else:
-                self.adaptive_mean_fun = lambda p1, p2, t: AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
-                    p1, p2, torch.tensor(t, dtype=self.dtype, device=self.device)
+                self.adaptive_mean_fun = (
+                    lambda p1, p2, t: AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
+                        p1, p2, torch.tensor(t, dtype=self.dtype, device=self.device)
+                    )
                 )
 
     def _init_norm_strategy_mean(self) -> None:
@@ -324,11 +330,17 @@ class BatchNormSPDMean(nn.Module):
                 )
             elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
                 if self.use_autograd:
-                    self.regularize_mean_fun = adaptive_geometric_arithmetic_harmonic_geodesic
+                    self.regularize_mean_fun = (
+                        adaptive_geometric_arithmetic_harmonic_geodesic
+                    )
                 else:
                     self.regularize_mean_fun = (
-                        lambda p1, p2, t: AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
-                            p1, p2, torch.tensor(t, dtype=self.dtype, device=self.device)
+                        lambda p1,
+                        p2,
+                        t: AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
+                            p1,
+                            p2,
+                            torch.tensor(t, dtype=self.dtype, device=self.device),
                         )
                     )
             self._init_minibatch_mode()
