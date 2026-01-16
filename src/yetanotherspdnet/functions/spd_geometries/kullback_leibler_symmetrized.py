@@ -490,4 +490,3 @@ def AdaptiveGeometricArithmeticHarmonicMean(
     return AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
         mean_harmonic, mean_arithmetic, t
     )
-
