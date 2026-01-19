@@ -4,6 +4,13 @@ from torch.autograd import Function
 from yetanotherspdnet.functions.scalar_functions import inv, inv_sqrt
 
 from ..spd_linalg import (
+    CongruenceSPDSqrtm,
+    ExpmSymmetric,
+    LogmSPD,
+    SymCoordinatesToMatrix,
+    SymMatrixToCoordinates,
+    Whitening,
+    congruence_SPD_sqrtm,
     eigh_operation,
     eigh_operation_grad,
     expm_symmetric,
@@ -11,6 +18,9 @@ from ..spd_linalg import (
     logm_SPD,
     solve_sylvester_SPD,
     sqrtm_SPD,
+    sym_coordinates_to_matrix,
+    sym_matrix_to_coordinates,
+    whitening,
 )
 from .kullback_leibler import arithmetic_mean
 
@@ -646,3 +656,103 @@ class AffineInvariantStdScalar(Function):
             / scalar_std
         )
         return grad_input_data, grad_input_G
+
+
+# -----------------------------------
+# Riemannian logarithm in coordinates
+# -----------------------------------
+def affine_invariant_log_coordinates(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Riemannian logarithm in coordinates with respect to the affine-invariant geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_log_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+    """
+    return sym_matrix_to_coordinates(logm_SPD(whitening(data, reference_point))[0])
+
+
+def AffineInvariantLogCoordinates(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Riemannian logarithm in coordinates with respect to the affine-invariant geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_log_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+    """
+    return SymMatrixToCoordinates.apply(
+        LogmSPD.apply(Whitening.apply(data, reference_point))
+    )
+
+
+# ---------------------------------------
+# Riemannian exponential from coordinates
+# ---------------------------------------
+def affine_invariant_exp_coordinates(
+    data_coordinates: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Riemannian exponential from coordinates with respect to the affine-invariant geometry
+
+    Parameters
+    ----------
+    data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_transformed : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+    """
+    data = sym_coordinates_to_matrix(data_coordinates, reference_point.shape[0])
+    data_expm = expm_symmetric(data)[0]
+    return congruence_SPD_sqrtm(data_expm, reference_point)
+
+
+def AffineInvariantExpCoordinates(
+    data_coordinates: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Riemannian exponential from coordinates with respect to the affine-invariant geometry
+
+    Parameters
+    ----------
+    data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_transformed : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+    """
+    data = SymCoordinatesToMatrix.apply(data_coordinates, reference_point.shape[0])
+    data_expm = ExpmSymmetric.apply(data)
+    return CongruenceSPDSqrtm.apply(data_expm, reference_point)

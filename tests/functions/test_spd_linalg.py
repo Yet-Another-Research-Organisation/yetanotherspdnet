@@ -344,7 +344,9 @@ class TestSymMatrixToCoordinates:
         assert X.dtype == X_coordinates.dtype
 
     @pytest.mark.parametrize("n_matrices, n_features", [(1, 100), (50, 100)])
-    def test_forward(self, n_matrices, n_features, device, dtype, generator):
+    def test_forward_matrix_to_coordinates(
+        self, n_matrices, n_features, device, dtype, generator
+    ):
         """
         Test forward of SymMatrixToCoordinates Function class
         """
@@ -369,7 +371,9 @@ class TestSymMatrixToCoordinates:
         assert X_coordinates.dtype == X.dtype
 
     @pytest.mark.parametrize("n_matrices, n_features", [(1, 100), (50, 100)])
-    def test_backward(self, n_matrices, n_features, device, dtype, generator):
+    def test_backward_matrix_to_coordinates(
+        self, n_matrices, n_features, device, dtype, generator
+    ):
         """
         Test backward of VechBatch Function class
         Can't rely on automatic differentiation here because it's not working
@@ -402,6 +406,71 @@ class TestSymMatrixToCoordinates:
         # we expect vech_batch(X.grad) == grad_X_Vech
         expected_grad = spd_linalg.sym_matrix_to_coordinates(X.grad)
         assert_close(expected_grad, grad_X_coordinates)
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(1, 100), (50, 100)])
+    def test_forward_coordinates_to_matrix(
+        self, n_matrices, n_features, device, dtype, generator
+    ):
+        """
+        Test forward of SymCoordinatesToMatrix Function class
+        """
+        # random batch of coordinates
+        X_coordinates = torch.squeeze(
+            torch.randn(
+                (n_matrices, n_features * (n_features + 1) // 2),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        X = spd_linalg.SymCoordinatesToMatrix.apply(X_coordinates, n_features)
+        assert X.dim() == X_coordinates.dim() + 1
+        if n_matrices > 1:
+            assert X.shape[0] == n_matrices
+        assert X.shape[-1] == n_features
+        assert X.shape[-2] == n_features
+        assert_close(spd_linalg.sym_matrix_to_coordinates(X), X_coordinates)
+        assert X.device == X_coordinates.device
+        assert X.dtype == X_coordinates.dtype
+
+    @pytest.mark.parametrize("n_matrices, n_features", [(1, 100), (50, 100)])
+    def test_backward_coordinates_to_matrix(
+        self, n_matrices, n_features, device, dtype, generator
+    ):
+        """
+        Test backward of VechBatch Function class
+        Can't rely on automatic differentiation here because it's not working
+        due to the fact that we drop values in forward but still need gradient with respect to these
+        """
+        # random batch of coordinates
+        X_coordinates = torch.squeeze(
+            torch.randn(
+                (n_matrices, n_features * (n_features + 1) // 2),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        X_coordinates.requires_grad = True
+        X = spd_linalg.SymCoordinatesToMatrix.apply(X_coordinates, n_features)
+        # create random upstream gradient
+        grad_X = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        # backward
+        X.backward(grad_X)
+        # we expect vech_batch(X.grad) == grad_X_Vech
+        expected_grad = spd_linalg.sym_coordinates_to_matrix(
+            X_coordinates.grad, n_features
+        )
+        assert_close(expected_grad, grad_X)
 
 
 # ----------------------------------------------------------
@@ -1740,6 +1809,104 @@ class TestCongruenceSPD:
         loss_manual = torch.norm(X_manual_cong)
         loss_manual.backward()
         loss_auto = torch.norm(X_auto_cong)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+        assert G_manual.grad is not None
+        assert G_auto.grad is not None
+        assert torch.isfinite(G_manual.grad).all()
+        assert torch.isfinite(G_auto.grad).all()
+        assert is_symmetric(G_manual.grad)
+        assert is_symmetric(G_auto.grad)
+        assert_close(G_manual.grad, G_auto.grad)
+
+
+class TestCongruenceSPDSqtrm:
+    """
+    Test suite for congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of whitening function and forward of Whitening Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G = random_SPD(
+            n_features, 1, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+
+        Y = spd_linalg.CongruenceSPDSqrtm.apply(X, G)
+        Z = spd_linalg.congruence_SPD_sqrtm(X, G)
+
+        X_class = spd_linalg.CongruenceSPDSqrtm.apply(
+            Y, torch.cholesky_inverse(torch.linalg.cholesky(G))
+        )
+        X_function = spd_linalg.congruence_SPD_sqrtm(
+            Z, torch.cholesky_inverse(torch.linalg.cholesky(G))
+        )
+
+        assert Y.shape == X.shape
+        assert Y.device == X.device
+        assert Y.dtype == X.dtype
+        assert Z.shape == X.shape
+        assert Z.device == X.device
+        assert Z.dtype == X.dtype
+        assert is_spd(Y)
+        assert is_spd(Z)
+        assert_close(Y, Z)
+        assert_close(X_class, X)
+        assert_close(X_function, X)
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of backward of Whitening Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G = random_SPD(
+            n_features, 1, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        G_manual = G.clone().detach()
+        G_manual.requires_grad = True
+        G_auto = G.clone().detach()
+        G_auto.requires_grad = True
+
+        X_manual_white = spd_linalg.CongruenceSPDSqrtm.apply(X_manual, G_manual)
+        X_auto_white = spd_linalg.congruence_SPD_sqrtm(X_auto, G_auto)
+
+        loss_manual = torch.norm(X_manual_white)
+        loss_manual.backward()
+        loss_auto = torch.norm(X_auto_white)
         loss_auto.backward()
 
         assert X_manual.grad is not None

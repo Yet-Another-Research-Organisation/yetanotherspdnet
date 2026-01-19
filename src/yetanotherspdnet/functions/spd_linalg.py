@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import re
 
 import torch
 from torch.autograd import Function
@@ -330,9 +331,35 @@ class SymMatrixToCoordinates(Function):
         return sym_matrix_to_coordinates(data)
 
     @staticmethod
-    def backward(ctx, data_coordinates: torch.Tensor) -> torch.Tensor:
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
         Backward pass of extracting Euclidean orthonormal coordinates of a batch of symmetric matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Gradient with respect to Euclidean orthonormal coordinates of data
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient with respect to data
+        """
+        return sym_coordinates_to_matrix(grad_output, ctx.n_features)
+
+
+class SymCoordinatesToMatrix(Function):
+    """
+    Constructs symmetric matrices from a batch of Euclidean orthonormal coordinates
+    """
+
+    @staticmethod
+    def forward(ctx, data_coordinates: torch.Tensor, n_features: int) -> torch.Tensor:
+        """
+        Forward pass of constructing symmetric matrices from Euclidean orthonormal coordinates
 
         Parameters
         ----------
@@ -347,7 +374,27 @@ class SymMatrixToCoordinates(Function):
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of symmetric matrices
         """
-        return sym_coordinates_to_matrix(data_coordinates, ctx.n_features)
+        return sym_coordinates_to_matrix(data_coordinates, n_features)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
+        """
+        Backward pass of constructing symmetric matrices from Euclidean orthonormal coordinates
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+            Gradient with respect to batch of symmetric matrices
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Gradient with respect to Euclidean orthonormal coordinates
+        """
+        return sym_matrix_to_coordinates(grad_output), None
 
 
 # -------------------------
@@ -1259,6 +1306,89 @@ class CongruenceSPD(Function):
             2
             * symmetrize(torch.einsum("...ik,kl,...lj->ij", grad_output, matrix, data)),
         )
+
+
+def congruence_SPD_sqrtm(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
+    """
+    Congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    matrix : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_transformed : torch.Tensor of shape (..., n_features, n_features)
+        Transformed batch of SPD matrices
+    """
+    matrix_sqrtm = sqrtm_SPD(matrix)[0]
+    return congruence_SPD(data, matrix_sqrtm)
+
+
+class CongruenceSPDSqrtm(Function):
+    """
+    Congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        matrix : torch.Tensor of shape (n_features, n_features)
+            SPD matrix
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Transformed batch of SPD matrices
+        """
+        matrix_sqrtm, eigvals_matrix, eigvecs_matrix = sqrtm_SPD(matrix)
+        ctx.save_for_backward(data, eigvals_matrix, eigvecs_matrix, matrix_sqrtm)
+        return congruence_SPD(data, matrix_sqrtm)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Backward pass of the congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the batch of whitened SPD matrices
+
+        Returns
+        -------
+        grad_input_data : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input batch of SPD matrices
+
+        grad_input_matrix : torch.Tensor of shape (n_features, n_features)
+            Gradient of the loss with respect to the SPD matrix used for whitening
+        """
+        data, eigvals_matrix, eigvecs_matrix, matrix_sqrtm = ctx.saved_tensors
+        grad_input_data = matrix_sqrtm @ grad_output @ matrix_sqrtm
+        syl_right = 2 * symmetrize(
+            torch.einsum("...ik, kl, ...lj->ij", data, matrix_sqrtm, grad_output)
+        )
+        grad_input_matrix = solve_sylvester_SPD(
+            torch.sqrt(eigvals_matrix), eigvecs_matrix, syl_right
+        )
+        return grad_input_data, grad_input_matrix
 
 
 def whitening(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
