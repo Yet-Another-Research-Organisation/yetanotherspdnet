@@ -1,5 +1,4 @@
 from collections.abc import Callable
-import re
 
 import torch
 from torch.autograd import Function

@@ -35,6 +35,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "ipython>=9.9.0",
     "mypy>=1.18.2",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
@@ -48,6 +49,7 @@ test = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "scipy>=1.11.0",
+    "scikit-learn"
 ]
 dev = [
     "ruff>=0.1.0",
@@ -197,4 +199,7 @@ ignore_missing_imports = true
 [dependency-groups]
 dev = [
     "ruff>=0.14.3",
+]
+test = [
+    "scikit-learn>=1.8.0",
 ]
