@@ -756,3 +756,43 @@ def AffineInvariantExpCoordinates(
     data = SymCoordinatesToMatrix.apply(data_coordinates, reference_point.shape[0])
     data_expm = ExpmSymmetric.apply(data)
     return CongruenceSPDSqrtm.apply(data_expm, reference_point)
+
+
+# ---------------------------------
+# Parallel transport in coordinates
+# ---------------------------------
+def affine_invariant_parallel_transport_coordinates(
+    data_coordinates: torch.Tensor,
+    reference_point: torch.Tensor,
+    new_point: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Parallel transport in coordinates according to the affine-invariant geometry
+
+    Parameters
+    ----------
+    data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+
+    reference_point : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrix
+
+    new_point : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_transformed : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of new_point
+    """
+    n_features = reference_point.shape[-1]
+    data_mat = sym_coordinates_to_matrix(data_coordinates, n_features)
+    X_sqrtm = sqrtm_SPD(reference_point)[0]
+    Y_inv_sqrtm = inv_sqrtm_SPD(new_point)[0]
+    transf_mat = (
+        inv_sqrtm_SPD(Y_inv_sqrtm @ reference_point @ Y_inv_sqrtm)[0]
+        @ Y_inv_sqrtm
+        @ X_sqrtm
+    )
+    data_transf_mat = transf_mat @ data_mat @ transf_mat.transpose(-1, -2)
+    return sym_matrix_to_coordinates(data_transf_mat)

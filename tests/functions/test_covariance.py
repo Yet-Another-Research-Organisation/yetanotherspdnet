@@ -368,3 +368,179 @@ class TestLedoitWolfCovariance:
         assert torch.isfinite(X_manual.grad).all()
         assert torch.isfinite(X_auto.grad).all()
         assert_close(X_manual.grad, X_auto.grad)
+
+
+class TestSampleVariance:
+    """
+    Test suite for sample variance vector estimator
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 10])
+    @pytest.mark.parametrize("n_samples", [200, 1000])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    @pytest.mark.parametrize("assume_centered", [True, False])
+    def test_forward_shape(
+        self,
+        n_matrices,
+        n_samples,
+        n_features,
+        cond,
+        assume_centered,
+        device,
+        dtype,
+        generator,
+    ):
+        """
+        Test that output of sample variance functions is coherent
+        """
+        # random covariance matrices
+        Cov = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        Cov_sqrtm = sqrtm_SPD(Cov)[0]
+        # random data
+        data = (
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_samples, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+            @ Cov_sqrtm
+        )
+        # variance estimation
+        SV_manual = covariance.SampleVariance.apply(data, assume_centered)
+        SV_auto = covariance.sample_variance(data, assume_centered)
+
+        if n_matrices > 1:
+            assert SV_manual.shape[0] == n_matrices
+        assert SV_manual.shape[-1] == n_features
+        assert SV_manual.device == data.device
+        assert SV_manual.dtype == data.dtype
+        assert (SV_manual > 0).all()
+
+        if n_matrices > 1:
+            assert SV_auto.shape[0] == n_matrices
+        assert SV_auto.shape[-1] == n_features
+        assert SV_auto.device == data.device
+        assert SV_auto.dtype == data.dtype
+        assert (SV_auto > 0).all()
+
+        assert_close(SV_manual, SV_auto)
+
+    @pytest.mark.parametrize("n_matrices", [1, 10])
+    @pytest.mark.parametrize("n_samples", [200, 1000])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    @pytest.mark.parametrize("assume_centered", [True, False])
+    def test_SCM_comparison(
+        self,
+        n_matrices,
+        n_samples,
+        n_features,
+        cond,
+        assume_centered,
+        device,
+        dtype,
+        generator,
+    ):
+        """
+        Test that sample variance is the diagonal of sample covariance
+        """
+        # random covariance matrices
+        Cov = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        Cov_sqrtm = sqrtm_SPD(Cov)[0]
+        # random data
+        data = (
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_samples, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+            @ Cov_sqrtm
+        )
+        # variance estimation
+        SV_manual = covariance.SampleVariance.apply(data, assume_centered)
+        SV_auto = covariance.sample_variance(data, assume_centered)
+        # covariance estimation
+        SCM = covariance.sample_covariance(data, assume_centered)
+        SCM_variance = torch.diagonal(SCM, dim1=-1, dim2=-2)
+
+        assert_close(SV_manual, SCM_variance)
+        assert_close(SV_auto, SCM_variance)
+
+    @pytest.mark.parametrize("n_matrices", [1, 10])
+    @pytest.mark.parametrize("n_samples", [200, 1000])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    @pytest.mark.parametrize("assume_centered", [True, False])
+    def test_backward(
+        self,
+        n_matrices,
+        n_samples,
+        n_features,
+        cond,
+        assume_centered,
+        device,
+        dtype,
+        generator,
+    ):
+        """
+        test that manual and autograd gradients are the same
+        """
+        # random covariance matrices
+        Cov = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        Cov_sqrtm = sqrtm_SPD(Cov)[0]
+        # random data
+        data = (
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_samples, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+            @ Cov_sqrtm
+        )
+
+        X_manual = data.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = data.clone().detach()
+        X_auto.requires_grad = True
+
+        SV_manual = covariance.SampleVariance.apply(X_manual, assume_centered)
+        SV_auto = covariance.sample_variance(X_auto, assume_centered)
+
+        loss_manual = torch.norm(SV_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(SV_auto)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert_close(X_manual.grad, X_auto.grad)

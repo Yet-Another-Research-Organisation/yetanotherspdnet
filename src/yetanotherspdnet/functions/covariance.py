@@ -190,7 +190,7 @@ class LedoitWolfCovariance(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
         """
-        Backward pass of the sample covariance matrix
+        Backward pass of the Ledoit-Wolf covariance estimator
 
         Parameters
         ----------
@@ -253,3 +253,88 @@ class LedoitWolfCovariance(Function):
             2 * X @ grad_SCM / n_samples + grad_alpha_X,
             None,
         )
+
+
+def sample_variance(data: torch.Tensor, assume_centered: bool = True) -> torch.Tensor:
+    """
+    Sample variance vector
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_samples, n_features)FR7615135005000423745813470
+        Batch of data
+
+    assume_centered : bool, optional
+        Whether to recenter data. Default is True
+
+    Returns
+    -------
+    variance : torch.Tensor of shape (..., n_features)
+        Batch of sample variance vectors
+    """
+    if assume_centered:
+        X = data
+        n_samples = X.shape[-2]
+    else:
+        X = data - data.mean(dim=-2, keepdim=True)
+        n_samples = X.shape[-2] - 1
+    return torch.sum(X * X, dim=-2) / n_samples
+
+
+class SampleVariance(Function):
+    """
+    Sample variance vector
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor, assume_centered: bool = True) -> torch.Tensor:
+        """
+        Forwad pass of the sample variance vector estimator
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data : torch.Tensor of shape (..., n_samples, n_features)
+            Batch of data
+
+        assume_centered : bool, optional
+            Whether to recenter data. Default is True
+
+        Returns
+        -------
+        variance : torch.Tensor of shape (..., n_features)
+            Batch of sample variance vectors
+        """
+        if assume_centered:
+            X = data
+            n_samples = X.shape[-2]
+        else:
+            X = data - data.mean(dim=-2, keepdim=True)
+            n_samples = X.shape[-2] - 1
+        ctx.n_samples = n_samples
+        ctx.save_for_backward(X)
+        return torch.sum(X * X, dim=-2) / n_samples
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
+        """
+        Backward pass of the sample variance vector estimator
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features)
+            Gradient with respect to the sample variance vector
+
+        Returns
+        -------
+        grad_input: torch.Tensor of shape (..., n_samples, n_features)
+            Gradient with respect to input batch of data
+        """
+        n_samples = ctx.n_samples
+        (X,) = ctx.saved_tensors
+        return 2 * grad_output.unsqueeze(-2) * X / n_samples, None
