@@ -1,9 +1,7 @@
 import zlib
-from collections.abc import Callable
 
 import torch
 from torch import nn
-from torch.nn.utils import parametrizations
 
 from yetanotherspdnet.nn.base import BiMap, LogEig, ReEig, Vec, Vech
 from yetanotherspdnet.nn.batchnorm import (
@@ -21,8 +19,9 @@ class SPDnet(nn.Module):
         softmax: bool = False,
         reeig_eps: float = 1e-3,
         bimap_parametrized: bool = True,
-        bimap_parametrization: type[nn.Module] | Callable = parametrizations.orthogonal,
+        bimap_parametrization_mode: str = "static",
         bimap_parametrization_options: dict | None = None,
+        bimap_n_steps_ref_update: int = 100,
         batchnorm: bool = False,
         batchnorm_type: str = "mean_only",
         batchnorm_mean_type: str = "geometric_arithmetic_harmonic",
@@ -33,12 +32,14 @@ class SPDnet(nn.Module):
         batchnorm_minibatch_momentum: float = 0.01,
         batchnorm_minibatch_maxstep: int = 100,
         batchnorm_parametrization: str = "softplus",
+        batchnorm_parametrization_mode: str = "static",
+        batchnorm_n_steps_ref_update: int = 100,
         vec_type: str = "vec",
         use_logeig: bool = True,
+        use_autograd: bool | dict = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
-        use_autograd: bool | dict = False,
     ) -> None:
         """
         Standard SPDnet model with hidden layers
@@ -64,14 +65,19 @@ class SPDnet(nn.Module):
             Whether to apply parametrization to enforce manifold constraints in BiMap.
             Default is True
 
-        bimap_parametrization : nn.Module or Callable, optional
-            Parametrization to apply in BiMap if bimap_parametrized is True.
-            If not nn.Module, only parametrization.orthogonal is supported.
-            Default is parametrization.orthogonal
+        bimap_parametrization_mode : str, optional
+            Parametrization mode of BiMap if bimap_parametrized is True.
+            Default is "static".
+            Choices are: "static" and "dynamic"
 
         bimap_parametrization_options : dict, optional
             Options for the parametrization function in BiMap.
             Default is None
+
+        bimap_n_steps_ref_update : int, optional
+            If bimap_parametrization_mode is "dynamic",
+            number of steps in between each reference point update.
+            Default is 100
 
         batchnorm : bool, optional
             Whether to apply BatchNormSPDMean to hidden layers. Default is False
@@ -120,6 +126,16 @@ class SPDnet(nn.Module):
             Default is "softplus".
             Choices are: "softplus", "exp"
 
+        batchnorm_parametrization_mode : str, optional
+            Parametrization mode.
+            Default is "static".
+            Choices are: "static" and "dynamic"
+
+        batchnorm_n_steps_ref_update : int, optional
+            If parametrization_mode is "dynamic",
+            number of steps in between each reference point update.
+            Default is 100
+
         vec_type : str, optional
             Whether to use Vec or Vech module.
             Default is "vec".
@@ -129,6 +145,12 @@ class SPDnet(nn.Module):
             Whether to apply LogEig layer before vectorization.
             Default is True
 
+        use_autograd : bool | dict, optional
+            Use torch autograd for gradient computation. Can be bool for all layers,
+            or dict with keys: 'bimap', 'reeig', 'logeig', 'batchnorm', 'vec'.
+            Note that Vech module always uses manual gradient.
+            Default is False
+
         device : torch.device, optional
             Device to run model on. Default is torch.device('cpu')
 
@@ -137,12 +159,6 @@ class SPDnet(nn.Module):
 
         generator : torch.Generator, optional
             Generator to ensure reproducibility. Default is None
-
-        use_autograd : bool | dict, optional
-            Use torch autograd for gradient computation. Can be bool for all layers,
-            or dict with keys: 'bimap', 'reeig', 'logeig', 'batchnorm', 'vec'.
-            Note that Vech module always uses manual gradient.
-            Default is False
         """
         super().__init__()
         self.input_dim = input_dim
@@ -153,8 +169,9 @@ class SPDnet(nn.Module):
         self.reeig_eps = reeig_eps
 
         self.bimap_parametrized = bimap_parametrized
-        self.bimap_parametrization = bimap_parametrization
+        self.bimap_parametrization_mode = bimap_parametrization_mode
         self.bimap_parametrization_options = bimap_parametrization_options
+        self.bimap_n_steps_ref_update = bimap_n_steps_ref_update
 
         self.batchnorm = batchnorm
         self.batchnorm_type = batchnorm_type
@@ -172,6 +189,8 @@ class SPDnet(nn.Module):
         self.batchnorm_minibatch_momentum = batchnorm_minibatch_momentum
         self.batchnorm_minibatch_maxstep = batchnorm_minibatch_maxstep
         self.batchnorm_parametrization = batchnorm_parametrization
+        self.batchnorm_parametrization_mode = batchnorm_parametrization_mode
+        self.batchnorm_n_steps_ref_update = batchnorm_n_steps_ref_update
 
         self.vec_type = vec_type
         assert self.vec_type in [
@@ -213,12 +232,13 @@ class SPDnet(nn.Module):
                 n_in=self.input_dim,
                 n_out=self.hidden_layers_size[0],
                 parametrized=self.bimap_parametrized,
-                parametrization=self.bimap_parametrization,
+                parametrization_mode=self.bimap_parametrization_mode,
                 parametrization_options=self.bimap_parametrization_options,
+                n_steps_ref_update=self.bimap_n_steps_ref_update,
+                use_autograd=self.use_autograd["bimap"],
                 device=self.device,
                 dtype=self.dtype,
                 generator=self.generator,
-                use_autograd=self.use_autograd["bimap"],
             )
         ]
 
@@ -243,6 +263,8 @@ class SPDnet(nn.Module):
                         minibatch_momentum=self.batchnorm_minibatch_momentum,
                         minibatch_maxstep=self.batchnorm_minibatch_maxstep,
                         parametrization=self.batchnorm_parametrization,
+                        parametrization_mode=self.batchnorm_parametrization_mode,
+                        n_steps_ref_update=self.batchnorm_n_steps_ref_update,
                         use_autograd=self.use_autograd["batchnorm"],
                         device=self.device,
                         dtype=self.dtype,
@@ -260,6 +282,8 @@ class SPDnet(nn.Module):
                         minibatch_momentum=self.batchnorm_minibatch_momentum,
                         minibatch_maxstep=self.batchnorm_minibatch_maxstep,
                         parametrization=self.batchnorm_parametrization,
+                        parametrization_mode=self.batchnorm_parametrization_mode,
+                        n_steps_ref_update=self.batchnorm_n_steps_ref_update,
                         use_autograd=self.use_autograd["batchnorm"],
                         device=self.device,
                         dtype=self.dtype,
@@ -271,12 +295,13 @@ class SPDnet(nn.Module):
                     n_in=self.hidden_layers_size[i - 1],
                     n_out=self.hidden_layers_size[i],
                     parametrized=self.bimap_parametrized,
-                    parametrization=self.bimap_parametrization,
+                    parametrization_mode=self.bimap_parametrization_mode,
                     parametrization_options=self.bimap_parametrization_options,
+                    n_steps_ref_update=self.bimap_n_steps_ref_update,
+                    use_autograd=self.use_autograd["bimap"],
                     device=self.device,
                     dtype=self.dtype,
                     generator=self.generator,
-                    use_autograd=self.use_autograd["bimap"],
                 )
             )
             spdnet_layers.append(
@@ -300,6 +325,8 @@ class SPDnet(nn.Module):
                             minibatch_momentum=self.batchnorm_minibatch_momentum,
                             minibatch_maxstep=self.batchnorm_minibatch_maxstep,
                             parametrization=self.batchnorm_parametrization,
+                            parametrization_mode=self.batchnorm_parametrization_mode,
+                            n_steps_ref_update=self.batchnorm_n_steps_ref_update,
                             use_autograd=self.use_autograd["batchnorm"],
                             device=self.device,
                             dtype=self.dtype,
@@ -317,6 +344,8 @@ class SPDnet(nn.Module):
                             minibatch_momentum=self.batchnorm_minibatch_momentum,
                             minibatch_maxstep=self.batchnorm_minibatch_maxstep,
                             parametrization=self.batchnorm_parametrization,
+                            parametrization_mode=self.batchnorm_parametrization_mode,
+                            n_steps_ref_update=self.batchnorm_n_steps_ref_update,
                             use_autograd=self.use_autograd["batchnorm"],
                             device=self.device,
                             dtype=self.dtype,
@@ -373,6 +402,28 @@ class SPDnet(nn.Module):
             X = self.softmax_layer(X)
         return X
 
+    def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
+        """
+        Register optimizer hooks for all layers with dynamic parametrization.
+        This method automatically finds all layers that use dynamic parametrization
+        and registers the appropriate hooks
+
+        Parameters
+        ----------
+        optimizer : torch.optim.Optimizer
+            The optimizer used for training
+        """
+        for module in self.modules():
+            # Check if module has register_optimizer_hook method
+            # and module.is_dynamic is True
+            if (
+                hasattr(module, "register_optimizer_hook")
+                and module is not self
+                and hasattr(module, "is_dynamic")
+                and module.is_dynamic is True
+            ):
+                module.register_optimizer_hook(optimizer)
+
     def __repr__(self) -> str:
         """
         String representation of SPDnet
@@ -385,20 +436,27 @@ class SPDnet(nn.Module):
             f"  softmax={self.softmax},\n"
             f"  reeig_eps={self.reeig_eps},\n"
             f"  bimap_parametrized={self.bimap_parametrized},\n"
-            f"  bimap_parametrization={self.bimap_parametrization},\n"
+            f"  bimap_parametrization_mode={self.bimap_parametrization_mode},\n"
             f"  bimap_parametrization_options={self.bimap_parametrization_options},\n"
+            f"  bimap_n_steps_ref_update={self.bimap_n_steps_ref_update},\n"
             f"  batchnorm={self.batchnorm},\n"
+            f"  batchnorm_type={self.batchnorm_type},\n"
             f"  batchnorm_mean_type='{self.batchnorm_mean_type}',\n"
             f"  batchnorm_mean_options={self.batchnorm_mean_options},\n"
             f"  batchnorm_momentum={self.batchnorm_momentum},\n"
-            f"  batchnorm_norm_strategy={self.batchnorm_norm_strategy}, \n"
-            f"  batchnorm_minibatch_momentum={self.batchnorm_minibatch_momentum}, \n"
+            f"  batchnorm_norm_strategy={self.batchnorm_norm_strategy},\n"
+            f"  batchnorm_minibatch_mode={self.batchnorm_minibatch_mode},\n"
+            f"  batchnorm_minibatch_momentum={self.batchnorm_minibatch_momentum},\n"
+            f"  batchnorm_minibatch_maxstep={self.batchnorm_minibatch_maxstep},\n"
+            f"  batchnorm_parametrization={self.batchnorm_parametrization},\n"
+            f"  batchnorm_parametrization_mode={self.batchnorm_parametrization_mode},\n"
+            f"  batchnorm_n_steps_ref_update={self.batchnorm_n_steps_ref_update},\n"
             f"  vec_type='{self.vec_type}',\n"
             f"  use_logeig={self.use_logeig},\n"
+            f"  use_autograd={self._use_autograd_original}\n"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f"  generator={self.generator},\n"
-            f"  use_autograd={self._use_autograd_original}\n"
             f")"
         )
 

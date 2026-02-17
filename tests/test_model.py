@@ -407,6 +407,104 @@ class TestSPDnet:
         # Outputs should be different with batchnorm
         assert not torch.allclose(output_train, output_eval)
 
+    def test_dynamic_parametrization(self, device, dtype, generator):
+        """
+        Test that dynamic parametrization is set up correctly
+        """
+        model = SPDnet(
+            input_dim=10,
+            hidden_layers_size=[8, 6],
+            output_dim=3,
+            bimap_parametrization_mode="dynamic",
+            bimap_n_steps_ref_update=2,
+            batchnorm_parametrization_mode="dynamic",
+            batchnorm_n_steps_ref_update=2,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        model.train()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        model.register_optimizer_hook(optimizer)
+
+        for module in model.modules():
+            if isinstance(
+                module, BiMap or BatchNormSPDMean or BatchNormSPDMeanScalarVariance
+            ):
+                assert hasattr(module, "is_dynamic") and module.is_dynamic is True
+
+        # first time going through the model
+        X1 = random_SPD(10, 5, device=device, dtype=dtype, generator=generator)
+        # Forward + backward + update
+        optimizer.zero_grad()
+        output = model(X1)
+        # check current_ref_step is correct
+        for module in model.modules():
+            if isinstance(
+                module, BiMap or BatchNormSPDMean or BatchNormSPDMeanScalarVariance
+            ):
+                assert module.current_ref_step == 1
+        loss = output.sum()
+        loss.backward()
+        optimizer.step()
+
+        # check that reference_point did not change
+        for module in model.modules():
+            if isinstance(module, BiMap):
+                assert_close(
+                    module.stiefel_parametrization.reference_point,
+                    module.stiefel_parametrization.initial_reference,
+                )
+            if isinstance(module, BatchNormSPDMean or BatchNormSPDMeanScalarVariance):
+                assert_close(
+                    module.spd_parametrization.reference_point,
+                    module.spd_parametrization.initial_reference,
+                )
+
+        # second time going through the model
+        X2 = random_SPD(10, 5, device=device, dtype=dtype, generator=generator)
+        # Forward + backward + update
+        optimizer.zero_grad()
+        output = model(X2)
+        # check current_ref_step is correct
+        for module in model.modules():
+            if isinstance(
+                module, BiMap or BatchNormSPDMean or BatchNormSPDMeanScalarVariance
+            ):
+                assert module.current_ref_step == 2
+        loss = output.sum()
+        loss.backward()
+        optimizer.step()
+
+        # check that reference_point changed, tangent vector and current_ref_step re-initialized
+        for module in model.modules():
+            if isinstance(module, BiMap):
+                assert not torch.allclose(
+                    module.stiefel_parametrization.reference_point,
+                    module.stiefel_parametrization.initial_reference,
+                )
+                assert_close(
+                    module.parametrizations.weight.original,
+                    torch.zeros(
+                        (module.n_in, module.n_out), device=device, dtype=dtype
+                    ),
+                )
+                assert module.current_ref_step == 0
+            if isinstance(module, BatchNormSPDMean or BatchNormSPDMeanScalarVariance):
+                assert not torch.allclose(
+                    module.spd_parametrization.reference_point,
+                    module.spd_parametrization.initial_reference,
+                )
+                assert_close(
+                    module.parametrizations.Covbias.original,
+                    torch.zeros(
+                        (module.n_features, module.n_features),
+                        device=device,
+                        dtype=dtype,
+                    ),
+                )
+                assert module.current_ref_step == 0
+
     def test_repr_and_str(self, device, dtype, generator):
         """Test string representations"""
         model = SPDnet(
