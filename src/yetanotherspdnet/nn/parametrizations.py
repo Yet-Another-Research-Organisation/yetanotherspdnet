@@ -1,6 +1,10 @@
 import torch
 from torch import nn
 
+from yetanotherspdnet.functions.scalar_functions import (
+    inv_scaled_softplus,
+    scaled_softplus,
+)
 from yetanotherspdnet.random.stiefel import random_stiefel
 
 from ..functions.spd_linalg import (
@@ -42,9 +46,7 @@ class ScalarSoftPlusParametrization(nn.Module):
         scalar_pd : torch.Tensor of shape ()
             Positive definite scalar
         """
-        return torch.log(1.0 + torch.pow(2.0, scalar)) / torch.log(
-            torch.as_tensor(2.0, dtype=scalar.dtype, device=scalar.device)
-        )
+        return scaled_softplus(scalar)
 
     def right_inverse(self, scalar_pd: torch.Tensor) -> torch.Tensor:
         """
@@ -61,9 +63,48 @@ class ScalarSoftPlusParametrization(nn.Module):
         scalar : torch.Tensor of shape ()
             Real scalar
         """
-        return torch.log(
-            torch.pow(torch.tensor(2.0), scalar_pd) - torch.tensor(1.0)
-        ) / torch.log(torch.tensor(2.0))
+        return inv_scaled_softplus(scalar_pd)
+
+
+class ScalarSigmoidParametrization(nn.Module):
+    """
+    Parametrization to constrain a scalar to the interval [0, 1] using sigmoid.
+    """
+
+    def forward(self, scalar: torch.Tensor) -> torch.Tensor:
+        """
+        Mapping from real scalar to [0, 1] through sigmoid function
+
+        Parameters
+        ----------
+        scalar : torch.Tensor of shape ()
+            Real scalar (unconstrained)
+
+        Returns
+        -------
+        scalar_constrained : torch.Tensor of shape ()
+            Scalar in [0, 1]
+        """
+        return torch.sigmoid(scalar)
+
+    def right_inverse(self, scalar_constrained: torch.Tensor) -> torch.Tensor:
+        """
+        Mapping from [0, 1] to real scalars through inverse sigmoid (logit)
+
+        Parameters
+        ----------
+        scalar_constrained : torch.Tensor of shape ()
+            Scalar in [0, 1]
+
+        Returns
+        -------
+        scalar : torch.Tensor of shape ()
+            Real scalar (unconstrained)
+        """
+        # Clamp to avoid numerical issues at boundaries
+        eps = 1e-7
+        scalar_clamped = torch.clamp(scalar_constrained, eps, 1 - eps)
+        return torch.log(scalar_clamped / (1 - scalar_clamped))
 
 
 class SPDParametrization(nn.Module):
@@ -491,9 +532,9 @@ class StiefelAdaptiveParametrization(nn.Module):
         # Need this to have a correct computation graph and gradient computation
         ref_point = self.reference_point.detach().clone()
         # ensure weight_tangent is on the tangent space
-        test = self.projectionTangent(weight_tangent, ref_point)
+        weight_tangent = self.projectionTangent(weight_tangent, ref_point)
         # map weight_tangent on the manifold
-        weight = self.projectionStiefel(ref_point + test)
+        weight = self.projectionStiefel(ref_point + weight_tangent)
         # store weight value during training (for reference update)
         if self.training:
             self.last_stiefel_value.copy_(weight.detach())

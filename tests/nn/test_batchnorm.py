@@ -69,6 +69,8 @@ class TestBatchNormSPDMean:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [False, True])
     def test_initialization(
         self,
@@ -77,6 +79,8 @@ class TestBatchNormSPDMean:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -93,6 +97,8 @@ class TestBatchNormSPDMean:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=momentum,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -139,6 +145,8 @@ class TestBatchNormSPDMean:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_pass(
         self,
@@ -149,6 +157,8 @@ class TestBatchNormSPDMean:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -167,6 +177,8 @@ class TestBatchNormSPDMean:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=momentum,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -240,6 +252,8 @@ class TestBatchNormSPDMean:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     def test_both_modes_give_same_result(
         self,
         n_matrices,
@@ -249,6 +263,8 @@ class TestBatchNormSPDMean:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         device,
         dtype,
         generator,
@@ -273,6 +289,8 @@ class TestBatchNormSPDMean:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=False,
             device=device,
             dtype=dtype,
@@ -286,6 +304,8 @@ class TestBatchNormSPDMean:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=True,
             device=device,
             dtype=dtype,
@@ -321,6 +341,8 @@ class TestBatchNormSPDMean:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(
         self,
@@ -331,6 +353,8 @@ class TestBatchNormSPDMean:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -347,6 +371,8 @@ class TestBatchNormSPDMean:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -407,6 +433,8 @@ class TestBatchNormSPDMean:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_parameter_update(
         self,
@@ -417,6 +445,8 @@ class TestBatchNormSPDMean:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -433,6 +463,8 @@ class TestBatchNormSPDMean:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -485,6 +517,8 @@ class TestBatchNormSPDMean:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     def test_both_modes_give_same_gradient(
         self,
         n_matrices,
@@ -494,6 +528,8 @@ class TestBatchNormSPDMean:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         device,
         dtype,
         generator,
@@ -509,6 +545,8 @@ class TestBatchNormSPDMean:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=False,
             device=device,
             dtype=dtype,
@@ -522,6 +560,8 @@ class TestBatchNormSPDMean:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=True,
             device=device,
             dtype=dtype,
@@ -579,6 +619,185 @@ class TestBatchNormSPDMean:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_dynamic_parametrization_initialization(
+        self,
+        n_features,
+        mean_type,
+        mean_options,
+        norm_strategy,
+        minibatch_mode,
+        parametrization,
+        use_autograd,
+        device,
+        dtype,
+    ):
+        """
+        Test that dynamic parametrization is initialized as expected, i.e.,
+        that initial tangent vector is zero
+        """
+        layer = batchnorm.BatchNormSPDMean(
+            n_features,
+            mean_type,
+            mean_options,
+            momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
+            minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode="dynamic",
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+        )
+        Covbias_tangent = layer.parametrizations.Covbias.original
+        assert_close(
+            Covbias_tangent,
+            torch.zeros((n_features, n_features), device=device, dtype=dtype),
+        )
+        assert_close(layer.Covbias, layer.spd_parametrization.reference_point)
+
+    @pytest.mark.parametrize("n_matrices", [10])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    @pytest.mark.parametrize(
+        "mean_type, mean_options",
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+            ),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_dynamic_parametrization_ref_update(
+        self,
+        n_matrices,
+        n_features,
+        cond,
+        mean_type,
+        mean_options,
+        norm_strategy,
+        minibatch_mode,
+        parametrization,
+        use_autograd,
+        device,
+        dtype,
+        generator,
+    ):
+        """
+        Test that reference point is updated as expected
+        """
+        layer = batchnorm.BatchNormSPDMean(
+            n_features,
+            mean_type,
+            mean_options,
+            momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
+            minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode="dynamic",
+            n_steps_ref_update=2,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+        )
+        layer.train()
+        optimizer = torch.optim.SGD(layer.parameters(), lr=0.01)
+        layer.register_optimizer_hook(optimizer)
+
+        initial_ref = layer.spd_parametrization.reference_point.clone().detach()
+
+        # first time going through the layer
+        X1 = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # Forward + backward + update
+        optimizer.zero_grad()
+        output = layer(X1)
+        # check current_ref_step is correct
+        assert layer.current_ref_step == 1
+        loss = output.sum()
+        loss.backward()
+        optimizer.step()
+
+        assert_close(layer.spd_parametrization.reference_point, initial_ref)
+
+        # second time going through the layer
+        X2 = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # Forward + backward + update
+        optimizer.zero_grad()
+        output = layer(X2)
+        # check current_ref_step is correct
+        assert layer.current_ref_step == 2
+        loss = output.sum()
+        loss.backward()
+        optimizer.step()
+
+        # Check that reference_point changed, tangent vector and current_ref_step re-initialized
+        assert not torch.allclose(
+            layer.spd_parametrization.reference_point, initial_ref
+        )
+        assert_close(
+            layer.parametrizations.Covbias.original,
+            torch.zeros((n_features, n_features), dtype=dtype, device=device),
+        )
+        assert layer.current_ref_step == 0
+
+    @pytest.mark.parametrize("n_features", [100])
+    @pytest.mark.parametrize(
+        "mean_type, mean_options",
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+            ),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_repr_and_str(
         self,
@@ -587,6 +806,8 @@ class TestBatchNormSPDMean:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -602,6 +823,8 @@ class TestBatchNormSPDMean:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -646,6 +869,8 @@ class TestBatchNormSPDMean:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_module_mode(
         self,
@@ -654,6 +879,8 @@ class TestBatchNormSPDMean:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -669,6 +896,8 @@ class TestBatchNormSPDMean:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -711,6 +940,8 @@ class TestBatchNormSPDMeanScalarVariance:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [False, True])
     def test_initialization(
         self,
@@ -719,6 +950,8 @@ class TestBatchNormSPDMeanScalarVariance:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -735,6 +968,8 @@ class TestBatchNormSPDMeanScalarVariance:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=momentum,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -783,6 +1018,8 @@ class TestBatchNormSPDMeanScalarVariance:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_pass(
         self,
@@ -793,6 +1030,8 @@ class TestBatchNormSPDMeanScalarVariance:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -811,6 +1050,8 @@ class TestBatchNormSPDMeanScalarVariance:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=momentum,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -889,6 +1130,8 @@ class TestBatchNormSPDMeanScalarVariance:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     def test_both_modes_give_same_result(
         self,
         n_matrices,
@@ -898,6 +1141,8 @@ class TestBatchNormSPDMeanScalarVariance:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         device,
         dtype,
         generator,
@@ -922,6 +1167,8 @@ class TestBatchNormSPDMeanScalarVariance:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=False,
             device=device,
             dtype=dtype,
@@ -970,6 +1217,8 @@ class TestBatchNormSPDMeanScalarVariance:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(
         self,
@@ -980,6 +1229,8 @@ class TestBatchNormSPDMeanScalarVariance:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -996,6 +1247,8 @@ class TestBatchNormSPDMeanScalarVariance:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -1062,6 +1315,8 @@ class TestBatchNormSPDMeanScalarVariance:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_parameter_update(
         self,
@@ -1072,6 +1327,8 @@ class TestBatchNormSPDMeanScalarVariance:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -1088,6 +1345,8 @@ class TestBatchNormSPDMeanScalarVariance:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -1142,6 +1401,8 @@ class TestBatchNormSPDMeanScalarVariance:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     def test_both_modes_give_same_gradient(
         self,
         n_matrices,
@@ -1151,6 +1412,8 @@ class TestBatchNormSPDMeanScalarVariance:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         device,
         dtype,
         generator,
@@ -1166,6 +1429,8 @@ class TestBatchNormSPDMeanScalarVariance:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=False,
             device=device,
             dtype=dtype,
@@ -1179,6 +1444,8 @@ class TestBatchNormSPDMeanScalarVariance:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=True,
             device=device,
             dtype=dtype,
@@ -1240,6 +1507,185 @@ class TestBatchNormSPDMeanScalarVariance:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_dynamic_parametrization_initialization(
+        self,
+        n_features,
+        mean_type,
+        mean_options,
+        norm_strategy,
+        minibatch_mode,
+        parametrization,
+        use_autograd,
+        device,
+        dtype,
+    ):
+        """
+        Test that dynamic parametrization is initialized as expected, i.e.,
+        that initial tangent vector is zero
+        """
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type,
+            mean_options,
+            momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
+            minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode="dynamic",
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+        )
+        Covbias_tangent = layer.parametrizations.Covbias.original
+        assert_close(
+            Covbias_tangent,
+            torch.zeros((n_features, n_features), device=device, dtype=dtype),
+        )
+        assert_close(layer.Covbias, layer.spd_parametrization.reference_point)
+
+    @pytest.mark.parametrize("n_matrices", [10])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    @pytest.mark.parametrize(
+        "mean_type, mean_options",
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+            ),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_dynamic_parametrization_ref_update(
+        self,
+        n_matrices,
+        n_features,
+        cond,
+        mean_type,
+        mean_options,
+        norm_strategy,
+        minibatch_mode,
+        parametrization,
+        use_autograd,
+        device,
+        dtype,
+        generator,
+    ):
+        """
+        Test that reference point is updated as expected
+        """
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type,
+            mean_options,
+            momentum=0.1,
+            norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
+            minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode="dynamic",
+            n_steps_ref_update=2,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+        )
+        layer.train()
+        optimizer = torch.optim.SGD(layer.parameters(), lr=0.01)
+        layer.register_optimizer_hook(optimizer)
+
+        initial_ref = layer.spd_parametrization.reference_point.clone().detach()
+
+        # first time going through the layer
+        X1 = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # Forward + backward + update
+        optimizer.zero_grad()
+        output = layer(X1)
+        # check current_ref_step is correct
+        assert layer.current_ref_step == 1
+        loss = output.sum()
+        loss.backward()
+        optimizer.step()
+
+        assert_close(layer.spd_parametrization.reference_point, initial_ref)
+
+        # second time going through the layer
+        X2 = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # Forward + backward + update
+        optimizer.zero_grad()
+        output = layer(X2)
+        # check current_ref_step is correct
+        assert layer.current_ref_step == 2
+        loss = output.sum()
+        loss.backward()
+        optimizer.step()
+
+        # Check that reference_point changed, tangent vector and current_ref_step re-initialized
+        assert not torch.allclose(
+            layer.spd_parametrization.reference_point, initial_ref
+        )
+        assert_close(
+            layer.parametrizations.Covbias.original,
+            torch.zeros((n_features, n_features), dtype=dtype, device=device),
+        )
+        assert layer.current_ref_step == 0
+
+    @pytest.mark.parametrize("n_features", [100])
+    @pytest.mark.parametrize(
+        "mean_type, mean_options",
+        [
+            ("affine_invariant", None),
+            ("affine_invariant", {"n_iterations": 5}),
+            ("log_euclidean", None),
+            ("arithmetic", None),
+            ("harmonic", None),
+            (
+                "geometric_arithmetic_harmonic",
+                None,
+            ),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+            ("minibatch", "decay"),
+            ("minibatch", "growth"),
+        ],
+    )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_repr_and_str(
         self,
@@ -1248,6 +1694,8 @@ class TestBatchNormSPDMeanScalarVariance:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -1263,6 +1711,8 @@ class TestBatchNormSPDMeanScalarVariance:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
@@ -1307,6 +1757,8 @@ class TestBatchNormSPDMeanScalarVariance:
             ("minibatch", "growth"),
         ],
     )
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_module_mode(
         self,
@@ -1315,6 +1767,8 @@ class TestBatchNormSPDMeanScalarVariance:
         mean_options,
         norm_strategy,
         minibatch_mode,
+        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -1330,6 +1784,8 @@ class TestBatchNormSPDMeanScalarVariance:
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,

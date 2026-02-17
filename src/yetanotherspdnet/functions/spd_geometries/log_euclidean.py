@@ -1,6 +1,8 @@
 import torch
 from torch.autograd import Function
 
+from yetanotherspdnet.functions.scalar_functions import inv
+
 from ..spd_linalg import (
     ExpmSymmetric,
     LogmSPD,
@@ -225,7 +227,6 @@ class LogEuclideanStdScalar(Function):
         ) = ctx.saved_tensors
         grad_logm_data = grad_output * (logm_data - logm_G) / std_scalar / n_matrices
         grad_logm_G = grad_output * (logm_G - arithmetic_mean(logm_data)) / std_scalar
-        inv = lambda x: 1 / x
         grad_input_data = eigh_operation_grad(
             grad_logm_data, eigvals_data, eigvecs_data, torch.log, inv
         )

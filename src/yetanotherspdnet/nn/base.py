@@ -1,9 +1,9 @@
-from collections.abc import Callable
-
 import torch
 from torch import nn
 from torch.nn.utils import parametrizations
 from torch.nn.utils.parametrize import register_parametrization
+
+from yetanotherspdnet.nn.parametrizations import StiefelAdaptiveParametrization
 
 from ..functions.spd_linalg import (
     CongruenceRectangular,
@@ -25,17 +25,16 @@ class BiMap(nn.Module):
         n_in: int,
         n_out: int,
         parametrized: bool = True,
-        parametrization: type[nn.Module] | Callable = parametrizations.orthogonal,
+        parametrization_mode: str = "static",
         parametrization_options: dict | None = None,
-        init_method: Callable = _init_weights_stiefel,
-        init_options: dict | None = None,
+        n_steps_ref_update: int = 100,
+        use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
-        use_autograd: bool = False,
     ) -> None:
         """
-        BiMap layer in a SPDnet layer according to the paper:
+        BiMap layer for the SPDnet architecture according to the paper:
             A Riemannian Network for SPD Matrix Learning, Huang et al
             AAAI Conference on Artificial Intelligence, 2017
 
@@ -48,25 +47,26 @@ class BiMap(nn.Module):
             Number of output features
 
         parametrized : bool, optional
-            Whether to apply parametrization to enforce manifold constraints.
+            Whether to apply parametrization to enforce orthogonal constraint.
             Default is True
 
-        parametrization : nn.Module or Callable, optional
-            Parametrization to apply if parametrized is True.
-            If not nn.Module, only parametrization.orthogonal is supported.
-            Default is parametrizations.orthogonal
+        parametrization_mode : str, optional
+            Parametrization mode.
+            Default is "static".
+            Choices are: "static" and "dynamic"
 
-        parametrization_options : dict, optional
-            Options for the parametrization function.
-            Default is None
+         parametrization_options : dict, optional
+             Options for the parametrization function.
+             Default is None
 
-        init_method : Callable, optional
-            Initialization method for the weight matrix.
-            Default is _init_weights_stiefel
+        n_steps_ref_update : int, optional
+            If parametrization_mode is "dynamic",
+            number of steps in between each reference point update.
+            Default is 100
 
-        init_options : dict, optional
-            Options for the init_method function.
-            Default is None
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False
 
         device : torch.device, optional
             Device on which the layer is initialized.
@@ -77,63 +77,61 @@ class BiMap(nn.Module):
 
         generator : torch.Generator, optional
             Generator to ensure reproducibility. Default is None
-
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula. Default is False
         """
         super().__init__()
+        assert n_out <= n_in, "must have n_out <= n_in"
         self.n_in = n_in
         self.n_out = n_out
         self.parametrized = parametrized
-        self.parametrization = parametrization
+        assert parametrization_mode in ["static", "dynamic"], (
+            f"expected parametrization_mode in ['static', 'dynamic'], got {parametrization_mode}"
+        )
+        self.parametrization_mode = parametrization_mode
         self.parametrization_options = parametrization_options
-        self.init_method = init_method
-        self.init_options = init_options
+        self.n_steps_ref_update = n_steps_ref_update
+        self.use_autograd = use_autograd
         self.device = device
         self.dtype = dtype
         self.generator = generator
-        self.use_autograd = use_autograd
 
-        if n_out > n_in:
-            raise ValueError("must have n_out <= n_in")
-
-        # Create weight parameter
+        # initialize dynamic parametrization bool
+        self.is_dynamic = False
+        # create and inintialize weight
         self.weight = nn.Parameter(
             torch.empty((n_in, n_out), dtype=dtype, device=device), requires_grad=True
         )
-        # Initialize weights
         with torch.no_grad():
-            if self.init_options is None:
-                self.init_method(self.weight, generator=self.generator)
+            _init_weights_stiefel(self.weight, generator=self.generator)
+        # deal with parametrization
+        if self.parametrized and self.parametrization_mode == "static":
+            if self.parametrization_options is None:
+                parametrizations.orthogonal(module=self, name="weight")
             else:
-                self.init_method(
-                    self.weight, generator=self.generator, **self.init_options
+                parametrizations.orthogonal(
+                    module=self, name="weight", **self.parametrization_options
                 )
-
-        if self.parametrized:
-            if isinstance(self.parametrization, type) and issubclass(
-                self.parametrization, nn.Module
-            ):
-                if self.parametrization_options is None:
-                    self.parametrization_options = {"use_autograd": self.use_autograd}
-
-                register_parametrization(
-                    self, "weight", self.parametrization(**self.parametrization_options)
+        elif self.parametrized and self.parametrization_mode == "dynamic":
+            self.is_dynamic = True
+            self.current_ref_step = 0
+            if self.parametrization_options is None:
+                self.stiefel_parametrization = StiefelAdaptiveParametrization(
+                    self.n_in,
+                    self.n_out,
+                    initial_reference=self.weight.clone().detach(),
                 )
-            elif self.parametrization is parametrizations.orthogonal:
-                if self.parametrization_options is None:
-                    self.parametrization(module=self, name="weight")
-                else:
-                    self.parametrization(
-                        module=self, name="weight", **self.parametrization_options
-                    )
             else:
-                raise TypeError(
-                    f"parametrization must be a nn.Module class or parametrization.orthogonal "
-                    f"got {type(self.parametrization)}"
+                self.stiefel_parametrization = StiefelAdaptiveParametrization(
+                    self.n_in,
+                    self.n_out,
+                    initial_reference=self.weight.clone().detach(),
+                    **self.parametrization_options,
                 )
-
+            register_parametrization(
+                module=self,
+                tensor_name="weight",
+                parametrization=self.stiefel_parametrization,
+            )
+        # BiMap function
         self.bimap_fun = (
             congruence_rectangular if self.use_autograd else CongruenceRectangular.apply
         )
@@ -152,7 +150,48 @@ class BiMap(nn.Module):
         data_transformed : torch.Tensor of shape (..., n_out, n_out)
             Batch of transformed SPD matrices
         """
+        if self.training and self.is_dynamic:
+            self.current_ref_step += 1
         return self.bimap_fun(data, self.weight)
+
+    def _post_optimizer_hook(
+        self, optimizer: torch.optim.Optimizer, *args, **kwargs
+    ) -> None:
+        """
+        Hook that runs after optimizer.step() to handle dynamic parametrization reference point.
+        See torch.optim.Optimizer.register_step_post_hook method for more details
+
+        Parameters
+        ----------
+        optimizer : torch.optim.Optimizer
+            Torch optimizer used for training
+        """
+        if (
+            self.training
+            and self.is_dynamic
+            and self.current_ref_step >= self.n_steps_ref_update
+        ):
+            with torch.no_grad():
+                # update reference point
+                self.stiefel_parametrization.update_reference_point()
+                # reset tangent vector to zero
+                self.parametrizations.weight.original.zero_()
+                # reset counter
+                self.current_ref_step = 0
+
+    def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
+        """
+        Register the post-step hook with the optimizer.
+        If dynamic parametrization, it needs to be called once after creating
+        the optimizer for dynamic parametrization to actually work as expected
+
+        Parameters
+        ----------
+        optimizer : torch.optim.Optimizer
+            Torch optimizer used for training
+        """
+        if self.is_dynamic:
+            optimizer.register_step_post_hook(self._post_optimizer_hook)
 
     def __repr__(self) -> str:
         """
@@ -165,11 +204,11 @@ class BiMap(nn.Module):
         """
         return (
             f"BiMap(n_in={self.n_in}, n_out={self.n_out}, "
-            f"parametrized={self.parametrized}, parametrization={self.parametrization}, "
+            f"parametrized={self.parametrized}, parametrization_mode={self.parametrization_mode}, "
             f"parametrization_options={self.parametrization_options}, "
-            f"init_method={self.init_method}, init_options={self.init_options}, "
-            f"device={self.device}, dtype={self.dtype}, generator={self.generator}, "
-            f"use_autograd={self.use_autograd})"
+            f"n_steps_ref_update={self.n_steps_ref_update}, "
+            f"use_autograd={self.use_autograd}, "
+            f"device={self.device}, dtype={self.dtype}, generator={self.generator})"
         )
 
     def __str__(self) -> str:

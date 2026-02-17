@@ -1,6 +1,5 @@
 import pytest
 import torch
-from torch.nn.utils import parametrizations
 from torch.testing import assert_close
 
 import yetanotherspdnet.nn.base as nn_spd_base
@@ -39,10 +38,8 @@ class TestBiMap:
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("parametrized", [True, False])
     @pytest.mark.parametrize(
-        "parametrization",
-        [
-            parametrizations.orthogonal,
-        ],
+        "parametrization_mode",
+        ["static", "dynamic"],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_initialization(
@@ -50,7 +47,7 @@ class TestBiMap:
         n_in,
         n_out,
         parametrized,
-        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -66,7 +63,7 @@ class TestBiMap:
             n_in=n_in,
             n_out=n_out,
             parametrized=parametrized,
-            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             device=device,
             dtype=dtype,
             generator=generator,
@@ -75,7 +72,7 @@ class TestBiMap:
         assert layer.n_in == n_in
         assert layer.n_out == n_out
         if parametrized:
-            assert layer.parametrization is parametrization
+            assert layer.parametrization_mode is parametrization_mode
         assert layer.weight.shape == (n_in, n_out)
         assert layer.weight.dtype == dtype
         assert layer.weight.device.type == device.type
@@ -86,9 +83,9 @@ class TestBiMap:
 
     def test_invalid_dimensions(self, device, dtype, generator):
         """
-        Test that n_out > n_in raises ValueError
+        Test that n_out > n_in raises AssertionError
         """
-        with pytest.raises(ValueError, match="must have n_out <= n_in"):
+        with pytest.raises(AssertionError, match="must have n_out <= n_in"):
             nn_spd_base.BiMap(
                 n_in=5, n_out=10, dtype=dtype, device=device, generator=generator
             )
@@ -97,10 +94,8 @@ class TestBiMap:
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("parametrized", [True, False])
     @pytest.mark.parametrize(
-        "parametrization",
-        [
-            parametrizations.orthogonal,
-        ],
+        "parametrization_mode",
+        ["static", "dynamic"],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_shape(
@@ -109,7 +104,7 @@ class TestBiMap:
         n_in,
         n_out,
         parametrized,
-        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -122,7 +117,7 @@ class TestBiMap:
             n_in=n_in,
             n_out=n_out,
             parametrized=parametrized,
-            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             device=device,
             dtype=dtype,
             generator=generator,
@@ -148,17 +143,15 @@ class TestBiMap:
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("parametrized", [True, False])
     @pytest.mark.parametrize(
-        "parametrization",
-        [
-            parametrizations.orthogonal,
-        ],
+        "parametrization_mode",
+        ["static", "dynamic"],
     )
     def test_both_modes_give_same_result(
         self,
         n_matrices,
         n_in,
         parametrized,
-        parametrization,
+        parametrization_mode,
         n_out,
         device,
         dtype,
@@ -178,7 +171,7 @@ class TestBiMap:
             n_in=n_in,
             n_out=n_out,
             parametrized=parametrized,
-            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             device=device,
             dtype=dtype,
             generator=generator,
@@ -189,7 +182,7 @@ class TestBiMap:
             n_in=n_in,
             n_out=n_out,
             parametrized=parametrized,
-            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             device=device,
             dtype=dtype,
             generator=generator,
@@ -206,10 +199,8 @@ class TestBiMap:
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("parametrized", [True, False])
     @pytest.mark.parametrize(
-        "parametrization",
-        [
-            parametrizations.orthogonal,
-        ],
+        "parametrization_mode",
+        ["static", "dynamic"],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(
@@ -218,7 +209,7 @@ class TestBiMap:
         n_in,
         n_out,
         parametrized,
-        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -231,7 +222,7 @@ class TestBiMap:
             n_in=n_in,
             n_out=n_out,
             parametrized=parametrized,
-            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             device=device,
             dtype=dtype,
             generator=generator,
@@ -270,10 +261,8 @@ class TestBiMap:
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("parametrized", [True, False])
     @pytest.mark.parametrize(
-        "parametrization",
-        [
-            parametrizations.orthogonal,
-        ],
+        "parametrization_mode",
+        ["static", "dynamic"],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_parameter_update(
@@ -282,7 +271,7 @@ class TestBiMap:
         n_in,
         n_out,
         parametrized,
-        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -295,7 +284,7 @@ class TestBiMap:
             n_in=n_in,
             n_out=n_out,
             parametrized=parametrized,
-            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             device=device,
             dtype=dtype,
             generator=generator,
@@ -310,9 +299,9 @@ class TestBiMap:
         initial_weights = layer.weight.clone().detach()
 
         # Forward + backward + update
+        optimizer.zero_grad()
         output = layer(X)
         loss = output.sum()
-        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
@@ -323,10 +312,8 @@ class TestBiMap:
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("parametrized", [True, False])
     @pytest.mark.parametrize(
-        "parametrization",
-        [
-            parametrizations.orthogonal,
-        ],
+        "parametrization_mode",
+        ["static", "dynamic"],
     )
     def test_both_modes_give_same_gradient(
         self,
@@ -334,7 +321,7 @@ class TestBiMap:
         n_in,
         n_out,
         parametrized,
-        parametrization,
+        parametrization_mode,
         device,
         dtype,
         generator,
@@ -346,7 +333,7 @@ class TestBiMap:
         # For parametrization.orthogonal, we need to set use_trivialization option to False when n_in > n_out
         # because it appears that the corresponding module then use a torch.randn that we cannot control
         # which makes it impossible to get the same results.
-        if (n_out < n_in) and (parametrization is parametrizations.orthogonal):
+        if (n_out < n_in) and (parametrization_mode == "static"):
             parametrization_options = {"use_trivialization": False}
         else:
             parametrization_options = None
@@ -357,7 +344,7 @@ class TestBiMap:
             n_in=n_in,
             n_out=n_out,
             parametrized=parametrized,
-            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             parametrization_options=parametrization_options,
             device=device,
             dtype=dtype,
@@ -370,7 +357,7 @@ class TestBiMap:
             n_in=n_in,
             n_out=n_out,
             parametrized=parametrized,
-            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             parametrization_options=parametrization_options,
             device=device,
             dtype=dtype,
@@ -407,12 +394,90 @@ class TestBiMap:
             assert_close(layer_manual.weight.grad, layer_auto.weight.grad)
 
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_dynamic_parametrization_initialization(
+        self, n_in, n_out, use_autograd, device, dtype, generator
+    ):
+        """
+        Test that dynamic parametrization is initialized as expected, i.e.,
+        that initial tangent vector is zero
+        """
+        layer = nn_spd_base.BiMap(
+            n_in=n_in,
+            n_out=n_out,
+            parametrized=True,
+            parametrization_mode="dynamic",
+            device=device,
+            dtype=dtype,
+            generator=generator,
+            use_autograd=use_autograd,
+        )
+        weight_tangent = layer.parametrizations.weight.original
+        assert_close(
+            weight_tangent, torch.zeros((n_in, n_out), device=device, dtype=dtype)
+        )
+        assert_close(layer.weight, layer.stiefel_parametrization.reference_point)
+
+    @pytest.mark.parametrize("n_matrices", [30])
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_dynamic_parametrization_ref_update(
+        self, n_matrices, n_in, n_out, use_autograd, device, dtype, generator
+    ):
+        """
+        Test that reference point is updated as expected
+        """
+        layer = nn_spd_base.BiMap(
+            n_in=n_in,
+            n_out=n_out,
+            parametrized=True,
+            parametrization_mode="dynamic",
+            n_steps_ref_update=2,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+            use_autograd=use_autograd,
+        )
+        layer.train()
+        optimizer = torch.optim.SGD(layer.parameters(), lr=0.01)
+        layer.register_optimizer_hook(optimizer)
+
+        initial_ref = layer.stiefel_parametrization.reference_point.clone().detach()
+
+        # first time going through the layer
+        X1 = random_SPD(
+            n_in, n_matrices, device=device, dtype=dtype, generator=generator
+        )
+        # Forward + backward + update
+        optimizer.zero_grad()
+        output = layer(X1)
+        loss = output.sum()
+        loss.backward()
+        optimizer.step()
+
+        assert_close(layer.stiefel_parametrization.reference_point, initial_ref)
+
+        # second time going through the layer
+        X2 = random_SPD(
+            n_in, n_matrices, device=device, dtype=dtype, generator=generator
+        )
+        # Forward + backward + update
+        optimizer.zero_grad()
+        output = layer(X2)
+        loss = output.sum()
+        loss.backward()
+        optimizer.step()
+
+        # Check that reference_point changed
+        assert not torch.allclose(
+            layer.stiefel_parametrization.reference_point, initial_ref
+        )
+
+    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("parametrized", [True, False])
     @pytest.mark.parametrize(
-        "parametrization",
-        [
-            parametrizations.orthogonal,
-        ],
+        "parametrization_mode",
+        ["static", "dynamic"],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_repr_and_str(
@@ -420,7 +485,7 @@ class TestBiMap:
         n_in,
         n_out,
         parametrized,
-        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -433,7 +498,7 @@ class TestBiMap:
             n_in=n_in,
             n_out=n_out,
             parametrized=parametrized,
-            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             device=device,
             dtype=dtype,
             generator=generator,
@@ -446,7 +511,7 @@ class TestBiMap:
         assert f"n_in={n_in}" in repr_str
         assert f"n_out={n_out}" in repr_str
         assert f"parametrized={parametrized}" in repr_str
-        assert f"parametrization={parametrization}" in repr_str
+        assert f"parametrization_mode={parametrization_mode}" in repr_str
         assert f"device={device}" in repr_str
         assert f"dtype={dtype}" in repr_str
         assert f"generator={generator}" in repr_str
@@ -456,10 +521,8 @@ class TestBiMap:
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
     @pytest.mark.parametrize("parametrized", [True, False])
     @pytest.mark.parametrize(
-        "parametrization",
-        [
-            parametrizations.orthogonal,
-        ],
+        "parametrization_mode",
+        ["static", "dynamic"],
     )
     @pytest.mark.parametrize("use_autograd", [True, False])
     def test_module_mode(
@@ -467,7 +530,7 @@ class TestBiMap:
         n_in,
         n_out,
         parametrized,
-        parametrization,
+        parametrization_mode,
         use_autograd,
         device,
         dtype,
@@ -480,7 +543,7 @@ class TestBiMap:
             n_in=n_in,
             n_out=n_out,
             parametrized=parametrized,
-            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
             device=device,
             dtype=dtype,
             generator=generator,
