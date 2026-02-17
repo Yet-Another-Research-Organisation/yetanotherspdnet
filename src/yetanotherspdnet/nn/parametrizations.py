@@ -66,6 +66,47 @@ class ScalarSoftPlusParametrization(nn.Module):
         return inv_scaled_softplus(scalar_pd)
 
 
+class ScalarSigmoidParametrization(nn.Module):
+    """
+    Parametrization to constrain a scalar to the interval [0, 1] using sigmoid.
+    """
+
+    def forward(self, scalar: torch.Tensor) -> torch.Tensor:
+        """
+        Mapping from real scalar to [0, 1] through sigmoid function
+
+        Parameters
+        ----------
+        scalar : torch.Tensor of shape ()
+            Real scalar (unconstrained)
+
+        Returns
+        -------
+        scalar_constrained : torch.Tensor of shape ()
+            Scalar in [0, 1]
+        """
+        return torch.sigmoid(scalar)
+
+    def right_inverse(self, scalar_constrained: torch.Tensor) -> torch.Tensor:
+        """
+        Mapping from [0, 1] to real scalars through inverse sigmoid (logit)
+
+        Parameters
+        ----------
+        scalar_constrained : torch.Tensor of shape ()
+            Scalar in [0, 1]
+
+        Returns
+        -------
+        scalar : torch.Tensor of shape ()
+            Real scalar (unconstrained)
+        """
+        # Clamp to avoid numerical issues at boundaries
+        eps = 1e-7
+        scalar_clamped = torch.clamp(scalar_constrained, eps, 1 - eps)
+        return torch.log(scalar_clamped / (1 - scalar_clamped))
+
+
 class SPDParametrization(nn.Module):
     def __init__(self, mapping: str = "softplus", use_autograd: bool = False) -> None:
         """
