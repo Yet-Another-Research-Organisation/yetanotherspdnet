@@ -155,7 +155,7 @@ class BiMap(nn.Module):
         return self.bimap_fun(data, self.weight)
 
     def _post_optimizer_hook(
-        self, optimizer: torch.optim.Optimizer, *args, **kwargs
+        self, _optimizer: torch.optim.Optimizer, *_args, **_kwargs
     ) -> None:
         """
         Hook that runs after optimizer.step() to handle dynamic parametrization reference point.
