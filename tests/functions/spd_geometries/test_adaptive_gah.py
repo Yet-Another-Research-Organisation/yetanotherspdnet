@@ -97,6 +97,7 @@ class TestAdaptiveGAHMean:
         from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
             adaptive_geometric_arithmetic_harmonic_geodesic,
         )
+
         output_autograd = adaptive_geometric_arithmetic_harmonic_geodesic(
             mean_harmonic, mean_arithmetic, t_autograd
         )
@@ -155,7 +156,9 @@ class TestAdaptiveGAHMean:
         grad_t_analytical = t_analytical.grad.clone()
 
         # They should be close
-        assert torch.allclose(grad_t_numerical, grad_t_analytical, rtol=1e-4, atol=1e-6), (
+        assert torch.allclose(
+            grad_t_numerical, grad_t_analytical, rtol=1e-4, atol=1e-6
+        ), (
             f"Numerical and analytical gradients should match.\n"
             f"Numerical: {grad_t_numerical}\n"
             f"Analytical: {grad_t_analytical}\n"
@@ -179,6 +182,7 @@ class TestAdaptiveGAHMean:
         from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
             adaptive_geometric_arithmetic_harmonic_geodesic,
         )
+
         output_ag = adaptive_geometric_arithmetic_harmonic_geodesic(
             mean_harmonic_ag.clone().requires_grad_(True),
             mean_arithmetic_ag.clone().requires_grad_(True),
@@ -199,8 +203,12 @@ class TestAdaptiveGAHMean:
         # Create same output for both and compute loss
         grad_out = torch.ones_like(output_ag)
 
-        grads_ag = torch.autograd.grad(output_ag, (mean_harmonic_ag, mean_arithmetic_ag), grad_out)
-        grads_custom = torch.autograd.grad(output_custom, (mean_harmonic_custom, mean_arithmetic_custom), grad_out)
+        grads_ag = torch.autograd.grad(
+            output_ag, (mean_harmonic_ag, mean_arithmetic_ag), grad_out
+        )
+        grads_custom = torch.autograd.grad(
+            output_custom, (mean_harmonic_custom, mean_arithmetic_custom), grad_out
+        )
 
         # Gradients with respect to harmonic mean (point1)
         assert torch.allclose(grads_ag[0], grads_custom[0], rtol=1e-6, atol=1e-8), (
@@ -243,9 +251,9 @@ class TestAdaptiveGAHMean:
         # Check that intermediate values are different from each other
         for i in range(len(results)):
             for j in range(i + 1, len(results)):
-                assert not torch.allclose(results[i], results[j], rtol=1e-6, atol=1e-6), (
-                    f"t={t_values[i]} and t={t_values[j]} should give different results"
-                )
+                assert not torch.allclose(
+                    results[i], results[j], rtol=1e-6, atol=1e-6
+                ), f"t={t_values[i]} and t={t_values[j]} should give different results"
 
 
 class TestBatchNormAdaptiveGAH:
@@ -327,8 +335,12 @@ class TestBatchNormAdaptiveGAH:
         # With parametrization, the gradient is on the underlying parameter
         # Access it via parametrizations.t_gah.original
         underlying_param = bn.parametrizations.t_gah.original
-        assert underlying_param.grad is not None, "underlying t_gah parameter should have gradient"
-        assert underlying_param.grad != 0, "underlying t_gah gradient should be non-zero"
+        assert underlying_param.grad is not None, (
+            "underlying t_gah parameter should have gradient"
+        )
+        assert underlying_param.grad != 0, (
+            "underlying t_gah gradient should be non-zero"
+        )
 
     def test_batchnorm_with_autograd(self, random_spd_batch):
         """
@@ -356,7 +368,9 @@ class TestBatchNormAdaptiveGAH:
         loss.backward()
         # With parametrization, the gradient is on the underlying parameter
         underlying_param = bn.parametrizations.t_gah.original
-        assert underlying_param.grad is not None, "underlying t_gah parameter should have gradient with use_autograd=True"
+        assert underlying_param.grad is not None, (
+            "underlying t_gah parameter should have gradient with use_autograd=True"
+        )
 
     def test_batchnorm_eval_mode(self, random_spd_batch):
         """
@@ -382,7 +396,9 @@ class TestBatchNormAdaptiveGAH:
         output = bn(data)
 
         # Check output shape
-        assert output.shape == data.shape, "Output shape should match input shape in eval mode"
+        assert output.shape == data.shape, (
+            "Output shape should match input shape in eval mode"
+        )
 
     def test_batchnorm_t_update_during_optimization(self, random_spd_batch):
         """
