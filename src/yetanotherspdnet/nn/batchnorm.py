@@ -57,8 +57,8 @@ from ..functions.spd_linalg import (
 )
 from .parametrizations import (
     ScalarSigmoidParametrization,
-    SPDAdaptiveParametrization,
     ScalarSoftPlusParametrization,
+    SPDAdaptiveParametrization,
     SPDParametrization,
 )
 
@@ -477,7 +477,7 @@ class BatchNormSPDMean(nn.Module):
         return self.add_bias_mean(self.normalize_mean(data, mean), self.Covbias)
 
     def _post_optimizer_hook(
-        self, optimizer: torch.optim.Optimizer, *args, **kwargs
+        self, _optimizer: torch.optim.Optimizer, *_args, **_kwargs
     ) -> None:
         """
         Hook that runs after optimizer.step() to handle dynamic parametrization reference point.

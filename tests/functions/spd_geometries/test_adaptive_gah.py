@@ -2,27 +2,27 @@
 Test file for Adaptive Geometric-Arithmetic-Harmonic mean functions.
 
 Tests:
-1. Verify that AdaptiveGeometricArithmeticHarmonicMean gives the same result as 
+1. Verify that AdaptiveGeometricArithmeticHarmonicMean gives the same result as
    GeometricArithmeticHarmonicMean when t=0.5
 2. Verify gradients with respect to t using autograd vs manual computation
 3. Test BatchNorm instantiation with the new adaptive_geometric_arithmetic_harmonic mean type
 """
 
-import torch
 import pytest
+import torch
 
+from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
+    ArithmeticMean,
+    HarmonicMean,
+    arithmetic_mean,
+    harmonic_mean,
+)
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     AdaptiveGeometricArithmeticHarmonicGeodesic,
     AdaptiveGeometricArithmeticHarmonicMean,
     GeometricArithmeticHarmonicMean,
     adaptive_geometric_arithmetic_harmonic_mean,
     geometric_arithmetic_harmonic_mean,
-)
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
-    arithmetic_mean,
-    harmonic_mean,
-    ArithmeticMean,
-    HarmonicMean,
 )
 from yetanotherspdnet.nn.batchnorm import BatchNormSPDMean
 from yetanotherspdnet.random.spd import random_SPD
@@ -92,7 +92,7 @@ class TestAdaptiveGAHMean:
 
         # Test with autograd (using the simple function)
         t_autograd = torch.tensor(0.5, dtype=torch.float64, requires_grad=True)
-        
+
         # Use the simple function that goes through autograd
         from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
             adaptive_geometric_arithmetic_harmonic_geodesic,
@@ -135,14 +135,14 @@ class TestAdaptiveGAHMean:
         # Numerical gradient
         t_plus = torch.tensor(t_val + eps, dtype=torch.float64)
         t_minus = torch.tensor(t_val - eps, dtype=torch.float64)
-        
+
         output_plus = AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
             mean_harmonic, mean_arithmetic, t_plus
         )
         output_minus = AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
             mean_harmonic, mean_arithmetic, t_minus
         )
-        
+
         grad_t_numerical = (output_plus.sum() - output_minus.sum()) / (2 * eps)
 
         # Analytical gradient
@@ -172,7 +172,7 @@ class TestAdaptiveGAHMean:
         # Compute arithmetic and harmonic means with gradients
         mean_arithmetic_ag = arithmetic_mean(data.clone().requires_grad_(True))
         mean_harmonic_ag = harmonic_mean(data.clone().requires_grad_(True))
-        
+
         t = torch.tensor(0.5, dtype=torch.float64)
 
         # Autograd version
@@ -184,30 +184,30 @@ class TestAdaptiveGAHMean:
             mean_arithmetic_ag.clone().requires_grad_(True),
             t,
         )
-        
+
         # Custom function
         mean_arithmetic_custom = ArithmeticMean.apply(data.clone())
         mean_harmonic_custom = HarmonicMean.apply(data.clone())
-        
+
         mean_arithmetic_custom.requires_grad_(True)
         mean_harmonic_custom.requires_grad_(True)
-        
+
         output_custom = AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
             mean_harmonic_custom, mean_arithmetic_custom, t
         )
-        
+
         # Create same output for both and compute loss
         grad_out = torch.ones_like(output_ag)
-        
+
         grads_ag = torch.autograd.grad(output_ag, (mean_harmonic_ag, mean_arithmetic_ag), grad_out)
         grads_custom = torch.autograd.grad(output_custom, (mean_harmonic_custom, mean_arithmetic_custom), grad_out)
-        
+
         # Gradients with respect to harmonic mean (point1)
         assert torch.allclose(grads_ag[0], grads_custom[0], rtol=1e-6, atol=1e-8), (
             f"Gradients w.r.t. harmonic mean should match.\n"
             f"Max diff: {(grads_ag[0] - grads_custom[0]).abs().max()}"
         )
-        
+
         # Gradients with respect to arithmetic mean (point2)
         assert torch.allclose(grads_ag[1], grads_custom[1], rtol=1e-6, atol=1e-8), (
             f"Gradients w.r.t. arithmetic mean should match.\n"
@@ -264,14 +264,14 @@ class TestBatchNormAdaptiveGAH:
         Test that BatchNormSPDMean can be instantiated with adaptive_geometric_arithmetic_harmonic.
         """
         n_features = 4
-        
+
         bn = BatchNormSPDMean(
             n_features=n_features,
             mean_type="adaptive_geometric_arithmetic_harmonic",
             momentum=0.01,
             dtype=torch.float64,
         )
-        
+
         # Check that t_gah parameter exists
         assert hasattr(bn, "t_gah"), "BatchNorm should have t_gah parameter"
         assert bn.t_gah.requires_grad, "t_gah should be a learnable parameter"
@@ -285,20 +285,20 @@ class TestBatchNormAdaptiveGAH:
         """
         data = random_spd_batch
         n_features = data.shape[-1]
-        
+
         bn = BatchNormSPDMean(
             n_features=n_features,
             mean_type="adaptive_geometric_arithmetic_harmonic",
             momentum=0.01,
             dtype=torch.float64,
         )
-        
+
         bn.train()
         output = bn(data)
-        
+
         # Check output shape
         assert output.shape == data.shape, "Output shape should match input shape"
-        
+
         # Check that output consists of SPD matrices
         eigvals = torch.linalg.eigvalsh(output)
         assert torch.all(eigvals > 0), "Output should be SPD matrices"
@@ -309,21 +309,21 @@ class TestBatchNormAdaptiveGAH:
         """
         data = random_spd_batch
         n_features = data.shape[-1]
-        
+
         bn = BatchNormSPDMean(
             n_features=n_features,
             mean_type="adaptive_geometric_arithmetic_harmonic",
             momentum=0.01,
             dtype=torch.float64,
         )
-        
+
         bn.train()
         output = bn(data)
-        
+
         # Simple loss function
         loss = output.sum()
         loss.backward()
-        
+
         # With parametrization, the gradient is on the underlying parameter
         # Access it via parametrizations.t_gah.original
         underlying_param = bn.parametrizations.t_gah.original
@@ -336,7 +336,7 @@ class TestBatchNormAdaptiveGAH:
         """
         data = random_spd_batch
         n_features = data.shape[-1]
-        
+
         bn = BatchNormSPDMean(
             n_features=n_features,
             mean_type="adaptive_geometric_arithmetic_harmonic",
@@ -344,13 +344,13 @@ class TestBatchNormAdaptiveGAH:
             use_autograd=True,
             dtype=torch.float64,
         )
-        
+
         bn.train()
         output = bn(data)
-        
+
         # Check output shape
         assert output.shape == data.shape, "Output shape should match input shape"
-        
+
         # Check gradient flow
         loss = output.sum()
         loss.backward()
@@ -364,23 +364,23 @@ class TestBatchNormAdaptiveGAH:
         """
         data = random_spd_batch
         n_features = data.shape[-1]
-        
+
         bn = BatchNormSPDMean(
             n_features=n_features,
             mean_type="adaptive_geometric_arithmetic_harmonic",
             momentum=0.01,
             dtype=torch.float64,
         )
-        
+
         # Run a few training iterations to update running_mean
         bn.train()
         for _ in range(3):
             _ = bn(data)
-        
+
         # Switch to eval mode
         bn.eval()
         output = bn(data)
-        
+
         # Check output shape
         assert output.shape == data.shape, "Output shape should match input shape in eval mode"
 
@@ -390,18 +390,18 @@ class TestBatchNormAdaptiveGAH:
         """
         data = random_spd_batch
         n_features = data.shape[-1]
-        
+
         bn = BatchNormSPDMean(
             n_features=n_features,
             mean_type="adaptive_geometric_arithmetic_harmonic",
             momentum=0.01,
             dtype=torch.float64,
         )
-        
+
         optimizer = torch.optim.SGD(bn.parameters(), lr=0.1)
-        
+
         t_initial = bn.t_gah.clone()
-        
+
         bn.train()
         for _ in range(5):
             optimizer.zero_grad()
@@ -409,7 +409,7 @@ class TestBatchNormAdaptiveGAH:
             loss = output.sum()
             loss.backward()
             optimizer.step()
-        
+
         # Check that t_gah has been updated
         assert not torch.isclose(bn.t_gah, t_initial), (
             "t_gah should be updated after optimization steps"
@@ -421,17 +421,17 @@ class TestBatchNormAdaptiveGAH:
         """
         data = random_spd_batch
         n_features = data.shape[-1]
-        
+
         bn = BatchNormSPDMean(
             n_features=n_features,
             mean_type="adaptive_geometric_arithmetic_harmonic",
             momentum=0.01,
             dtype=torch.float64,
         )
-        
+
         # Use a very high learning rate to try to push t outside [0, 1]
         optimizer = torch.optim.SGD(bn.parameters(), lr=10.0)
-        
+
         bn.train()
         for _ in range(100):
             optimizer.zero_grad()
@@ -440,12 +440,12 @@ class TestBatchNormAdaptiveGAH:
             loss = output.sum()
             loss.backward()
             optimizer.step()
-            
+
             # Check constraint is maintained after each step
             assert 0.0 <= bn.t_gah.item() <= 1.0, (
                 f"t_gah should remain in [0, 1], got {bn.t_gah.item()}"
             )
-        
+
         # Final check
         assert 0.0 <= bn.t_gah.item() <= 1.0, (
             f"t_gah should remain in [0, 1] after optimization, got {bn.t_gah.item()}"

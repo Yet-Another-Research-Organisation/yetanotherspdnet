@@ -1,8 +1,9 @@
 name: Coverage
 
 on:
-  push:
-    branches: ["main"]
+  # TEMPORARILY DISABLED: push trigger removed so only lint+test run on push
+  # push:
+  #   branches: ["main"]
   workflow_dispatch:
 
 jobs:
