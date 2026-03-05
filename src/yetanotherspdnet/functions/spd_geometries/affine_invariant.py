@@ -1,7 +1,13 @@
 import torch
 from torch.autograd import Function
+from torch.func import grad
 
-from yetanotherspdnet.functions.scalar_functions import inv, inv_sqrt
+from yetanotherspdnet.functions.scalar_functions import (
+    inv,
+    inv_sqrt,
+    inv_sqrt_derivative,
+    sqrt_derivative,
+)
 
 from ..spd_linalg import (
     CongruenceSPDSqrtm,
@@ -20,6 +26,7 @@ from ..spd_linalg import (
     sqrtm_SPD,
     sym_coordinates_to_matrix,
     sym_matrix_to_coordinates,
+    symmetrize,
     whitening,
 )
 from .kullback_leibler import arithmetic_mean
@@ -796,3 +803,137 @@ def affine_invariant_parallel_transport_coordinates(
     )
     data_transf_mat = transf_mat @ data_mat @ transf_mat.transpose(-1, -2)
     return sym_matrix_to_coordinates(data_transf_mat)
+
+
+class AffineInvariantParallelTransportCoordinates(Function):
+    """
+    Parallel transport according to the affine-invariant geometry
+    """
+
+    @staticmethod
+    def forward(
+        ctx,
+        data_coordinates: torch.Tensor,
+        reference_point: torch.Tensor,
+        new_point: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Forward pass of parallel transport in coordinates according to the affine-invariant geometry
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Batch of coordinates in the tangent space of reference_point
+
+        reference_point : torch.Tensor of shape (..., n_features, n_features)
+            SPD matrix
+
+        new_point : torch.Tensor of shape (..., n_features, n_features)
+            SPD matrix
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Batch of coordinates in the tangent space of new_point
+        """
+        n_features = reference_point.shape[-1]
+        data_mat = sym_coordinates_to_matrix(data_coordinates, n_features)
+        X_sqrtm, eigvals_X, eigvecs_X = sqrtm_SPD(reference_point)
+        Y_inv_sqrtm, eigvals_Y, eigvecs_Y = inv_sqrtm_SPD(new_point)
+        M_inv_sqrtm, eigvals_M, eigvecs_M = inv_sqrtm_SPD(
+            Y_inv_sqrtm @ reference_point @ Y_inv_sqrtm
+        )
+        transf_mat = M_inv_sqrtm @ Y_inv_sqrtm @ X_sqrtm
+        data_transf_mat = transf_mat @ data_mat @ transf_mat.transpose(-1, -2)
+        ctx.n_features = n_features
+        ctx.save_for_backward(
+            data_mat,
+            reference_point,
+            X_sqrtm,
+            eigvals_X,
+            eigvecs_X,
+            Y_inv_sqrtm,
+            eigvals_Y,
+            eigvecs_Y,
+            M_inv_sqrtm,
+            eigvals_M,
+            eigvecs_M,
+            transf_mat,
+        )
+        return sym_matrix_to_coordinates(data_transf_mat)
+
+    @staticmethod
+    def backward(
+        ctx, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Backward pass of parallel transport in coordinates according to the affine-invariant geometry
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Gradient of the loss with respect to the output of parallel transport Function
+
+        Returns
+        -------
+        grad_input_data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Gradient of the loss with respect to the input batch of coordinates in the tangent space of reference_point
+
+        grad_input_reference_point : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input reference point
+
+        grad_input_new_point : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input new reference point
+        """
+        n_features = ctx.n_features
+        (
+            data_mat,
+            reference_point,
+            X_sqrtm,
+            eigvals_X,
+            eigvecs_X,
+            Y_inv_sqrtm,
+            eigvals_Y,
+            eigvecs_Y,
+            M_inv_sqrtm,
+            eigvals_M,
+            eigvecs_M,
+            transf_mat,
+        ) = ctx.saved_tensors
+
+        grad_output_mat = sym_coordinates_to_matrix(grad_output, n_features)
+
+        grad_input_data_mat = (
+            transf_mat.transpose(-1, -2) @ grad_output_mat @ transf_mat
+        )
+
+        Q_M = Y_inv_sqrtm @ X_sqrtm @ data_mat @ X_sqrtm @ Y_inv_sqrtm
+        grad_M_inv_sqrtm = 2 * symmetrize(Q_M @ M_inv_sqrtm @ grad_output_mat)
+        grad_M = eigh_operation_grad(
+            grad_M_inv_sqrtm, eigvals_M, eigvecs_M, inv_sqrt, inv_sqrt_derivative
+        )
+        grad_M_X = Y_inv_sqrtm @ grad_M @ Y_inv_sqrtm
+        grad_M_Y_inv_sqrtm = 2 * symmetrize(reference_point @ Y_inv_sqrtm @ grad_M)
+
+        Q1_X = Y_inv_sqrtm @ M_inv_sqrtm
+        Q2_X = data_mat @ X_sqrtm @ Q1_X
+        grad_X_sqrtm = 2 * symmetrize(Q2_X @ grad_output_mat @ Q1_X.transpose(-2, -1))
+        grad_X = eigh_operation_grad(
+            grad_X_sqrtm, eigvals_X, eigvecs_X, torch.sqrt, sqrt_derivative
+        )
+        grad_X = grad_X + grad_M_X
+
+        Q_Y = X_sqrtm @ data_mat @ X_sqrtm @ Y_inv_sqrtm @ M_inv_sqrtm
+        grad_Y_inv_sqrtm = 2 * symmetrize(Q_Y @ grad_output_mat @ M_inv_sqrtm)
+        grad_Y_inv_sqrtm = grad_Y_inv_sqrtm + grad_M_Y_inv_sqrtm
+        grad_Y = eigh_operation_grad(
+            grad_Y_inv_sqrtm, eigvals_Y, eigvecs_Y, inv_sqrt, inv_sqrt_derivative
+        )
+
+        return sym_matrix_to_coordinates(grad_input_data_mat), grad_X, grad_Y
