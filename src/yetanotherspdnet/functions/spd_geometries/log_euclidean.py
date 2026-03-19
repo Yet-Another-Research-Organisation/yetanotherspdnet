@@ -6,9 +6,13 @@ from yetanotherspdnet.functions.scalar_functions import inv
 from ..spd_linalg import (
     ExpmSymmetric,
     LogmSPD,
+    SymCoordinatesToMatrix,
+    SymMatrixToCoordinates,
     eigh_operation_grad,
     expm_symmetric,
     logm_SPD,
+    sym_coordinates_to_matrix,
+    sym_matrix_to_coordinates,
 )
 from .kullback_leibler import (
     ArithmeticMean,
@@ -234,3 +238,107 @@ class LogEuclideanStdScalar(Function):
             grad_logm_G, eigvals_G, eigvecs_G, torch.log, inv
         )
         return grad_input_data, grad_input_G
+
+
+# -----------------------------------
+# Riemannian logarithm in coordinates
+# -----------------------------------
+def log_euclidean_log_coordinates(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Riemannian logarithm in coordinates with respect to the log-Euclidean geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_log_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+    """
+    return sym_matrix_to_coordinates(logm_SPD(data)[0] - logm_SPD(reference_point)[0])
+
+
+def LogEuclideanLogCoordinates(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Riemannian logarithm in coordinates with respect to the log-Euclidean geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_log_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+    """
+    return SymMatrixToCoordinates.apply(
+        LogmSPD.apply(data) - LogmSPD.apply(reference_point)
+    )
+
+
+# ---------------------------------------
+# Riemannian exponential from coordinates
+# ---------------------------------------
+def log_euclidean_exp_coordinates(
+    data_coordinates: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Riemannian exponential in coordinates with respect to the log-Euclidean geometry
+
+    Parameters
+    ----------
+    data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates at reference_point
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_exp : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+    """
+    n_features = reference_point.shape[-1]
+    return expm_symmetric(
+        sym_coordinates_to_matrix(data_coordinates, n_features)
+        + logm_SPD(reference_point)[0]
+    )[0]
+
+
+def LogEuclideanExpCoordinates(
+    data_coordinates: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Riemannian exponential in coordinates with respect to the log-Euclidean geometry
+
+    Parameters
+    ----------
+    data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates at reference_point
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_exp : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+    """
+    n_features = reference_point.shape[-1]
+    return ExpmSymmetric.apply(
+        SymCoordinatesToMatrix.apply(data_coordinates, n_features)
+        + LogmSPD.apply(reference_point)
+    )
