@@ -1,3 +1,5 @@
+"""SPD and Stiefel manifold parametrizations for constrained optimization."""
+
 import torch
 from torch import nn
 
@@ -196,17 +198,6 @@ class SPDParametrization(nn.Module):
         """
         return f"SPDParametrization(mapping={self.mapping}, use_autograd={self.use_autograd})"
 
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
 
 class SPDAdaptiveParametrization(nn.Module):
     def __init__(
@@ -394,17 +385,6 @@ class SPDAdaptiveParametrization(nn.Module):
             f"device={self.device}, dtype={self.dtype})"
         )
 
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
 
 class StiefelAdaptiveParametrization(nn.Module):
     def __init__(
@@ -580,14 +560,3 @@ class StiefelAdaptiveParametrization(nn.Module):
             f"use_autograd={self.use_autograd}), "
             f"device={self.device}, dtype={self.dtype}, generator={self.generator})"
         )
-
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()

@@ -1,3 +1,7 @@
+"""Affine-invariant Riemannian geometry: geodesic, mean, and standard deviation."""
+
+import math
+
 import torch
 from torch.autograd import Function
 
@@ -54,7 +58,12 @@ def affine_invariant_geodesic(
 
 class AffineInvariantGeodesic(Function):
     """
-    Affine-invariant geodesic between two batches of SPD matrices
+    Affine-invariant geodesic between two batches of SPD matrices.
+
+    Computes: point1^{1/2} (point1^{-1/2} point2 point1^{-1/2})^t point1^{1/2}
+
+    Supports gradients with respect to point1, point2, and optionally t
+    (when t is a tensor with requires_grad=True).
     """
 
     @staticmethod
@@ -74,6 +83,9 @@ class AffineInvariantGeodesic(Function):
 
         point2 : torch.Tensor of shape (..., nfeatures, nfeatures)
             SPD matrices
+
+        t : float | torch.Tensor
+            Parameter on the geodesic path, should be in [0, 1]
 
         Returns
         -------
@@ -102,9 +114,11 @@ class AffineInvariantGeodesic(Function):
     @staticmethod
     def backward(
         ctx, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, None]:
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
         """
-        Backward pass of the affine-invariant geodesic
+        Backward pass of the affine-invariant geodesic.
+
+        Computes gradients with respect to point1, point2, and optionally t.
 
         Parameters
         ----------
@@ -112,23 +126,19 @@ class AffineInvariantGeodesic(Function):
             Context object to retrieve tensors saved during the forward pass
 
         grad_output : torch.Tensor of shape (..., nfeatures, nfeatures)
-            Gradient of the loss with respect to the geometric mean of two SPD matrices
+            Gradient of the loss with respect to the output
 
         Returns
         -------
-        grad_input1 : torch.Tensor of shape (..., nfeatures, nfeatures)
+        grad_input1 : torch.Tensor of shape (..., nfeatures, nfeatures) or None
             Gradient of the loss with respect to point1
 
-        grad_input2 : torch.Tensor of shape (..., nfeatures, nfeatures)
+        grad_input2 : torch.Tensor of shape (..., nfeatures, nfeatures) or None
             Gradient of the loss with respect to point2
+
+        grad_t : torch.Tensor of shape () or None
+            Gradient of the loss with respect to t (only when t requires grad)
         """
-        # TODO: We need to add the backward with respect to t
-        # We need to add conditions to only compute required gradients
-        # condition is made possible by ctx.needs_input_grad
-        # This should be done everywhere
-        # Also, here, probably better to switch roles of point1 and point2
-        # so that we can get the grad of point1 directly with computations from
-        # forward (and set grad2 to None). Maybe more logical, to discuss with Ammar
         (
             point1_sqrtm,
             point1_inv_sqrtm,
@@ -138,39 +148,63 @@ class AffineInvariantGeodesic(Function):
             point2,
         ) = ctx.saved_tensors
         t = ctx.t
-        eigvals2, eigvecs2 = torch.linalg.eigh(point2)
-        point2_sqrtm = eigh_operation(eigvals2, eigvecs2, torch.sqrt)
-        point2_inv_sqrtm = eigh_operation(eigvals2, eigvecs2, inv_sqrt)
-        eigvals_middle_term2, eigvecs_middle_term2 = torch.linalg.eigh(
-            point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
-        )
-        pow_t = lambda x: torch.pow(x, t)
-        pow_t_deriv = lambda x: t * torch.pow(x, t - 1)
-        pow_1_t = lambda x: torch.pow(x, 1 - t)
-        pow_1_t_deriv = lambda x: (1 - t) * torch.pow(x, -t)
-        grad_input1 = (
-            point2_inv_sqrtm
-            @ eigh_operation_grad(
-                point2_sqrtm @ grad_output @ point2_sqrtm,
-                eigvals_middle_term2,
-                eigvecs_middle_term2,
-                pow_1_t,
-                pow_1_t_deriv,
+
+        grad_input1 = None
+        grad_input2 = None
+        grad_t = None
+
+        if ctx.needs_input_grad[1]:
+            # Gradient with respect to point2
+            pow_t = lambda x: torch.pow(x, t)
+            pow_t_deriv = lambda x: t * torch.pow(x, t - 1)
+            grad_input2 = (
+                point1_inv_sqrtm
+                @ eigh_operation_grad(
+                    point1_sqrtm @ grad_output @ point1_sqrtm,
+                    eigvals_middle_term1,
+                    eigvecs_middle_term1,
+                    pow_t,
+                    pow_t_deriv,
+                )
+                @ point1_inv_sqrtm
             )
-            @ point2_inv_sqrtm
-        )
-        grad_input2 = (
-            point1_inv_sqrtm
-            @ eigh_operation_grad(
-                point1_sqrtm @ grad_output @ point1_sqrtm,
-                eigvals_middle_term1,
-                eigvecs_middle_term1,
-                pow_t,
-                pow_t_deriv,
+
+        if ctx.needs_input_grad[0]:
+            # Gradient with respect to point1
+            eigvals2, eigvecs2 = torch.linalg.eigh(point2)
+            point2_sqrtm = eigh_operation(eigvals2, eigvecs2, torch.sqrt)
+            point2_inv_sqrtm = eigh_operation(eigvals2, eigvecs2, inv_sqrt)
+            eigvals_middle_term2, eigvecs_middle_term2 = torch.linalg.eigh(
+                point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
             )
-            @ point1_inv_sqrtm
-        )
-        return grad_input1, grad_input2, None
+            pow_1_t = lambda x: torch.pow(x, 1 - t)
+            pow_1_t_deriv = lambda x: (1 - t) * torch.pow(x, -t)
+            grad_input1 = (
+                point2_inv_sqrtm
+                @ eigh_operation_grad(
+                    point2_sqrtm @ grad_output @ point2_sqrtm,
+                    eigvals_middle_term2,
+                    eigvecs_middle_term2,
+                    pow_1_t,
+                    pow_1_t_deriv,
+                )
+                @ point2_inv_sqrtm
+            )
+
+        if ctx.needs_input_grad[2]:
+            # Gradient with respect to t
+            # d/dt [V D^t V^T] = V diag(D^t * log(D)) V^T
+            # Using broadcasting: (V * (D^t * log(D)).unsqueeze(-2)) @ V^T
+            log_eigvals = torch.log(eigvals_middle_term1)
+            pow_t_eigvals = torch.pow(eigvals_middle_term1, t)
+            d_eigvals = pow_t_eigvals * log_eigvals
+            middle_term_deriv = (
+                eigvecs_middle_term1 * d_eigvals.unsqueeze(-2)
+            ) @ eigvecs_middle_term1.transpose(-1, -2)
+            deriv_output_t = point1_sqrtm @ middle_term_deriv @ point1_sqrtm
+            grad_t = torch.sum(grad_output * deriv_output_t)
+
+        return grad_input1, grad_input2, grad_t
 
 
 # -----------------------------------
@@ -435,7 +469,7 @@ class AffineInvariantMeanIteration(Function):
         """
         shape = ctx.shape
         stepsize = ctx.stepsize
-        n_matrices = torch.prod(torch.tensor(shape[:-2]))
+        n_matrices = math.prod(shape[:-2])
         (
             eigvals_mean_iterate,
             eigvecs_mean_iterate,
@@ -541,7 +575,7 @@ def affine_invariant_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
-    n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+    n_matrices = math.prod(data.shape[:-2])
     G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
     transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
     eigvals = torch.linalg.eigvalsh(transformed_data)
@@ -574,7 +608,7 @@ class AffineInvariantStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+        n_matrices = math.prod(data.shape[:-2])
         G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
         transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
         eigvals_transdat, eigvecs_transdat = torch.linalg.eigh(transformed_data)

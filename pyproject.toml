@@ -101,7 +101,7 @@ markers = [
 # Coverage Configuration
 # ============================================================================
 [tool.coverage.run]
-source = ["src"]
+source_pkgs = ["yetanotherspdnet"]
 branch = true
 omit = [
     "*/tests/*",
