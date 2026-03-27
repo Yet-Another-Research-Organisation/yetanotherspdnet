@@ -3,6 +3,11 @@ yetanotherspdnet.functions.spd_geometries.affine_invariant
 
 .. py:module:: yetanotherspdnet.functions.spd_geometries.affine_invariant
 
+.. autoapi-nested-parse::
+
+   Affine-invariant Riemannian geometry: geodesic, mean, and standard deviation.
+
+
 
 Classes
 -------
@@ -51,7 +56,12 @@ Module Contents
    Bases: :py:obj:`torch.autograd.Function`
 
 
-   Affine-invariant geodesic between two batches of SPD matrices
+   Affine-invariant geodesic between two batches of SPD matrices.
+
+   Computes: point1^{1/2} (point1^{-1/2} point2 point1^{-1/2})^t point1^{1/2}
+
+   Supports gradients with respect to point1, point2, and optionally t
+   (when t is a tensor with requires_grad=True).
 
 
    .. py:method:: forward(ctx, point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor)
@@ -66,25 +76,30 @@ Module Contents
       :type point1: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`nfeatures`, :py:class:`nfeatures)`
       :param point2: SPD matrices
       :type point2: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`nfeatures`, :py:class:`nfeatures)`
+      :param t: Parameter on the geodesic path, should be in [0, 1]
+      :type t: :py:class:`float | torch.Tensor`
 
       :returns: **point** -- SPD matrices
       :rtype: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`
 
 
 
-   .. py:method:: backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, None]
+   .. py:method:: backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]
       :staticmethod:
 
 
-      Backward pass of the affine-invariant geodesic
+      Backward pass of the affine-invariant geodesic.
+
+      Computes gradients with respect to point1, point2, and optionally t.
 
       :param ctx: Context object to retrieve tensors saved during the forward pass
       :type ctx: :py:class:`torch.autograd.function._ContextMethodMixin`
-      :param grad_output: Gradient of the loss with respect to the geometric mean of two SPD matrices
+      :param grad_output: Gradient of the loss with respect to the output
       :type grad_output: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`nfeatures`, :py:class:`nfeatures)`
 
-      :returns: * **grad_input1** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`nfeatures`, :py:class:`nfeatures)`) -- Gradient of the loss with respect to point1
-                * **grad_input2** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`nfeatures`, :py:class:`nfeatures)`) -- Gradient of the loss with respect to point2
+      :returns: * **grad_input1** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`nfeatures`, :py:class:`nfeatures)` or :py:obj:`None`) -- Gradient of the loss with respect to point1
+                * **grad_input2** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`nfeatures`, :py:class:`nfeatures)` or :py:obj:`None`) -- Gradient of the loss with respect to point2
+                * **grad_t** (:py:class:`torch.Tensor` of :py:class:`shape ()` or :py:obj:`None`) -- Gradient of the loss with respect to t (only when t requires grad)
 
 
 

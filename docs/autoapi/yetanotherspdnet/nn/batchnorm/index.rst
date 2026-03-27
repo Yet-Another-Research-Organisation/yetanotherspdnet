@@ -3,6 +3,11 @@ yetanotherspdnet.nn.batchnorm
 
 .. py:module:: yetanotherspdnet.nn.batchnorm
 
+.. autoapi-nested-parse::
+
+   SPD batch normalization layers with configurable Riemannian geometry.
+
+
 
 Classes
 -------
@@ -16,7 +21,7 @@ Classes
 Module Contents
 ---------------
 
-.. py:class:: BatchNormSPDMean(n_features: int, mean_type: str = 'affine_invariant', mean_options: dict | None = None, momentum: float = 0.01, norm_strategy: str = 'classical', minibatch_mode: str = 'constant', minibatch_momentum: float = 0.01, minibatch_maxstep: int = 100, parametrization: str = 'softplus', use_autograd: bool = False, device: torch.device = torch.device('cpu'), dtype: torch.dtype = torch.float64)
+.. py:class:: BatchNormSPDMean(n_features: int, mean_type: str = 'affine_invariant', mean_options: dict | None = None, momentum: float = 0.01, norm_strategy: str = 'classical', minibatch_mode: str = 'constant', minibatch_momentum: float = 0.01, minibatch_maxstep: int = 100, parametrization: str = 'softplus', parametrization_mode: str = 'static', n_steps_ref_update: int = 100, use_autograd: bool = False, device: torch.device = torch.device('cpu'), dtype: torch.dtype = torch.float64)
 
    Bases: :py:obj:`torch.nn.Module`
 
@@ -25,11 +30,12 @@ Module Contents
 
    Your models should also subclass this class.
 
-   Modules can also contain other Modules, allowing to nest them in
+   Modules can also contain other Modules, allowing them to be nested in
    a tree structure. You can assign the submodules as regular attributes::
 
        import torch.nn as nn
        import torch.nn.functional as F
+
 
        class Model(nn.Module):
            def __init__(self) -> None:
@@ -41,8 +47,8 @@ Module Contents
                x = F.relu(self.conv1(x))
                return F.relu(self.conv2(x))
 
-   Submodules assigned in this way will be registered, and will have their
-   parameters converted too when you call :meth:`to`, etc.
+   Submodules assigned in this way will be registered, and will also have their
+   parameters converted when you call :meth:`to`, etc.
 
    .. note::
        As per the example above, an ``__init__()`` call to the parent class
@@ -109,8 +115,23 @@ Module Contents
 
 
 
+   .. py:attribute:: is_dynamic
+      :value: False
+
+
+
    .. py:attribute:: parametrization
       :value: 'softplus'
+
+
+
+   .. py:attribute:: parametrization_mode
+      :value: 'static'
+
+
+
+   .. py:attribute:: n_steps_ref_update
+      :value: 100
 
 
 
@@ -121,27 +142,6 @@ Module Contents
 
 
    .. py:attribute:: add_bias_mean
-
-
-   .. py:attribute:: running_mean
-
-
-   .. py:method:: minibatch_momentum_decay() -> float
-
-      Function to compute the minibatch momentum with minibatch_mode == "decay"
-
-      :returns: **minibatch_momentum** -- decreased minibatch momentum
-      :rtype: :py:class:`float`
-
-
-
-   .. py:method:: minibatch_momentum_growth() -> float
-
-      Function to compute the minibatch momentum for minibatch_mode == "growth"
-
-      :returns: **minibatch_momentum** -- increased minibatch momentum
-      :rtype: :py:class:`float`
-
 
 
    .. py:method:: forward(data: torch.Tensor) -> torch.Tensor
@@ -156,6 +156,17 @@ Module Contents
 
 
 
+   .. py:method:: register_optimizer_hook(optimizer: torch.optim.Optimizer) -> None
+
+      Register the post-step hook with the optimizer.
+      If dynamic parametrization, it needs to be called once after creating
+      the optimizer for dynamic parametrization to actually work as expected
+
+      :param optimizer: Torch optimizer used for training
+      :type optimizer: :py:class:`torch.optim.Optimizer`
+
+
+
    .. py:method:: __repr__() -> str
 
       Representation of the layer
@@ -165,29 +176,21 @@ Module Contents
 
 
 
-   .. py:method:: __str__() -> str
+.. py:class:: BatchNormSPDMeanScalarVariance(n_features: int, mean_type: str = 'affine_invariant', mean_options: dict | None = None, momentum: float = 0.01, norm_strategy: str = 'classical', minibatch_mode: str = 'constant', minibatch_momentum: float = 0.01, minibatch_maxstep: int = 100, parametrization: str = 'softplus', parametrization_mode: str = 'static', n_steps_ref_update: int = 100, use_autograd: bool = False, device: torch.device = torch.device('cpu'), dtype: torch.dtype = torch.float64)
 
-      String representation of the layer
-
-      :returns: String representation of the layer
-      :rtype: :py:class:`str`
-
-
-
-.. py:class:: BatchNormSPDMeanScalarVariance(n_features: int, mean_type: str = 'affine_invariant', mean_options: dict | None = None, momentum: float = 0.01, norm_strategy: str = 'classical', minibatch_mode: str = 'constant', minibatch_momentum: float = 0.01, minibatch_maxstep: int = 100, parametrization: str = 'softplus', use_autograd: bool = False, device: torch.device = torch.device('cpu'), dtype: torch.dtype = torch.float64)
-
-   Bases: :py:obj:`torch.nn.Module`
+   Bases: :py:obj:`BatchNormSPDMean`
 
 
    Base class for all neural network modules.
 
    Your models should also subclass this class.
 
-   Modules can also contain other Modules, allowing to nest them in
+   Modules can also contain other Modules, allowing them to be nested in
    a tree structure. You can assign the submodules as regular attributes::
 
        import torch.nn as nn
        import torch.nn.functional as F
+
 
        class Model(nn.Module):
            def __init__(self) -> None:
@@ -199,8 +202,8 @@ Module Contents
                x = F.relu(self.conv1(x))
                return F.relu(self.conv2(x))
 
-   Submodules assigned in this way will be registered, and will have their
-   parameters converted too when you call :meth:`to`, etc.
+   Submodules assigned in this way will be registered, and will also have their
+   parameters converted when you call :meth:`to`, etc.
 
    .. note::
        As per the example above, an ``__init__()`` call to the parent class
@@ -211,107 +214,16 @@ Module Contents
    :vartype training: bool
 
 
-   .. py:attribute:: n_features
-
-
-   .. py:attribute:: use_autograd
-      :value: False
-
-
-
-   .. py:attribute:: device
-
-
-   .. py:attribute:: dtype
-      :value: Ellipsis
-
-
-
-   .. py:attribute:: mean_type
-      :value: 'affine_invariant'
-
-
-
-   .. py:attribute:: mean_options
-      :value: None
-
-
-
-   .. py:attribute:: momentum
-      :value: 0.01
-
-
-
-   .. py:attribute:: norm_strategy
-      :value: 'classical'
-
-
-
-   .. py:attribute:: minibatch_mode
-      :value: 'constant'
-
-
-
-   .. py:attribute:: minibatch_momentum
-      :value: 0.01
-
-
-
-   .. py:attribute:: minibatch_maxstep
-      :value: 100
-
-
-
-   .. py:attribute:: training_step
-      :value: 0
-
-
-
-   .. py:attribute:: parametrization
-      :value: 'softplus'
-
-
-
-   .. py:attribute:: Covbias
-
-
    .. py:attribute:: stdScalarbias
 
 
-   .. py:attribute:: normalize_mean
-
-
-   .. py:attribute:: add_bias_mean
-
-
    .. py:attribute:: norm_and_bias_var
-
-
-   .. py:attribute:: running_mean
 
 
    .. py:attribute:: running_std_scalar
 
 
    .. py:method:: adaptive_std_fun(running_std_scalar: torch.Tensor, std_scalar_batch: torch.Tensor, momentum: float) -> torch.Tensor
-
-
-   .. py:method:: minibatch_momentum_decay() -> float
-
-      Function to compute the minibatch momentum with minibatch_mode == "decay"
-
-      :returns: **minibatch_momentum** -- decreased minibatch momentum
-      :rtype: :py:class:`float`
-
-
-
-   .. py:method:: minibatch_momentum_growth() -> float
-
-      Function to compute the minibatch momentum for minibatch_mode == "growth"
-
-      :returns: **minibatch_momentum** -- increased minibatch momentum
-      :rtype: :py:class:`float`
-
 
 
    .. py:method:: forward(data: torch.Tensor) -> torch.Tensor
@@ -331,15 +243,6 @@ Module Contents
       Representation of the layer
 
       :returns: Representation of the layer
-      :rtype: :py:class:`str`
-
-
-
-   .. py:method:: __str__() -> str
-
-      String representation of the layer
-
-      :returns: String representation of the layer
       :rtype: :py:class:`str`
 
 

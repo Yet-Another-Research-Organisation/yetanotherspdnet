@@ -3,6 +3,11 @@ yetanotherspdnet.functions.spd_geometries.kullback_leibler
 
 .. py:module:: yetanotherspdnet.functions.spd_geometries.kullback_leibler
 
+.. autoapi-nested-parse::
+
+   Base geometries: Euclidean geodesic, arithmetic mean, harmonic mean/curve, and KL divergence.
+
+
 
 Classes
 -------

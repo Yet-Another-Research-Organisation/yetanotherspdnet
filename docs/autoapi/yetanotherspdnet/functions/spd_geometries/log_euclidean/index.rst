@@ -3,6 +3,11 @@ yetanotherspdnet.functions.spd_geometries.log_euclidean
 
 .. py:module:: yetanotherspdnet.functions.spd_geometries.log_euclidean
 
+.. autoapi-nested-parse::
+
+   Log-Euclidean Riemannian geometry: geodesic, mean, and standard deviation.
+
+
 
 Classes
 -------
