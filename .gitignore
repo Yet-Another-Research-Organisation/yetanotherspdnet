@@ -515,3 +515,4 @@ experiments/
 # src/dataloader/*
 # src/evaluation/*
 # src/utils/*
+.assets/*
