@@ -1,5 +1,5 @@
 from .base import BiMap, LogEig, ReEig, Vec, Vech
-from .batchnorm import BatchNormSPDMean
+from .batchnorm import BatchNormSPDMean, BatchNormSPDMeanScalarVariance
 
 
 __all__ = [
@@ -9,4 +9,5 @@ __all__ = [
     "Vec",
     "Vech",
     "BatchNormSPDMean",
+    "BatchNormSPDMeanScalarVariance",
 ]
