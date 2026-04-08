@@ -10,10 +10,16 @@ from yetanotherspdnet.functions.scalar_functions import (
 )
 
 from ..spd_linalg import (
+    CongruenceSPD,
     CongruenceSPDSqrtm,
     ExpmSymmetric,
+    InvSqrtmSPD,
     LogmSPD,
+    SqrtmAndInvSqrtmSPD,
+    SqrtmSPD,
     SymCoordinatesToMatrix,
+    SymKronCongruence,
+    SymKronCoordinatesAction,
     SymMatrixToCoordinates,
     Whitening,
     congruence_SPD_sqrtm,
@@ -24,7 +30,10 @@ from ..spd_linalg import (
     logm_SPD,
     solve_sylvester_SPD,
     sqrtm_SPD,
+    sqrtm_and_inv_sqrtm_SPD,
     sym_coordinates_to_matrix,
+    sym_kron_congruence,
+    sym_kron_coordinates_action,
     sym_matrix_to_coordinates,
     symmetrize,
     whitening,
@@ -765,9 +774,117 @@ def AffineInvariantExpCoordinates(
     return CongruenceSPDSqrtm.apply(data_expm, reference_point)
 
 
-# ---------------------------------
-# Parallel transport in coordinates
-# ---------------------------------
+# ---------------------------------------------------------------------------------
+# Parallel transport in coordinates of vectors / tangent covariance / metric tensor
+# ---------------------------------------------------------------------------------
+def affine_invariant_parallel_transport_transformation(
+    reference_point: torch.Tensor, new_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Transformation matrix for parallel transport with respect to affine-invariant geometry
+    in coordinates
+
+    Parameters
+    ----------
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    new_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    transformation_matrix : torch.Tensor of shape (n_features, n_features)
+        transformation matrix, i.e., :math: `(new_point @ reference_point^{-1})^{1/2}`.
+        Non-sigular matrix
+    """
+    X_sqrtm = sqrtm_SPD(reference_point)[0]
+    Y_inv_sqrtm = inv_sqrtm_SPD(new_point)[0]
+    M_inv_sqrtm = inv_sqrtm_SPD(Y_inv_sqrtm @ reference_point @ Y_inv_sqrtm)[0]
+    return M_inv_sqrtm @ Y_inv_sqrtm @ X_sqrtm
+
+
+def AffineInvariantParallelTransportTransformation(
+    reference_point: torch.Tensor, new_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Transformation matrix for parallel transport with respect to affine-invariant geometry
+    in coordinates
+
+    Parameters
+    ----------
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    new_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    transformation_matrix : torch.Tensor of shape (n_features, n_features)
+        transformation matrix, i.e., :math: `(new_point @ reference_point^{-1})^{1/2}`.
+        Non-sigular matrix
+    """
+    X_sqrtm = SqrtmSPD.apply(reference_point)
+    Y_inv_sqrtm = InvSqrtmSPD.apply(new_point)
+    M_inv_sqrtm = InvSqrtmSPD.apply(CongruenceSPD.apply(reference_point, Y_inv_sqrtm))
+    return M_inv_sqrtm @ Y_inv_sqrtm @ X_sqrtm
+
+
+def affine_invariant_parallel_transport_transformation_inverse(
+    reference_point: torch.Tensor, new_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Inverse of the transformation matrix for parallel transport with respect to affine-invariant geometry
+    in coordinates
+
+    Parameters
+    ----------
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    new_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    inv_transformation_matrix : torch.Tensor of shape (n_features, n_features)
+        inverse of the transformation matrix, i.e., :math: `(new_point @ reference_point^{-1})^{-1/2}`.
+        Non-singular matrix
+    """
+    X_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
+    Y_sqrtm, Y_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(new_point)
+    M_sqrtm = sqrtm_SPD(Y_inv_sqrtm @ reference_point @ Y_inv_sqrtm)[0]
+    return X_inv_sqrtm @ Y_sqrtm @ M_sqrtm
+
+
+def AffineInvariantParallelTransportTransformationInverse(
+    reference_point: torch.Tensor, new_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Inverse of the transformation matrix for parallel transport with respect to affine-invariant geometry
+    in coordinates
+
+    Parameters
+    ----------
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    new_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    inv_transformation_matrix : torch.Tensor of shape (n_features, n_features)
+        inverse of the transformation matrix, i.e., :math: `(new_point @ reference_point^{-1})^{-1/2}`.
+        Non-singular matrix
+    """
+    X_inv_sqrtm = InvSqrtmSPD.apply(reference_point)
+    Y_sqrtm, Y_inv_sqrtm = SqrtmAndInvSqrtmSPD.apply(new_point)
+    M_sqrtm = SqrtmSPD.apply(CongruenceSPD.apply(reference_point, Y_inv_sqrtm))
+    return X_inv_sqrtm @ Y_sqrtm @ M_sqrtm
+
+
 def affine_invariant_parallel_transport_coordinates(
     data_coordinates: torch.Tensor,
     reference_point: torch.Tensor,
@@ -781,10 +898,10 @@ def affine_invariant_parallel_transport_coordinates(
     data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
         Batch of coordinates in the tangent space of reference_point
 
-    reference_point : torch.Tensor of shape (..., n_features, n_features)
+    reference_point : torch.Tensor of shape (n_features, n_features)
         SPD matrix
 
-    new_point : torch.Tensor of shape (..., n_features, n_features)
+    new_point : torch.Tensor of shape (n_features, n_features)
         SPD matrix
 
     Returns
@@ -792,148 +909,168 @@ def affine_invariant_parallel_transport_coordinates(
     data_transformed : torch.Tensor of shape (..., n_features*(n_features+1)//2)
         Batch of coordinates in the tangent space of new_point
     """
-    n_features = reference_point.shape[-1]
-    data_mat = sym_coordinates_to_matrix(data_coordinates, n_features)
-    X_sqrtm = sqrtm_SPD(reference_point)[0]
-    Y_inv_sqrtm = inv_sqrtm_SPD(new_point)[0]
-    transf_mat = (
-        inv_sqrtm_SPD(Y_inv_sqrtm @ reference_point @ Y_inv_sqrtm)[0]
-        @ Y_inv_sqrtm
-        @ X_sqrtm
+    transformation_matrix = affine_invariant_parallel_transport_transformation(
+        reference_point, new_point
     )
-    data_transf_mat = transf_mat @ data_mat @ transf_mat.transpose(-1, -2)
-    return sym_matrix_to_coordinates(data_transf_mat)
+    return sym_kron_coordinates_action(data_coordinates, transformation_matrix)
 
 
-class AffineInvariantParallelTransportCoordinates(Function):
+def AffineInvariantParallelTransportCoordinates(
+    data_coordinates: torch.Tensor,
+    reference_point: torch.Tensor,
+    new_point: torch.Tensor,
+) -> torch.Tensor:
     """
-    Parallel transport according to the affine-invariant geometry
+    Parallel transport in coordinates according to the affine-invariant geometry
+
+    Parameters
+    ----------
+    data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    new_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_transformed : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of new_point
     """
+    transformation_matrix = AffineInvariantParallelTransportTransformation(
+        reference_point, new_point
+    )
+    # transformation_matrix = affine_invariant_parallel_transport_transformation(
+    #     reference_point, new_point
+    # )
+    return SymKronCoordinatesAction.apply(data_coordinates, transformation_matrix)
 
-    @staticmethod
-    def forward(
-        ctx,
-        data_coordinates: torch.Tensor,
-        reference_point: torch.Tensor,
-        new_point: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Forward pass of parallel transport in coordinates according to the affine-invariant geometry
 
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
+def affine_invariant_parallel_transport_tangent_covariance(
+    tangent_covariance: torch.Tensor,
+    reference_point: torch.Tensor,
+    new_point: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Parallel transport of a covariance matrix (tensor) of tangent vectors in coordinates
+    from the tangent space of reference_point onto the tangent space of new_point
 
-        data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
-            Batch of coordinates in the tangent space of reference_point
+    Parameters
+    ----------
+    tangent_covariance : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        Covariance matrix of tangent vectors in coordinates in the tangent space of reference_point.
+        SPD matrix
 
-        reference_point : torch.Tensor of shape (..., n_features, n_features)
-            SPD matrix
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
 
-        new_point : torch.Tensor of shape (..., n_features, n_features)
-            SPD matrix
+    new_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
 
-        Returns
-        -------
-        data_transformed : torch.Tensor of shape (..., n_features*(n_features+1)//2)
-            Batch of coordinates in the tangent space of new_point
-        """
-        n_features = reference_point.shape[-1]
-        data_mat = sym_coordinates_to_matrix(data_coordinates, n_features)
-        X_sqrtm, eigvals_X, eigvecs_X = sqrtm_SPD(reference_point)
-        Y_inv_sqrtm, eigvals_Y, eigvecs_Y = inv_sqrtm_SPD(new_point)
-        M_inv_sqrtm, eigvals_M, eigvecs_M = inv_sqrtm_SPD(
-            Y_inv_sqrtm @ reference_point @ Y_inv_sqrtm
+    Returns
+    -------
+    new_tangent_covariance : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        Transported covariance matrix in the tangent space of new_point
+    """
+    transformation_matrix = affine_invariant_parallel_transport_transformation(
+        reference_point, new_point
+    )
+    return sym_kron_congruence(tangent_covariance, transformation_matrix)[0]
+
+
+def AffineInvariantParallelTransportTangentCovariance(
+    tangent_covariance: torch.Tensor,
+    reference_point: torch.Tensor,
+    new_point: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Parallel transport of a covariance matrix (tensor) of tangent vectors in coordinates
+    from the tangent space of reference_point onto the tangent space of new_point
+
+    Parameters
+    ----------
+    tangent_covariance : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        Covariance matrix of tangent vectors in coordinates in the tangent space of reference_point.
+        SPD matrix
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    new_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    new_tangent_covariance : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        Transported covariance matrix in the tangent space of new_point
+    """
+    transformation_matrix = AffineInvariantParallelTransportTransformation(
+        reference_point, new_point
+    )
+    return SymKronCongruence.apply(tangent_covariance, transformation_matrix)
+
+
+def affine_invariant_parallel_transport_metric_tensor(
+    metric_tensor: torch.Tensor, reference_point: torch.Tensor, new_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Parallel transport of a metric tensor in coordinates from the tangent space of reference_point
+    onto the tangent space of new_point
+
+    Parameters
+    ----------
+    metric_tensor : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        Metric tensor in coordinates at reference_point
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    new_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    new_metric_tensor : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        Transported metric tensor in coordinates at new_point
+    """
+    inv_transformation_matrix = (
+        affine_invariant_parallel_transport_transformation_inverse(
+            reference_point, new_point
         )
-        transf_mat = M_inv_sqrtm @ Y_inv_sqrtm @ X_sqrtm
-        data_transf_mat = transf_mat @ data_mat @ transf_mat.transpose(-1, -2)
-        ctx.n_features = n_features
-        ctx.save_for_backward(
-            data_mat,
-            reference_point,
-            X_sqrtm,
-            eigvals_X,
-            eigvecs_X,
-            Y_inv_sqrtm,
-            eigvals_Y,
-            eigvecs_Y,
-            M_inv_sqrtm,
-            eigvals_M,
-            eigvecs_M,
-            transf_mat,
-        )
-        return sym_matrix_to_coordinates(data_transf_mat)
+    )
+    return sym_kron_congruence(
+        metric_tensor, inv_transformation_matrix.transpose(-1, -2)
+    )[0]
 
-    @staticmethod
-    def backward(
-        ctx, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Backward pass of parallel transport in coordinates according to the affine-invariant geometry
 
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
+def AffineInvariantParallelTransportMetricTensor(
+    metric_tensor: torch.Tensor, reference_point: torch.Tensor, new_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Parallel transport of a metric tensor in coordinates from the tangent space of reference_point
+    onto the tangent space of new_point
 
-        grad_output : torch.Tensor of shape (..., n_features*(n_features+1)//2)
-            Gradient of the loss with respect to the output of parallel transport Function
+    Parameters
+    ----------
+    metric_tensor : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        Metric tensor in coordinates at reference_point
 
-        Returns
-        -------
-        grad_input_data_coordinates : torch.Tensor of shape (..., n_features*(n_features+1)//2)
-            Gradient of the loss with respect to the input batch of coordinates in the tangent space of reference_point
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
 
-        grad_input_reference_point : torch.Tensor of shape (..., n_features, n_features)
-            Gradient of the loss with respect to the input reference point
+    new_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
 
-        grad_input_new_point : torch.Tensor of shape (..., n_features, n_features)
-            Gradient of the loss with respect to the input new reference point
-        """
-        n_features = ctx.n_features
-        (
-            data_mat,
-            reference_point,
-            X_sqrtm,
-            eigvals_X,
-            eigvecs_X,
-            Y_inv_sqrtm,
-            eigvals_Y,
-            eigvecs_Y,
-            M_inv_sqrtm,
-            eigvals_M,
-            eigvecs_M,
-            transf_mat,
-        ) = ctx.saved_tensors
-
-        grad_output_mat = sym_coordinates_to_matrix(grad_output, n_features)
-
-        grad_input_data_mat = (
-            transf_mat.transpose(-1, -2) @ grad_output_mat @ transf_mat
-        )
-
-        Q_M = Y_inv_sqrtm @ X_sqrtm @ data_mat @ X_sqrtm @ Y_inv_sqrtm
-        grad_M_inv_sqrtm = 2 * symmetrize(Q_M @ M_inv_sqrtm @ grad_output_mat)
-        grad_M = eigh_operation_grad(
-            grad_M_inv_sqrtm, eigvals_M, eigvecs_M, inv_sqrt, inv_sqrt_derivative
-        )
-        grad_M_X = Y_inv_sqrtm @ grad_M @ Y_inv_sqrtm
-        grad_M_Y_inv_sqrtm = 2 * symmetrize(reference_point @ Y_inv_sqrtm @ grad_M)
-
-        Q1_X = Y_inv_sqrtm @ M_inv_sqrtm
-        Q2_X = data_mat @ X_sqrtm @ Q1_X
-        grad_X_sqrtm = 2 * symmetrize(Q2_X @ grad_output_mat @ Q1_X.transpose(-2, -1))
-        grad_X = eigh_operation_grad(
-            grad_X_sqrtm, eigvals_X, eigvecs_X, torch.sqrt, sqrt_derivative
-        )
-        grad_X = grad_X + grad_M_X
-
-        Q_Y = X_sqrtm @ data_mat @ X_sqrtm @ Y_inv_sqrtm @ M_inv_sqrtm
-        grad_Y_inv_sqrtm = 2 * symmetrize(Q_Y @ grad_output_mat @ M_inv_sqrtm)
-        grad_Y_inv_sqrtm = grad_Y_inv_sqrtm + grad_M_Y_inv_sqrtm
-        grad_Y = eigh_operation_grad(
-            grad_Y_inv_sqrtm, eigvals_Y, eigvecs_Y, inv_sqrt, inv_sqrt_derivative
-        )
-
-        return sym_matrix_to_coordinates(grad_input_data_mat), grad_X, grad_Y
+    Returns
+    -------
+    new_metric_tensor : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        Transported metric tensor in coordinates at new_point
+    """
+    inv_transformation_matrix = AffineInvariantParallelTransportTransformationInverse(
+        reference_point, new_point
+    )
+    return SymKronCongruence.apply(
+        metric_tensor, inv_transformation_matrix.transpose(-1, -2)
+    )

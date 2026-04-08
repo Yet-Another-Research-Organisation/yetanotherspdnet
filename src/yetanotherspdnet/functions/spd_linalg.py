@@ -505,7 +505,9 @@ def eigh_operation_grad(
         Gradient of the loss with respect to the input batch of symmetric matrices
     """
     aux_mat = _aux_eigh_operation_grad(eigvals, operation, operation_deriv)
-    middle_term = aux_mat * (eigvecs.transpose(-1, -2) @ grad_output @ eigvecs)
+    middle_term = aux_mat * (
+        eigvecs.transpose(-1, -2) @ symmetrize(grad_output) @ eigvecs
+    )
     return eigvecs @ middle_term @ eigvecs.transpose(-1, -2)
 
 
@@ -631,7 +633,8 @@ def inv_sqrtm_SPD(
     data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Matrix logarithm of a batch of SPD matrices
+    Matrix inverse square root of a batch of SPD matrices
+    (relies on eigenvalue decomposition)
 
     Parameters
     ----------
@@ -640,8 +643,8 @@ def inv_sqrtm_SPD(
 
     Returns
     -------
-    logm_data : torch.Tensor of shape (..., n_features, n_features)
-        Matrix logarithms of the input batch of SPD matrices
+    inv_sqrtm_data : torch.Tensor of shape (..., n_features, n_features)
+        Matrix inverse square roots of the input batch of SPD matrices
 
     eigvals : torch.Tensor of shape (..., n_features)
         Eigenvalues of matrices in data
@@ -675,7 +678,7 @@ class InvSqrtmSPD(Function):
         Returns
         -------
         inv_sqrtm_data : torch.Tensor of shape (..., n_features, n_features)
-            Matrix square roots of the input batch of SPD matrices
+            Matrix inverse square roots of the input batch of SPD matrices
         """
         inv_sqrtm_data, eigvals, eigvecs = inv_sqrtm_SPD(data)
         ctx.save_for_backward(eigvals, eigvecs)
@@ -702,6 +705,103 @@ class InvSqrtmSPD(Function):
         eigvals, eigvecs = ctx.saved_tensors
         return eigh_operation_grad(
             grad_output, eigvals, eigvecs, inv_sqrt, inv_sqrt_derivative
+        )
+
+
+def sqrtm_and_inv_sqrtm_SPD(
+    data: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Matrix square root and inverse square root of a batch of SPD matrices
+    (relies on eigenvalue decomposition)
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    Returns
+    -------
+    sqrtm_data : torch.Tensor of shape (..., n_features, n_features)
+        Matrix square roots of the input batch of SPD matrices
+
+    inv_sqrtm_data : torch.Tensor of shape (..., n_features, n_features)
+        Matrix inverse square root of the input batch of SPD matrices
+
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues of matrices in data
+
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors of matrices in data
+    """
+    eigvals, eigvecs = torch.linalg.eigh(data)
+    return (
+        eigh_operation(eigvals, eigvecs, torch.sqrt),
+        eigh_operation(eigvals, eigvecs, inv_sqrt),
+        eigvals,
+        eigvecs,
+    )
+
+
+class SqrtmAndInvSqrtmSPD(Function):
+    """
+    Matrix square roots and inverse square roots of a batch of SPD matrices
+    (relies on eigenvalue decomposition)
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the matrix square roots and inverse square roots of a batch of SPD matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        Returns
+        -------
+        sqrtm_data : torch.Tensor of shape (..., n_features, n_features)
+            Matrix square roots of the input batch of SPD matrices
+
+        inv_sqrtm_data : torch.Tensor of shape (..., n_features, n_features)
+            Matrix inverse square root of the input batch of SPD matrices
+        """
+        data_sqrtm, data_inv_sqrtm, eigvals, eigvecs = sqrtm_and_inv_sqrtm_SPD(data)
+        ctx.save_for_backward(eigvals, eigvecs)
+        return data_sqrtm, data_inv_sqrtm
+
+    @staticmethod
+    def backward(
+        ctx, grad_output_sqrtm: torch.Tensor, grad_output_inv_sqrtm: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Backward pass of the matrix square roots and inverse square roots of a batch of SPD matrices
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output_sqrtm : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss w.r.t. matrix square roots of the input batch of SPD matrices
+
+        grad_output_inv_sqrtm : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss w.r.t. matrix inverse square roots of the input batch of SPD matrices
+
+        Returns
+        -------
+        grad_input_data : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss w.r.t. the input batch of SPD matrices
+        """
+        eigvals, eigvecs = ctx.saved_tensors
+        return eigh_operation_grad(
+            grad_output_sqrtm, eigvals, eigvecs, torch.sqrt, sqrt_derivative
+        ) + eigh_operation_grad(
+            grad_output_inv_sqrtm, eigvals, eigvecs, inv_sqrt, inv_sqrt_derivative
         )
 
 
@@ -1559,3 +1659,234 @@ class CongruenceRectangular(Function):
         # )
         grad_input_W = 2 * torch.einsum("...ik,kl,...lj->ij", data, weight, grad_output)
         return grad_input_data, grad_input_W
+
+
+# --------------------------
+# Symmetric Kronecker stuffs
+# --------------------------
+def sym_kron_coordinates_action(
+    vectors: torch.Tensor, transformation_matrix: torch.Tensor
+) -> torch.Tensor:
+    """
+    Product of a batch of vectors with the symmetric Kronecker product of a transformation matrix
+
+    Parameters
+    ----------
+    vectors : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of vectors
+
+    transformation_matrix : torch.Tensor of shape (n_features, n_features)
+        Non-singular matrix
+
+    Returns
+    -------
+    transformed_vectors : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of transformed vectors
+    """
+    n_features = transformation_matrix.shape[-1]
+    vectors_mat = sym_coordinates_to_matrix(vectors, n_features)
+    vectors_transf_mat = (
+        transformation_matrix @ vectors_mat @ transformation_matrix.transpose(-2, -1)
+    )
+    return sym_matrix_to_coordinates(vectors_transf_mat)
+
+
+class SymKronCoordinatesAction(Function):
+    """
+    Product of a batch of vectors with the symmetric Kronecker product of a transformation matrix
+    """
+
+    @staticmethod
+    def forward(
+        ctx, vectors: torch.Tensor, transformation_matrix: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Forward pass of the product of a batch of vectors with the symmetric Kronecker product of a transformation matrix
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        vectors : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Batch of vectors
+
+        transformation_matrix : torch.Tensor of shape (n_features, n_features)
+            Non-singular matrix
+
+        Returns
+        -------
+        transformed_vectors : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Batch of transformed vectors
+        """
+        ctx.save_for_backward(vectors, transformation_matrix)
+        return sym_kron_coordinates_action(vectors, transformation_matrix)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the product of a batch of vectors with the symmetric Kronecker product of a transformation matrix
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Gradient of the loss w.r.t. the batch of transformed vectors
+
+        Returns
+        -------
+        grad_input_vectors : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+            Gradient of the loss w.r.t. the input batch of vectors
+
+        grad_input_transformation_matrix : torch.Tensor of shape (n_features, n_features)
+            Gradient of the loss w.r.t. the input transformation matrix
+        """
+        vectors, transformation_matrix = ctx.saved_tensors
+        n_features = transformation_matrix.shape[-1]
+        grad_input_vectors = sym_kron_coordinates_action(
+            grad_output, transformation_matrix.transpose(-2, -1)
+        )
+        grad_output_mat = sym_coordinates_to_matrix(grad_output, n_features)
+        vectors_mat = sym_coordinates_to_matrix(vectors, n_features)
+        grad_input_transformation_matrix = 2 * (
+            grad_output_mat @ transformation_matrix.unsqueeze(0) @ vectors_mat
+        ).sum(0)
+        return grad_input_vectors, grad_input_transformation_matrix
+
+
+def sym_kron_congruence(
+    matrix: torch.Tensor, transformation_matrix: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Congruence of an SPD matrix with the symmetric Kronecker product of a transformation matrix, i.e.,
+    .. math:: (A \boxtimes A) G (A \boxtimes A)^\top
+
+    Parameters
+    ----------
+    matrix : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        SPD matrix
+
+    transformation_matrix : torch.Tensor of shape (n_features, n_features)
+        Full-rank matrix
+
+    Returns
+    -------
+    transformed_matrix : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        Congruence of matrix with the symmetric Kronecker product of transformed_matrix.
+        SPD matrix
+
+    partially_transformed_matrix : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        Product of symmetric Kronecker product of transformed_matrix with matrix, i.e., :math: `(A \boxtimes A) G`.
+        Non-singular matrix
+    """
+    n_features = transformation_matrix.shape[-1]
+
+    # apply (A \boxtimes A) column-wise -- same as row-wise since matrix is symmetric
+    G_mat = sym_coordinates_to_matrix(
+        matrix, n_features
+    )  # (n_features*(n_features+1)//2, n_features, n_features)
+    G_transf_mat = (
+        transformation_matrix @ G_mat @ transformation_matrix.transpose(-2, -1)
+    )
+    G_transf_left = sym_matrix_to_coordinates(
+        G_transf_mat
+    )  # (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+
+    # apply (A \boxtimes A)^\top row-wise = apply (A \boxtimes A) column-wise on G_transf_vec^\top
+    G_transf_transp_mat = sym_coordinates_to_matrix(
+        G_transf_left.transpose(-2, -1), n_features
+    )  # (n_features*(n_features+1)//2, n_features, n_features)
+    G_final_mat = (
+        transformation_matrix
+        @ G_transf_transp_mat
+        @ transformation_matrix.transpose(-2, -1)
+    )
+    G_final = sym_matrix_to_coordinates(G_final_mat)
+
+    return G_final, G_transf_left
+
+
+class SymKronCongruence(Function):
+    """
+    Congruence of an SPD matrix with the symmetric Kronecker product of a transformation matrix, i.e.,
+    .. math:: (A \boxtimes A) G (A \boxtimes A)^\top
+    """
+
+    @staticmethod
+    def forward(
+        ctx, matrix: torch.Tensor, transformation_matrix: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Forward pass of the congruence of an SPD matrix with the symmetric Kronecker product
+        of a transformation matrix
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        matrix : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+            SPD matrix
+
+        transformation_matrix : torch.Tensor of shape (n_features, n_features)
+            Full-rank matrix
+
+        Returns
+        -------
+        transformed_matrix : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+        """
+        G_transf, G_transf_left = sym_kron_congruence(matrix, transformation_matrix)
+        ctx.save_for_backward(matrix, transformation_matrix, G_transf_left)
+        return G_transf
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Backward pass of the congruence of an SPD matrix with the symmetric Kronecker product
+        of a transformation matrix
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+            Gradient of the loss with respect to the output of the congruence with the symmetric Kronecker product
+
+        Returns
+        -------
+        grad_input_matrix : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
+            Gradient of the loss with respect to the input SPD matrix
+
+        grad_input_transformation_matrix : torch.Tensor of shape (n_features, n_features)
+            Gradient of the loss with respect to the input transformation matrix
+        """
+        matrix, transformation_matrix, G_transf_left = ctx.saved_tensors
+        n_features = transformation_matrix.shape[-1]
+
+        # grad w.r.t. G
+        grad_output_mat = sym_coordinates_to_matrix(grad_output, n_features)
+        grad_G_transf_left = sym_matrix_to_coordinates(
+            transformation_matrix.mT @ grad_output_mat @ transformation_matrix
+        ).mT
+        grad_G_transf_left_mat = sym_coordinates_to_matrix(
+            grad_G_transf_left, n_features
+        )
+        grad_input_matrix = sym_matrix_to_coordinates(
+            transformation_matrix.mT @ grad_G_transf_left_mat @ transformation_matrix
+        )
+
+        # grad w.r.t. A
+        H_mat = sym_coordinates_to_matrix(G_transf_left.mT, n_features)
+        grad_A2 = 2 * (
+            grad_output_mat @ transformation_matrix.unsqueeze(0) @ H_mat
+        ).sum(0)
+
+        G_mat = sym_coordinates_to_matrix(matrix, n_features)
+        grad_A1 = 2 * (
+            grad_G_transf_left_mat @ transformation_matrix.unsqueeze(0) @ G_mat
+        ).sum(0)
+
+        return grad_input_matrix, grad_A1 + grad_A2

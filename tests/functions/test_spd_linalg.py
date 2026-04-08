@@ -6,7 +6,7 @@ from torch.testing import assert_close
 import yetanotherspdnet.functions.spd_linalg as spd_linalg
 from utils import is_spd, is_symmetric
 from yetanotherspdnet.random.spd import random_SPD
-from yetanotherspdnet.random.stiefel import _init_weights_stiefel
+from yetanotherspdnet.random.stiefel import _init_weights_stiefel, random_stiefel
 
 
 @pytest.fixture(scope="module")
@@ -846,6 +846,78 @@ class TestInvSqrtmSPD:
         loss_manual = torch.norm(X_manual_inv_sqrtm)
         loss_manual.backward()
         loss_auto = torch.norm(X_auto_inv_sqrtm)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+
+class TestSqrtmAndInvSqrtmSPD:
+    """
+    Test suite for sqrtm_and_inv_sqtrm_SPD and SqrtmAndInvSqrtmSPD functions
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that it yeilds same results as sqrtm_SPD and inv_sqrtm_SPD functions
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        X_sqrtm_auto, X_inv_sqrtm_auto, _, _ = spd_linalg.sqrtm_and_inv_sqrtm_SPD(X)
+        X_sqrtm_manual, X_inv_sqrtm_manual = spd_linalg.SqrtmAndInvSqrtmSPD.apply(X)
+
+        X_sqrtm_ref = spd_linalg.sqrtm_SPD(X)[0]
+        X_inv_sqrtm_ref = spd_linalg.inv_sqrtm_SPD(X)[0]
+
+        assert_close(X_sqrtm_auto, X_sqrtm_ref)
+        assert_close(X_inv_sqrtm_auto, X_inv_sqrtm_ref)
+
+        assert_close(X_sqrtm_manual, X_sqrtm_ref)
+        assert_close(X_inv_sqrtm_manual, X_inv_sqrtm_ref)
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of backward of SqrtmAndInvSqrtmSPD Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        X_manual_sqrtm, X_manual_inv_sqrtm = spd_linalg.SqrtmAndInvSqrtmSPD.apply(
+            X_manual
+        )
+        X_auto_sqrtm, X_auto_inv_sqrtm, _, _ = spd_linalg.sqrtm_and_inv_sqrtm_SPD(
+            X_auto
+        )
+
+        loss_manual = torch.norm(X_manual_sqrtm) + torch.norm(X_manual_inv_sqrtm)
+        loss_manual.backward()
+        loss_auto = torch.norm(X_auto_sqrtm) + torch.norm(X_auto_inv_sqrtm)
         loss_auto.backward()
 
         assert X_manual.grad is not None
@@ -2109,3 +2181,476 @@ class TestCongruenceRectangular:
         assert torch.isfinite(W_manual.grad).all()
         assert torch.isfinite(W_auto.grad).all()
         assert_close(W_manual.grad, W_auto.grad)
+
+
+class TestSymKronCoordinatesAction:
+    """
+    Test suite for the product of a batch of vectors with the symmetric Kronecker product of a transformation matrix
+    """
+
+    @pytest.mark.parametrize("n_matrices", [10, 100])
+    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
+    def test_forward_shape(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that forward shape and structure is correct
+        """
+        dim = n_features * (n_features + 1) // 2
+        vectors = torch.squeeze(
+            torch.randn(
+                (n_matrices, dim), device=device, dtype=dtype, generator=generator
+            )
+        )
+        A = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        vectors_transf_auto = spd_linalg.sym_kron_coordinates_action(vectors, A)
+        vectors_transf_manual = spd_linalg.SymKronCoordinatesAction.apply(vectors, A)
+
+        assert vectors_transf_auto.shape == vectors.shape
+        assert vectors_transf_auto.device == vectors.device
+        assert vectors_transf_auto.dtype == vectors.dtype
+
+        assert vectors_transf_manual.shape == vectors.shape
+        assert vectors_transf_manual.device == vectors.device
+        assert vectors_transf_manual.dtype == vectors.dtype
+
+        assert_close(vectors_transf_auto, vectors_transf_manual)
+
+    @pytest.mark.parametrize("n_matrices", [10, 100])
+    @pytest.mark.parametrize("n_features", [20])
+    def test_no_transformation(self, n_matrices, n_features, device, dtype, generator):
+        """
+        Test that identity leaves vectors unchanged
+        """
+        dim = n_features * (n_features + 1) // 2
+        vectors = torch.squeeze(
+            torch.randn(
+                (n_matrices, dim), device=device, dtype=dtype, generator=generator
+            )
+        )
+        A = torch.eye(n_features, dtype=dtype, device=device)
+
+        vectors_transf_auto = spd_linalg.sym_kron_coordinates_action(vectors, A)
+        vectors_transf_manual = spd_linalg.SymKronCoordinatesAction.apply(vectors, A)
+
+        assert_close(vectors_transf_auto, vectors)
+        assert_close(vectors_transf_manual, vectors)
+
+    @pytest.mark.parametrize("n_matrices", [10, 100])
+    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
+    def test_transformation_forth_back(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that transformation with A and then with A^{-1} returns original vectors
+        """
+        dim = n_features * (n_features + 1) // 2
+        vectors = torch.squeeze(
+            torch.randn(
+                (n_matrices, dim), device=device, dtype=dtype, generator=generator
+            )
+        )
+        A = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        A_inv = torch.linalg.inv(A)
+
+        vectors_transf_auto = spd_linalg.sym_kron_coordinates_action(vectors, A)
+        vectors_transf_manual = spd_linalg.SymKronCoordinatesAction.apply(vectors, A)
+
+        assert not torch.allclose(vectors_transf_auto, vectors)
+        assert not torch.allclose(vectors_transf_manual, vectors)
+
+        vectors_origin_auto = spd_linalg.sym_kron_coordinates_action(
+            vectors_transf_auto, A_inv
+        )
+        vectors_origin_manual = spd_linalg.SymKronCoordinatesAction.apply(
+            vectors_transf_manual, A_inv
+        )
+
+        assert_close(vectors_origin_auto, vectors)
+        assert_close(vectors_origin_manual, vectors)
+
+    @pytest.mark.parametrize("n_matrices", [10, 100])
+    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
+    def test_vector_vs_matrix_action(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that transformation on vectors corresponds to transformation on matrices
+        """
+        sym_mat = torch.squeeze(
+            spd_linalg.symmetrize(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        vectors = spd_linalg.sym_matrix_to_coordinates(sym_mat)
+        A = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        sym_mat_transf = A @ sym_mat @ A.transpose(-1, -2)
+
+        vectors_transf_auto = spd_linalg.sym_kron_coordinates_action(vectors, A)
+        vectors_transf_manual = spd_linalg.SymKronCoordinatesAction.apply(vectors, A)
+
+        expected = spd_linalg.sym_matrix_to_coordinates(sym_mat_transf)
+
+        assert_close(vectors_transf_auto, expected)
+        assert_close(vectors_transf_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices", [10, 100])
+    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that manual and automatic gradients are the same
+        """
+        dim = n_features * (n_features + 1) // 2
+        vectors = torch.squeeze(
+            torch.randn(
+                (n_matrices, dim), device=device, dtype=dtype, generator=generator
+            )
+        )
+        A = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        vectors_manual = vectors.clone().detach()
+        vectors_manual.requires_grad = True
+        vectors_auto = vectors.clone().detach()
+        vectors_auto.requires_grad = True
+
+        A_manual = A.clone().detach()
+        A_manual.requires_grad = True
+        A_auto = A.clone().detach()
+        A_auto.requires_grad = True
+
+        vectors_transf_manual = spd_linalg.SymKronCoordinatesAction.apply(
+            vectors_manual, A_manual
+        )
+        vectors_transf_auto = spd_linalg.sym_kron_coordinates_action(
+            vectors_auto, A_auto
+        )
+
+        loss_manual = torch.norm(vectors_transf_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(vectors_transf_auto)
+        loss_auto.backward()
+
+        assert vectors_manual.grad is not None
+        assert vectors_auto.grad is not None
+        assert torch.isfinite(vectors_manual.grad).all()
+        assert torch.isfinite(vectors_auto.grad).all()
+        assert_close(vectors_manual.grad, vectors_auto.grad)
+
+        assert A_manual.grad is not None
+        assert A_auto.grad is not None
+        assert torch.isfinite(A_manual.grad).all()
+        assert torch.isfinite(A_auto.grad).all()
+        assert_close(A_manual.grad, A_auto.grad)
+
+
+class TestSymKronCongruence:
+    """
+    Test suite for the congruence of an SPD matrix with the symmetric Kronecker product of a transformation matrix
+    """
+
+    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
+    def test_forward_shape(self, n_features, cond, device, dtype, generator):
+        """
+        Test that forward shape and structure is correct
+        """
+        dim = n_features * (n_features + 1) // 2
+        G = random_SPD(
+            dim,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        U = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        S = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        A = U @ S
+
+        G_transf_auto, G_transf_left = spd_linalg.sym_kron_congruence(G, A)
+        G_transf_manual = spd_linalg.SymKronCongruence.apply(G, A)
+
+        assert G_transf_auto.shape == G.shape
+        assert G_transf_auto.device == G.device
+        assert G_transf_auto.dtype == G.dtype
+        assert is_spd(G_transf_auto)
+
+        assert G_transf_left.shape == G.shape
+        assert G_transf_left.device == G.device
+        assert G_transf_left.dtype == G.dtype
+
+        assert G_transf_manual.shape == G.shape
+        assert G_transf_manual.device == G.device
+        assert G_transf_manual.dtype == G.dtype
+        assert is_spd(G_transf_manual)
+
+    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
+    def test_no_transformation(self, n_features, cond, device, dtype, generator):
+        """
+        Test that A = Id leaves G unchanged
+        """
+        dim = n_features * (n_features + 1) // 2
+        G = random_SPD(
+            dim,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        A = torch.eye(n_features, dtype=dtype, device=device)
+
+        G_transf_auto, _ = spd_linalg.sym_kron_congruence(G, A)
+        G_transf_manual = spd_linalg.SymKronCongruence.apply(G, A)
+
+        assert_close(G_transf_auto, G)
+        assert_close(G_transf_manual, G)
+
+    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
+    def test_transformation_forth_back(
+        self, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that applying A and then A^{-1} yields G again
+        """
+        dim = n_features * (n_features + 1) // 2
+        G = random_SPD(
+            dim,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        U = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        S = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        A = U @ S
+        A_inv = torch.linalg.inv(A)
+
+        G_transf_auto, _ = spd_linalg.sym_kron_congruence(G, A)
+        G_transf_manual = spd_linalg.SymKronCongruence.apply(G, A)
+
+        G_auto, _ = spd_linalg.sym_kron_congruence(G_transf_auto, A_inv)
+        G_manual = spd_linalg.SymKronCongruence.apply(G_transf_manual, A_inv)
+
+        assert_close(G_auto, G, atol=1e-4, rtol=1e-4)
+        assert_close(G_manual, G, atol=1e-4, rtol=1e-4)
+
+    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
+    def test_action_on_vectors(self, n_features, cond, device, dtype, generator):
+        """
+        Test invariance properties of scalar product and right multiplication
+        """
+        dim = n_features * (n_features + 1) // 2
+        G = random_SPD(
+            dim,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        U = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        S = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        A = U @ S
+        A_inv = torch.linalg.inv(A)
+
+        # random symmetric matrices
+        xi = torch.squeeze(
+            spd_linalg.symmetrize(
+                torch.randn(
+                    (n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        eta = torch.squeeze(
+            spd_linalg.symmetrize(
+                torch.randn(
+                    (n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+
+        G_transf_auto, G_transf_left = spd_linalg.sym_kron_congruence(G, A)
+        G_transf_manual = spd_linalg.SymKronCongruence.apply(G, A)
+
+        xi_transf = A_inv.transpose(-2, -1) @ xi @ A_inv
+        eta_transf = A_inv.transpose(-2, -1) @ eta @ A_inv
+
+        assert_close(
+            torch.sum(
+                spd_linalg.sym_matrix_to_coordinates(xi_transf)
+                * (G_transf_auto @ spd_linalg.sym_matrix_to_coordinates(eta_transf))
+            ),
+            torch.sum(
+                spd_linalg.sym_matrix_to_coordinates(xi)
+                * (G @ spd_linalg.sym_matrix_to_coordinates(eta))
+            ),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        assert_close(
+            torch.sum(
+                spd_linalg.sym_matrix_to_coordinates(xi_transf)
+                * (G_transf_manual @ spd_linalg.sym_matrix_to_coordinates(eta_transf))
+            ),
+            torch.sum(
+                spd_linalg.sym_matrix_to_coordinates(xi)
+                * (G @ spd_linalg.sym_matrix_to_coordinates(eta))
+            ),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+
+        assert_close(
+            G_transf_left @ spd_linalg.sym_matrix_to_coordinates(xi_transf),
+            G @ spd_linalg.sym_matrix_to_coordinates(xi),
+        )
+
+    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
+    def test_backward(self, n_features, cond, device, dtype, generator):
+        """
+        Test that manual and automatic gradients are the same
+        """
+        dim = n_features * (n_features + 1) // 2
+        G = random_SPD(
+            dim,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        U = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        S = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        A = U @ S
+
+        G_manual = G.clone().detach()
+        G_manual.requires_grad = True
+        G_auto = G.clone().detach()
+        G_auto.requires_grad = True
+
+        A_manual = A.clone().detach()
+        A_manual.requires_grad = True
+        A_auto = A.clone().detach()
+        A_auto.requires_grad = True
+
+        G_transf_manual = spd_linalg.SymKronCongruence.apply(G_manual, A_manual)
+        G_transf_auto, _ = spd_linalg.sym_kron_congruence(G_auto, A_auto)
+
+        loss_manual = torch.norm(G_transf_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(G_transf_auto)
+        loss_auto.backward()
+
+        assert G_manual.grad is not None
+        assert G_auto.grad is not None
+        assert torch.isfinite(G_manual.grad).all()
+        assert torch.isfinite(G_auto.grad).all()
+        assert is_symmetric(G_manual.grad)
+        assert is_symmetric(G_auto.grad)
+        assert_close(G_manual.grad, G_auto.grad)
+
+        assert A_manual.grad is not None
+        assert A_auto.grad is not None
+        assert torch.isfinite(A_manual.grad).all()
+        assert torch.isfinite(A_auto.grad).all()
+        assert_close(A_manual.grad, A_auto.grad)
