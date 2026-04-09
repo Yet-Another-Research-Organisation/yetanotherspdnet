@@ -613,6 +613,134 @@ class TestSylvesterSPD:
 
 
 # ---------
+# Invm SPD
+# ---------
+class TestInvmSPD:
+    """
+    Test suite for matrix inverse in SPD case
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of invm_SPD function and forward of InvmSPD Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        Identity = torch.diag_embed(
+            torch.squeeze(
+                torch.ones((n_matrices, n_features), device=device, dtype=dtype)
+            )
+        )
+        X_invm, _, _ = spd_linalg.invm_SPD(X)
+        X_Invm = spd_linalg.InvmSPD.apply(X)
+        assert X_invm.shape == X.shape
+        assert X_invm.device == X.device
+        assert X_invm.dtype == X.dtype
+        assert is_spd(X_invm)
+        assert_close(X_invm @ X, Identity)
+        assert X_Invm.shape == X.shape
+        assert X_Invm.device == X.device
+        assert X_Invm.dtype == X.dtype
+        assert is_spd(X_Invm)
+        assert_close(X_Invm @ X, Identity)
+        assert_close(X_Invm, X_invm)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_torch_comparison(self, n_features, cond, device, dtype, generator):
+        """
+        Comparison of InvmSPD and torch.linalg.inv
+        """
+        X = random_SPD(
+            n_features, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+        X_Invm = spd_linalg.InvmSPD.apply(X)
+        X_invm_torch = torch.linalg.inv(X)
+        assert_close(X_Invm, X_invm_torch)
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_identity_matrix(self, n_features, device, dtype):
+        """
+        Test that the matrix inverse of the identity is the identity
+        """
+        identity_matrix = torch.eye(n_features, device=device, dtype=dtype)
+        I_Invm = spd_linalg.InvmSPD.apply(identity_matrix)
+        assert_close(I_Invm, identity_matrix)
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_diagonal_matrix(self, n_features, device, dtype, generator):
+        """
+        Test matrix inverse of diagonal matrix
+        """
+        diag_vals = (
+            torch.randn((n_features,), device=device, dtype=dtype, generator=generator)
+            ** 2
+        )
+        D = torch.diag(diag_vals)
+        D_Invm = spd_linalg.InvmSPD.apply(D)
+        expected = torch.diag(1 / diag_vals)
+        assert_close(D_Invm, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_eigenvalues(self, n_features, cond, device, dtype, generator):
+        """
+        Test that eigenvalues of the matrix inverse of X are the inverse of the eigenvalues of X
+        """
+        X = random_SPD(
+            n_features, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+        eigvals_X = torch.linalg.eigvalsh(X)
+        X_Invm = spd_linalg.InvmSPD.apply(X)
+        eigvals_X_Invm = torch.linalg.eigvalsh(X_Invm)
+        # Sort for comparison (probably not needed)
+        expected = (1 / eigvals_X).sort()[0]
+        actual = eigvals_X_Invm.sort()[0]
+        assert_close(actual, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of backward of InvmSPD Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        X_manual_invm = spd_linalg.InvmSPD.apply(X_manual)
+        X_auto_invm, _, _ = spd_linalg.invm_SPD(X_auto)
+
+        loss_manual = torch.norm(X_manual_invm)
+        loss_manual.backward()
+        loss_auto = torch.norm(X_auto_invm)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+
+# ---------
 # Sqrtm SPD
 # ---------
 class TestSqrtmSPD:

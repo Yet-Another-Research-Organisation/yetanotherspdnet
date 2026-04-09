@@ -1,6 +1,17 @@
 import torch
 from torch.autograd import Function
 
+from yetanotherspdnet.functions.spd_linalg import (
+    CongruenceSPD,
+    InvmSPD,
+    SqrtmAndInvSqrtmSPD,
+    SymMatrixToCoordinates,
+    congruence_SPD,
+    invm_SPD,
+    sqrtm_and_inv_sqrtm_SPD,
+    sym_matrix_to_coordinates,
+)
+
 from .affine_invariant import (
     AffineInvariantGeodesic,
     AffineInvariantMean2Points,
@@ -244,3 +255,55 @@ class SymmetrizedKullbackLeiblerStdScalar(Function):
             / std_scalar
         )
         return grad_input_data, grad_input_G
+
+
+def symmetrized_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Fisher vectors of the symmetrized Kullback-Leibler divergence in coordinates w.r.t. affine-invariant geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    fisher_vectors : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+    """
+    data_invm = invm_SPD(data)[0]
+    G_sqrtm, G_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(reference_point)
+    data_transf1 = congruence_SPD(data, G_inv_sqrtm)
+    data_transf2 = congruence_SPD(data_invm, G_sqrtm)
+    return sym_matrix_to_coordinates(data_transf1 - data_transf2) / 4
+
+
+def SymmetrizedKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Fisher vectors of the symmetrized Kullback-Leibler divergence in coordinates w.r.t. affine-invariant geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    fisher_vectors : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+    """
+    data_invm = InvmSPD.apply(data)
+    G_sqrtm, G_inv_sqrtm = SqrtmAndInvSqrtmSPD.apply(reference_point)
+    data_transf1 = CongruenceSPD.apply(data, G_inv_sqrtm)
+    data_transf2 = CongruenceSPD.apply(data_invm, G_sqrtm)
+    return SymMatrixToCoordinates.apply(data_transf1 - data_transf2) / 4

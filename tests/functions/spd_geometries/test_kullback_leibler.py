@@ -718,6 +718,233 @@ class TestLeftKullbackLeiblerStdScalar:
         assert_close(G_manual.grad, G_auto.grad)
 
 
+class TestLeftKullbackLeiblerFisherVectorAffineInvariantCoordinates:
+    """
+    Test suite for Fisher vectors of left Kullback-Leibler divergence
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward_shape(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that the output has correct structure
+        """
+        data = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        vectors_auto = kullback_leibler.left_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+            data, reference_point
+        )
+        vectors_manual = (
+            kullback_leibler.LeftKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+                data, reference_point
+            )
+        )
+
+        dim = n_features * (n_features + 1) // 2
+
+        if n_matrices > 1:
+            assert vectors_auto.shape[:-1] == data.shape[:-2]
+        assert vectors_auto.shape[-1] == dim
+        assert vectors_auto.device == data.device
+        assert vectors_auto.dtype == data.dtype
+
+        if n_matrices > 1:
+            assert vectors_manual.shape[:-1] == data.shape[:-2]
+        assert vectors_manual.shape[-1] == dim
+        assert vectors_manual.device == data.device
+        assert vectors_manual.dtype == data.dtype
+
+        assert_close(vectors_auto, vectors_manual)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_data_at_reference_point(self, n_features, cond, device, dtype, generator):
+        """
+        Test that vector of reference point at reference point is zero
+        """
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        data = reference_point
+
+        vectors_auto = kullback_leibler.left_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+            data, reference_point
+        )
+        vectors_manual = (
+            kullback_leibler.LeftKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+                data, reference_point
+            )
+        )
+
+        dim = n_features * (n_features + 1) // 2
+        Zeros = torch.zeros(dim, device=device, dtype=dtype)
+
+        assert_close(vectors_auto, Zeros)
+        assert_close(vectors_manual, Zeros)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_sum_at_mean(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that the sum of Fisher vectors at the adequate mean of data is zero
+        """
+        data = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        reference_point = kullback_leibler.arithmetic_mean(data)
+
+        vectors_auto = kullback_leibler.left_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+            data, reference_point
+        )
+        vectors_manual = (
+            kullback_leibler.LeftKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+                data, reference_point
+            )
+        )
+
+        dim = n_features * (n_features + 1) // 2
+        Zeros = torch.zeros(dim, device=device, dtype=dtype)
+
+        if n_matrices == 1:
+            assert_close(vectors_auto, Zeros)
+            assert_close(vectors_manual, Zeros)
+        else:
+            assert_close(torch.mean(vectors_auto, dim=0), Zeros)
+            assert_close(torch.mean(vectors_manual, dim=0), Zeros)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_gradient_adequation(self, n_features, cond, device, dtype, generator):
+        """
+        Test relationship between Fisher vector and (automatic) gradient of corresponding scalar std
+        """
+        data = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        vectors_auto = kullback_leibler.left_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+            data, reference_point
+        )
+        vectors_manual = (
+            kullback_leibler.LeftKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+                data, reference_point
+            )
+        )
+
+        G = reference_point.detach().clone()
+        G.requires_grad = True
+
+        loss = torch.square(kullback_leibler.left_kullback_leibler_std_scalar(data, G))
+        loss.backward()
+
+        G_sqrtm = spd_linalg.sqrtm_SPD(G)[0]
+        expected = spd_linalg.sym_matrix_to_coordinates(-G_sqrtm @ G.grad @ G_sqrtm / 2)
+
+        assert_close(vectors_auto, expected)
+        assert_close(vectors_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1])
+    @pytest.mark.parametrize("n_features, cond", [(4, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that manual and automatic gradients are the same
+        """
+        data = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        X_manual = data.detach().clone()
+        X_manual.requires_grad = True
+        X_auto = data.detach().clone()
+        X_auto.requires_grad = True
+
+        G_manual = reference_point.detach().clone()
+        G_manual.requires_grad = True
+        G_auto = reference_point.detach().clone()
+        G_auto.requires_grad = True
+
+        vectors_auto = kullback_leibler.left_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+            X_auto, G_auto
+        )
+        vectors_manual = (
+            kullback_leibler.LeftKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+                X_manual, G_manual
+            )
+        )
+
+        loss_manual = torch.norm(vectors_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(vectors_auto)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+        assert G_manual.grad is not None
+        assert G_auto.grad is not None
+        assert torch.isfinite(G_manual.grad).all()
+        assert torch.isfinite(G_auto.grad).all()
+        assert is_symmetric(G_manual.grad)
+        assert is_symmetric(G_auto.grad)
+        assert_close(G_manual.grad, G_auto.grad)
+
+
 class TestHarmonicCurve:
     """
     Test suite for harmonic curves
@@ -1387,6 +1614,233 @@ class TestRightKullbackLeiblerStdScalar:
         loss_manual = std_manual
         loss_manual.backward()
         loss_auto = std_auto
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+        assert G_manual.grad is not None
+        assert G_auto.grad is not None
+        assert torch.isfinite(G_manual.grad).all()
+        assert torch.isfinite(G_auto.grad).all()
+        assert is_symmetric(G_manual.grad)
+        assert is_symmetric(G_auto.grad)
+        assert_close(G_manual.grad, G_auto.grad)
+
+
+class TestRightKullbackLeiblerFisherVectorAffineInvariantCoordinates:
+    """
+    Test suite for Fisher vectors of right Kullback-Leibler divergence
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward_shape(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that the output has correct structure
+        """
+        data = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        vectors_auto = kullback_leibler.right_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+            data, reference_point
+        )
+        vectors_manual = (
+            kullback_leibler.RightKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+                data, reference_point
+            )
+        )
+
+        dim = n_features * (n_features + 1) // 2
+
+        if n_matrices > 1:
+            assert vectors_auto.shape[:-1] == data.shape[:-2]
+        assert vectors_auto.shape[-1] == dim
+        assert vectors_auto.device == data.device
+        assert vectors_auto.dtype == data.dtype
+
+        if n_matrices > 1:
+            assert vectors_manual.shape[:-1] == data.shape[:-2]
+        assert vectors_manual.shape[-1] == dim
+        assert vectors_manual.device == data.device
+        assert vectors_manual.dtype == data.dtype
+
+        assert_close(vectors_auto, vectors_manual)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_data_at_reference_point(self, n_features, cond, device, dtype, generator):
+        """
+        Test that vector of reference point at reference point is zero
+        """
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        data = reference_point
+
+        vectors_auto = kullback_leibler.right_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+            data, reference_point
+        )
+        vectors_manual = (
+            kullback_leibler.RightKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+                data, reference_point
+            )
+        )
+
+        dim = n_features * (n_features + 1) // 2
+        Zeros = torch.zeros(dim, device=device, dtype=dtype)
+
+        assert_close(vectors_auto, Zeros)
+        assert_close(vectors_manual, Zeros)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_sum_at_mean(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that the sum of Fisher vectors at the adequate mean of data is zero
+        """
+        data = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        reference_point = kullback_leibler.harmonic_mean(data)
+
+        vectors_auto = kullback_leibler.right_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+            data, reference_point
+        )
+        vectors_manual = (
+            kullback_leibler.RightKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+                data, reference_point
+            )
+        )
+
+        dim = n_features * (n_features + 1) // 2
+        Zeros = torch.zeros(dim, device=device, dtype=dtype)
+
+        if n_matrices == 1:
+            assert_close(vectors_auto, Zeros)
+            assert_close(vectors_manual, Zeros)
+        else:
+            assert_close(torch.mean(vectors_auto, dim=0), Zeros)
+            assert_close(torch.mean(vectors_manual, dim=0), Zeros)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_gradient_adequation(self, n_features, cond, device, dtype, generator):
+        """
+        Test relationship between Fisher vector and (automatic) gradient of corresponding scalar std
+        """
+        data = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        vectors_auto = kullback_leibler.right_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+            data, reference_point
+        )
+        vectors_manual = (
+            kullback_leibler.RightKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+                data, reference_point
+            )
+        )
+
+        G = reference_point.detach().clone()
+        G.requires_grad = True
+
+        loss = torch.square(kullback_leibler.right_kullback_leibler_std_scalar(data, G))
+        loss.backward()
+
+        G_sqrtm = spd_linalg.sqrtm_SPD(G)[0]
+        expected = spd_linalg.sym_matrix_to_coordinates(-G_sqrtm @ G.grad @ G_sqrtm / 2)
+
+        assert_close(vectors_auto, expected)
+        assert_close(vectors_manual, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1])
+    @pytest.mark.parametrize("n_features, cond", [(4, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that manual and automatic gradients are the same
+        """
+        data = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        X_manual = data.detach().clone()
+        X_manual.requires_grad = True
+        X_auto = data.detach().clone()
+        X_auto.requires_grad = True
+
+        G_manual = reference_point.detach().clone()
+        G_manual.requires_grad = True
+        G_auto = reference_point.detach().clone()
+        G_auto.requires_grad = True
+
+        vectors_auto = kullback_leibler.right_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+            X_auto, G_auto
+        )
+        vectors_manual = (
+            kullback_leibler.RightKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+                X_manual, G_manual
+            )
+        )
+
+        loss_manual = torch.norm(vectors_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(vectors_auto)
         loss_auto.backward()
 
         assert X_manual.grad is not None

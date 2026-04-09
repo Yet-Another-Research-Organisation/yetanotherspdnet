@@ -1,7 +1,18 @@
 import torch
 from torch.autograd import Function
 
-from ..spd_linalg import symmetrize
+from ..spd_linalg import (
+    CongruenceSPDSqrtm,
+    InvmSPD,
+    SymMatrixToCoordinates,
+    Whitening,
+    congruence_SPD_sqrtm,
+    inv_sqrtm_SPD,
+    invm_SPD,
+    sym_matrix_to_coordinates,
+    symmetrize,
+    whitening,
+)
 
 
 # ------------------
@@ -278,6 +289,58 @@ class LeftKullbackLeiblerStdScalar(Function):
             / std_scalar
         )
         return grad_input_data, grad_input_G
+
+
+def left_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Fisher vectors of the left Kullback-Leibler divergence in coordinates w.r.t. affine-invariant geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    fisher_vectors : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+    """
+    data_transf = whitening(data, reference_point)
+    Identity = torch.diag_embed(
+        torch.ones(data.shape[:-1], device=data.device, dtype=data.dtype)
+    )
+    return sym_matrix_to_coordinates(data_transf - Identity) / 2
+
+
+def LeftKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Fisher vectors of the left Kullback-Leibler divergence in coordinates w.r.t. affine-invariant geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    fisher_vectors : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+    """
+    data_transf = Whitening.apply(data, reference_point)
+    Identity = torch.diag_embed(
+        torch.ones(data.shape[:-1], device=data.device, dtype=data.dtype)
+    )
+    return SymMatrixToCoordinates.apply(data_transf - Identity) / 2
 
 
 # --------------
@@ -577,3 +640,57 @@ class RightKullbackLeiblerStdScalar(Function):
             grad_output * (arithmetic_mean(data_inv) - G_inv) / 2 / std_scalar
         )
         return grad_input_data, grad_input_G
+
+
+def right_kullback_leibler_fisher_vector_affine_invariant_coordinates(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Fisher vectors of the right Kullback-Leibler divergence in coordinates w.r.t. affine-invariant geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    fisher_vectors : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+    """
+    data_invm = invm_SPD(data)[0]
+    data_transf = congruence_SPD_sqrtm(data_invm, reference_point)
+    Identity = torch.diag_embed(
+        torch.ones(data.shape[:-1], device=data.device, dtype=data.dtype)
+    )
+    return sym_matrix_to_coordinates(Identity - data_transf) / 2
+
+
+def RightKullbackLeiblerFisherVectorAffineInvariantCoordinates(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Fisher vectors of the right Kullback-Leibler divergence in coordinates w.r.t. affine-invariant geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    reference_point : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    fisher_vectors : torch.Tensor of shape (..., n_features*(n_features+1)//2)
+        Batch of coordinates in the tangent space of reference_point
+    """
+    data_invm = InvmSPD.apply(data)
+    data_transf = CongruenceSPDSqrtm.apply(data_invm, reference_point)
+    Identity = torch.diag_embed(
+        torch.ones(data.shape[:-1], device=data.device, dtype=data.dtype)
+    )
+    return SymMatrixToCoordinates.apply(Identity - data_transf) / 2

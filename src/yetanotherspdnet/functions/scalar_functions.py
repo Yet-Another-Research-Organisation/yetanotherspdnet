@@ -69,6 +69,23 @@ def inv(x: torch.Tensor) -> torch.Tensor:
     return 1 / x
 
 
+def inv_derivative(x: torch.Tensor) -> torch.Tensor:
+    """
+    Derivative of inverse function
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Scalar or array of scalars.
+
+    Returns
+    -------
+    x_inv_deriv : torch.Tensor
+        Derivative of the inverse of x
+    """
+    return -1 / torch.square(x)
+
+
 def scaled_softplus(x: torch.Tensor) -> torch.Tensor:
     """
     Scaled SoftPlus function.
