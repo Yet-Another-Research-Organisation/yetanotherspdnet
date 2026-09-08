@@ -71,11 +71,8 @@ Documentation = "https://yet-another-research-organisation.github.io/yetanothers
 Repository = "https://github.com/Yet-Another-Research-Organisation/yetanotherspdnet"
 Issues = "https://github.com/Yet-Another-Research-Organisation/yetanotherspdnet/issues"
 
-[tool.setuptools]
-packages = ["yetanotherspdnet"]
-
-[tool.setuptools.package-dir]
-yetanotherspdnet = "src/yetanotherspdnet"
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.setuptools.package-data]
 yetanotherspdnet = ["py.typed"]
