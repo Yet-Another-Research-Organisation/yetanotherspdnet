@@ -743,3 +743,533 @@ class TestSPDnet:
                 dtype=dtype,
                 generator=generator,
             )
+
+
+class TestGBWBNRResNet:
+    """Test suite for GBWBNRResNet model."""
+
+    # RResNet models use nested eigenvalue decompositions (exp map) that
+    # require float64 for numerical stability.
+
+    @pytest.mark.parametrize(
+        "input_dim, hidden_dim, output_dim",
+        [(10, 5, 3), (20, 8, 5)],
+    )
+    def test_initialization(self, input_dim, hidden_dim, output_dim, device, generator):
+        """Test GBWBNRResNet initializes correctly."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            output_dim=output_dim,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        assert model.input_dim == input_dim
+        assert model.hidden_dim == hidden_dim
+        assert model.output_dim == output_dim
+
+    @pytest.mark.parametrize("n_samples", [1, 10])
+    def test_forward_shape(self, n_samples, device, generator):
+        """Forward pass returns correct shape."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=10,
+            hidden_dim=5,
+            output_dim=3,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(
+            10, n_samples, device=device, dtype=torch.float64, generator=generator
+        )
+        output = model(X)
+        expected_shape = (n_samples, 3) if n_samples > 1 else (3,)
+        assert output.shape == expected_shape
+        assert output.dtype == torch.float64
+
+    @pytest.mark.parametrize("vec_type", ["vec", "vech"])
+    def test_vec_type(self, vec_type, device, generator):
+        """Both vectorization types work."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=10,
+            hidden_dim=5,
+            output_dim=3,
+            vec_type=vec_type,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        assert output.shape == (4, 3)
+
+    def test_backward(self, device, generator):
+        """Backward pass produces finite gradients."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=10,
+            hidden_dim=5,
+            output_dim=3,
+            batchnorm_mean_type="affine_invariant",
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        loss = output.sum()
+        loss.backward()
+        for p in model.parameters():
+            if p.grad is not None:
+                assert torch.isfinite(p.grad).all()
+
+    def test_softmax(self, device, generator):
+        """Softmax output sums to 1."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=10,
+            hidden_dim=5,
+            output_dim=3,
+            softmax=True,
+            batchnorm_mean_type="affine_invariant",
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        assert_close(
+            output.sum(dim=-1),
+            torch.ones(4, dtype=torch.float64, device=device),
+        )
+
+    @pytest.mark.parametrize("batchnorm", [True, False])
+    def test_with_without_batchnorm(self, batchnorm, device, generator):
+        """Works with and without batchnorm."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=10,
+            hidden_dim=5,
+            output_dim=3,
+            batchnorm=batchnorm,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        assert output.shape == (4, 3)
+
+    @pytest.mark.parametrize(
+        "batchnorm_mean_type",
+        ["bures_wasserstein", "affine_invariant", "log_euclidean"],
+    )
+    def test_batchnorm_mean_types(self, batchnorm_mean_type, device, generator):
+        """Different batchnorm mean types work."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=10,
+            hidden_dim=5,
+            output_dim=3,
+            batchnorm=True,
+            batchnorm_mean_type=batchnorm_mean_type,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        assert output.shape == (4, 3)
+
+    @pytest.mark.parametrize("spectrum_type", ["conv1d", "mlp"])
+    def test_spectrum_types(self, spectrum_type, device, generator):
+        """Both spectrum types work."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=10,
+            hidden_dim=5,
+            output_dim=3,
+            spectrum_type=spectrum_type,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        assert output.shape == (4, 3)
+
+    def test_get_last_tensor(self, device, generator):
+        """get_last_tensor returns SPD tensor before vectorization."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=10,
+            hidden_dim=5,
+            output_dim=3,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        last = model.get_last_tensor(X)
+        assert last.shape == (4, 5, 5)
+
+    def test_repr_and_layers_str(self, device, generator):
+        """repr and layers_str return informative strings."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=10,
+            hidden_dim=5,
+            output_dim=3,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        r = repr(model)
+        assert "GBWBNRResNet" in r
+        assert "input_dim=10" in r
+        ls = model.layers_str()
+        assert "Layers:" in ls
+
+    def test_model_hash(self, device, generator):
+        """Model hash is consistent."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=10,
+            hidden_dim=5,
+            output_dim=3,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        h1 = model.create_model_name_hash()
+        h2 = model.get_model_hash()
+        assert h1 == h2
+        assert len(h1) == 8
+
+    def test_train_eval_modes(self, device, generator):
+        """Train and eval modes produce valid output."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        model = GBWBNRResNet(
+            input_dim=10,
+            hidden_dim=5,
+            output_dim=3,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+
+        model.train()
+        out_train = model(X)
+        assert out_train.shape == (4, 3)
+
+        model.eval()
+        out_eval = model(X)
+        assert out_eval.shape == (4, 3)
+
+    @pytest.mark.parametrize("invalid_vec_type", ["invalid", "matric", ""])
+    def test_invalid_vec_type(self, invalid_vec_type, device, generator):
+        """Invalid vec_type raises."""
+        from yetanotherspdnet.model import GBWBNRResNet
+
+        with pytest.raises(AssertionError):
+            GBWBNRResNet(
+                input_dim=10,
+                hidden_dim=5,
+                output_dim=3,
+                vec_type=invalid_vec_type,
+                device=device,
+                dtype=torch.float64,
+                generator=generator,
+            )
+
+
+class TestRResNet:
+    """Test suite for RResNet model."""
+
+    # RResNet models use nested eigenvalue decompositions (exp map) that
+    # require float64 for numerical stability.
+
+    @pytest.mark.parametrize(
+        "input_dim, hidden_layers, n_residual, output_dim",
+        [
+            (10, [5], [1], 3),
+            (20, [15, 10], [1, 2], 5),
+        ],
+    )
+    def test_initialization(
+        self, input_dim, hidden_layers, n_residual, output_dim, device, generator
+    ):
+        """Test RResNet initializes correctly."""
+        from yetanotherspdnet.model import RResNet
+
+        model = RResNet(
+            input_dim=input_dim,
+            hidden_layers_size=hidden_layers,
+            n_residual_blocks=n_residual,
+            output_dim=output_dim,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        assert model.input_dim == input_dim
+        assert model.hidden_layers_size == hidden_layers
+        assert model.n_residual_blocks == n_residual
+        assert model.output_dim == output_dim
+
+    @pytest.mark.parametrize("n_samples", [1, 10])
+    def test_forward_shape(self, n_samples, device, generator):
+        """Forward pass returns correct shape."""
+        from yetanotherspdnet.model import RResNet
+
+        model = RResNet(
+            input_dim=10,
+            hidden_layers_size=[5],
+            n_residual_blocks=[1],
+            output_dim=3,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(
+            10, n_samples, device=device, dtype=torch.float64, generator=generator
+        )
+        output = model(X)
+        expected_shape = (n_samples, 3) if n_samples > 1 else (3,)
+        assert output.shape == expected_shape
+
+    @pytest.mark.parametrize("vec_type", ["vec", "vech"])
+    def test_vec_type(self, vec_type, device, generator):
+        """Both vectorization types work."""
+        from yetanotherspdnet.model import RResNet
+
+        model = RResNet(
+            input_dim=10,
+            hidden_layers_size=[5],
+            n_residual_blocks=[1],
+            output_dim=3,
+            vec_type=vec_type,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        assert output.shape == (4, 3)
+
+    def test_backward(self, device, generator):
+        """Backward pass produces finite gradients."""
+        from yetanotherspdnet.model import RResNet
+
+        model = RResNet(
+            input_dim=10,
+            hidden_layers_size=[5],
+            n_residual_blocks=[1],
+            output_dim=3,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        loss = output.sum()
+        loss.backward()
+        for p in model.parameters():
+            if p.grad is not None:
+                assert torch.isfinite(p.grad).all()
+
+    def test_multi_stage(self, device, generator):
+        """Multi-stage architecture works end-to-end."""
+        from yetanotherspdnet.model import RResNet
+
+        model = RResNet(
+            input_dim=15,
+            hidden_layers_size=[10, 5],
+            n_residual_blocks=[1, 2],
+            output_dim=3,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(15, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        assert output.shape == (4, 3)
+        output.sum().backward()
+
+    @pytest.mark.parametrize("reeig", [True, False])
+    def test_with_reeig(self, reeig, device, generator):
+        """Works with and without ReEig."""
+        from yetanotherspdnet.model import RResNet
+
+        model = RResNet(
+            input_dim=10,
+            hidden_layers_size=[5],
+            n_residual_blocks=[1],
+            output_dim=3,
+            reeig=reeig,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        assert output.shape == (4, 3)
+
+    @pytest.mark.parametrize("batchnorm", [True, False])
+    def test_with_without_batchnorm(self, batchnorm, device, generator):
+        """Works with and without batchnorm."""
+        from yetanotherspdnet.model import RResNet
+
+        model = RResNet(
+            input_dim=10,
+            hidden_layers_size=[5],
+            n_residual_blocks=[1],
+            output_dim=3,
+            batchnorm=batchnorm,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        assert output.shape == (4, 3)
+
+    def test_zero_residual_blocks(self, device, generator):
+        """Stage with 0 residual blocks (just BiMap) works."""
+        from yetanotherspdnet.model import RResNet
+
+        model = RResNet(
+            input_dim=10,
+            hidden_layers_size=[5],
+            n_residual_blocks=[0],
+            output_dim=3,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        assert output.shape == (4, 3)
+
+    def test_softmax(self, device, generator):
+        """Softmax output sums to 1."""
+        from yetanotherspdnet.model import RResNet
+
+        model = RResNet(
+            input_dim=10,
+            hidden_layers_size=[5],
+            n_residual_blocks=[1],
+            output_dim=3,
+            softmax=True,
+            use_autograd=True,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        X = random_SPD(10, 4, device=device, dtype=torch.float64, generator=generator)
+        output = model(X)
+        assert_close(
+            output.sum(dim=-1),
+            torch.ones(4, dtype=torch.float64, device=device),
+        )
+
+    def test_mismatched_lengths_raises(self, device, generator):
+        """Mismatched hidden_layers_size and n_residual_blocks raises."""
+        from yetanotherspdnet.model import RResNet
+
+        with pytest.raises(AssertionError, match="same length"):
+            RResNet(
+                input_dim=10,
+                hidden_layers_size=[5, 3],
+                n_residual_blocks=[1],
+                output_dim=3,
+                device=device,
+                dtype=torch.float64,
+                generator=generator,
+            )
+
+    def test_repr_and_layers_str(self, device, generator):
+        """repr and layers_str return informative strings."""
+        from yetanotherspdnet.model import RResNet
+
+        model = RResNet(
+            input_dim=10,
+            hidden_layers_size=[8, 5],
+            n_residual_blocks=[1, 2],
+            output_dim=3,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        r = repr(model)
+        assert "RResNet" in r
+        assert "input_dim=10" in r
+        ls = model.layers_str()
+        assert "Layers:" in ls
+
+    def test_model_hash(self, device, generator):
+        """Model hash is consistent."""
+        from yetanotherspdnet.model import RResNet
+
+        model = RResNet(
+            input_dim=10,
+            hidden_layers_size=[5],
+            n_residual_blocks=[1],
+            output_dim=3,
+            device=device,
+            dtype=torch.float64,
+            generator=generator,
+        )
+        h1 = model.create_model_name_hash()
+        h2 = model.get_model_hash()
+        assert h1 == h2
+
+    @pytest.mark.parametrize("invalid_vec_type", ["invalid", "matric", ""])
+    def test_invalid_vec_type(self, invalid_vec_type, device, generator):
+        """Invalid vec_type raises."""
+        from yetanotherspdnet.model import RResNet
+
+        with pytest.raises(AssertionError):
+            RResNet(
+                input_dim=10,
+                hidden_layers_size=[5],
+                n_residual_blocks=[1],
+                output_dim=3,
+                vec_type=invalid_vec_type,
+                device=device,
+                dtype=torch.float64,
+                generator=generator,
+            )

@@ -1,4 +1,4 @@
-"""Affine-invariant Riemannian geometry: geodesic, mean, and standard deviation."""
+"""Affine-invariant Riemannian geometry: geodesic, exp/log maps, mean, and standard deviation."""
 
 import math
 
@@ -15,6 +15,7 @@ from ..spd_linalg import (
     logm_SPD,
     solve_sylvester_SPD,
     sqrtm_SPD,
+    symmetrize,
 )
 from .kullback_leibler import arithmetic_mean
 
@@ -25,9 +26,20 @@ from .kullback_leibler import arithmetic_mean
 def affine_invariant_geodesic(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
-    """
-    Affine-invariant geodesic:
-    point1^{1/2} ( point1^{-1/2} point2 point1^{-1/2} )^t point1^{1/2}
+    r"""
+    Affine-invariant geodesic between two SPD matrices.
+
+    .. math::
+
+        \gamma(t) = P_1^{1/2}
+            \big(P_1^{-1/2} P_2 P_1^{-1/2}\big)^{t}
+            P_1^{1/2}
+
+    with :math:`t \in [0, 1]` (:math:`\gamma(0) = P_1`,
+    :math:`\gamma(1) = P_2`). This is the geodesic for the affine-invariant
+    Riemannian metric on the SPD manifold, invariant under congruence
+    transformations :math:`P \mapsto A P A^\top` for any invertible
+    :math:`A`.
 
     Parameters
     ----------
@@ -215,8 +227,17 @@ class AffineInvariantGeodesic(Function):
 def affine_invariant_mean_2points(
     point1: torch.Tensor, point2: torch.Tensor
 ) -> torch.Tensor:
-    """
-    Affine-invariant (geometric) mean of two SPD matrices
+    r"""
+    Affine-invariant (geometric) mean of two SPD matrices.
+
+    .. math::
+
+        G(P_1, P_2) = P_1^{1/2}
+            \big(P_1^{-1/2} P_2 P_1^{-1/2}\big)^{1/2}
+            P_1^{1/2}
+
+    the midpoint (:math:`t=1/2`) of the affine-invariant geodesic between
+    :math:`P_1` and :math:`P_2` (see :func:`affine_invariant_geodesic`).
 
     Parameters
     ----------
@@ -339,8 +360,24 @@ class AffineInvariantMean2Points(Function):
 # Affine-invariant mean
 # ---------------------
 def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
-    """
-    Affine-invariant (geometric) mean computed with fixed-point algorithm
+    r"""
+    Affine-invariant (geometric/Fréchet) mean computed with a fixed-point
+    (Karcher flow) algorithm.
+
+    Starting from :math:`M_0 = I`, each iteration :math:`k` moves along the
+    average tangent direction at :math:`M_k` and retracts back onto the
+    manifold with the affine-invariant exponential map
+    (:func:`affine_invariant_exp`):
+
+    .. math::
+
+        M_{k+1} = M_k^{1/2} \exp\!\left(\eta_k \cdot
+            \frac{1}{N}\sum_{i=1}^{N} \log\big(M_k^{-1/2} P_i M_k^{-1/2}\big)
+            \right) M_k^{1/2}
+
+    with step size :math:`\eta_k = 0.95^k`. This converges to the unique
+    minimizer of :math:`\sum_i d_{AI}(M, P_i)^2` for the affine-invariant
+    distance :math:`d_{AI}`.
 
     Parameters
     ----------
@@ -559,8 +596,17 @@ def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tens
 def affine_invariant_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> torch.Tensor:
-    """
-    Scalar standard deviation with respect to the affine-invariant distance
+    r"""
+    Scalar standard deviation with respect to the affine-invariant distance.
+
+    .. math::
+
+        \sigma = \sqrt{\frac{1}{N}\sum_{i=1}^{N}
+            \big\lVert \log\big(G^{-1/2} P_i G^{-1/2}\big) \big\rVert_F^2}
+
+    where :math:`G` is the reference point (typically the affine-invariant
+    mean) — equivalently, the norm of :math:`\mathrm{Log}_G(P_i)` under the
+    affine-invariant metric (:func:`affine_invariant_log`).
 
     Parameters
     ----------
@@ -680,3 +726,242 @@ class AffineInvariantStdScalar(Function):
             / scalar_std
         )
         return grad_input_data, grad_input_G
+
+
+# --------------------------------
+# Affine-invariant exponential map
+# --------------------------------
+def affine_invariant_exp(base: torch.Tensor, tangent: torch.Tensor) -> torch.Tensor:
+    r"""
+    Affine-invariant exponential map on the SPD manifold.
+
+    .. math::
+
+        \mathrm{Exp}_X(V) = X^{1/2} \exp\big(X^{-1/2} V X^{-1/2}\big) X^{1/2}
+
+    Maps a tangent vector :math:`V` at base point :math:`X` (a symmetric
+    matrix) to a point on the SPD manifold, by following the geodesic from
+    :math:`X` in direction :math:`V` for unit time. Inverse of
+    :func:`affine_invariant_log`.
+
+    Parameters
+    ----------
+    base : torch.Tensor of shape (..., n, n)
+        Base point(s) on the SPD manifold
+
+    tangent : torch.Tensor of shape (..., n, n)
+        Tangent vector(s) at base (symmetric matrices)
+
+    Returns
+    -------
+    result : torch.Tensor of shape (..., n, n)
+        Point(s) on the SPD manifold
+    """
+    eigvals, eigvecs = torch.linalg.eigh(base)
+    base_sqrtm = eigh_operation(eigvals, eigvecs, torch.sqrt)
+    base_inv_sqrtm = eigh_operation(eigvals, eigvecs, inv_sqrt)
+    transformed = base_inv_sqrtm @ tangent @ base_inv_sqrtm
+    exp_transformed = expm_symmetric(transformed)[0]
+    return base_sqrtm @ exp_transformed @ base_sqrtm
+
+
+class AffineInvariantExp(Function):
+    """
+    Affine-invariant exponential map with manual backward.
+
+    Exp_X(V) = X^{1/2} expm(X^{-1/2} V X^{-1/2}) X^{1/2}
+    """
+
+    @staticmethod
+    def forward(ctx, base: torch.Tensor, tangent: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the affine-invariant exponential map.
+
+        Parameters
+        ----------
+        ctx : context
+            Context for saving tensors for backward
+
+        base : torch.Tensor of shape (..., n, n)
+            Base point(s) on the SPD manifold
+
+        tangent : torch.Tensor of shape (..., n, n)
+            Tangent vector(s) at base (symmetric matrices)
+
+        Returns
+        -------
+        result : torch.Tensor of shape (..., n, n)
+            Point(s) on the SPD manifold
+        """
+        eigvals_base, eigvecs_base = torch.linalg.eigh(base)
+        base_sqrtm = eigh_operation(eigvals_base, eigvecs_base, torch.sqrt)
+        base_inv_sqrtm = eigh_operation(eigvals_base, eigvecs_base, inv_sqrt)
+        transformed = base_inv_sqrtm @ tangent @ base_inv_sqrtm
+        eigvals_trans, eigvecs_trans = torch.linalg.eigh(transformed)
+        exp_transformed = eigh_operation(eigvals_trans, eigvecs_trans, torch.exp)
+        result = base_sqrtm @ exp_transformed @ base_sqrtm
+        ctx.save_for_backward(
+            base_sqrtm,
+            base_inv_sqrtm,
+            eigvals_base,
+            eigvecs_base,
+            eigvals_trans,
+            eigvecs_trans,
+            base,
+            tangent,
+        )
+        return result
+
+    @staticmethod
+    def backward(
+        ctx, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """
+        Backward pass of the affine-invariant exponential map.
+
+        Parameters
+        ----------
+        ctx : context
+            Context with saved tensors
+
+        grad_output : torch.Tensor of shape (..., n, n)
+            Gradient w.r.t. the output
+
+        Returns
+        -------
+        grad_base : torch.Tensor of shape (..., n, n) or None
+        grad_tangent : torch.Tensor of shape (..., n, n) or None
+        """
+        (
+            base_sqrtm,
+            base_inv_sqrtm,
+            eigvals_base,
+            eigvecs_base,
+            eigvals_trans,
+            eigvecs_trans,
+            base,
+            tangent,
+        ) = ctx.saved_tensors
+
+        grad_tangent = None
+        grad_base = None
+
+        if ctx.needs_input_grad[1]:
+            # d(result)/d(tangent):
+            # result = S @ expm(S^{-1} V S^{-1}) @ S with S = base^{1/2}
+            # grad_tangent = S^{-1} @ d_expm(S^T @ grad @ S) @ S^{-1}
+            grad_tangent = (
+                base_inv_sqrtm
+                @ eigh_operation_grad(
+                    base_sqrtm @ grad_output @ base_sqrtm,
+                    eigvals_trans,
+                    eigvecs_trans,
+                    torch.exp,
+                    torch.exp,
+                )
+                @ base_inv_sqrtm
+            )
+
+        if ctx.needs_input_grad[0]:
+            # Product rule for result = S @ M @ S where
+            # S = base^{1/2}, M = expm(S^{-1} V S^{-1})
+            exp_trans = eigh_operation(eigvals_trans, eigvecs_trans, torch.exp)
+
+            # d/dS [S M S] with M=expm(T), S=base^{1/2}, G=grad_output:
+            # gradient = M @ S @ G + G @ S @ M
+            grad_through_sandwich = (
+                exp_trans @ base_sqrtm @ grad_output
+                + grad_output @ base_sqrtm @ exp_trans
+            )
+            grad_through_sqrtm = eigh_operation_grad(
+                grad_through_sandwich,
+                eigvals_base,
+                eigvecs_base,
+                torch.sqrt,
+                lambda x: 0.5 / torch.sqrt(x),
+            )
+
+            # d/dR through expm argument T = R V R, where R = base^{-1/2}:
+            # G_T = Daleckii-Krein gradient of expm at T w.r.t. S @ G @ S
+            # d/dR = V @ R @ G_T + G_T @ R @ V
+            inner_grad = eigh_operation_grad(
+                base_sqrtm @ grad_output @ base_sqrtm,
+                eigvals_trans,
+                eigvecs_trans,
+                torch.exp,
+                torch.exp,
+            )
+            grad_through_inv_sqrtm = (
+                tangent @ base_inv_sqrtm @ inner_grad
+                + inner_grad @ base_inv_sqrtm @ tangent
+            )
+            grad_through_inv_sqrtm = eigh_operation_grad(
+                grad_through_inv_sqrtm,
+                eigvals_base,
+                eigvecs_base,
+                inv_sqrt,
+                lambda x: -0.5 * torch.pow(x, -1.5),
+            )
+
+            grad_base = grad_through_sqrtm + grad_through_inv_sqrtm
+
+        return grad_base, grad_tangent
+
+
+# ----------------------------
+# Affine-invariant log map
+# ----------------------------
+def affine_invariant_log(base: torch.Tensor, point: torch.Tensor) -> torch.Tensor:
+    r"""
+    Affine-invariant logarithmic map on the SPD manifold.
+
+    .. math::
+
+        \mathrm{Log}_X(Y) = X^{1/2} \log\big(X^{-1/2} Y X^{-1/2}\big) X^{1/2}
+
+    Maps a point :math:`Y` on the manifold to a tangent vector at base
+    :math:`X`. Inverse of :func:`affine_invariant_exp`.
+
+    Parameters
+    ----------
+    base : torch.Tensor of shape (..., n, n)
+        Base point(s) on the SPD manifold
+
+    point : torch.Tensor of shape (..., n, n)
+        Point(s) on the SPD manifold
+
+    Returns
+    -------
+    tangent : torch.Tensor of shape (..., n, n)
+        Tangent vector(s) at base (symmetric matrices)
+    """
+    eigvals, eigvecs = torch.linalg.eigh(base)
+    base_sqrtm = eigh_operation(eigvals, eigvecs, torch.sqrt)
+    base_inv_sqrtm = eigh_operation(eigvals, eigvecs, inv_sqrt)
+    transformed = base_inv_sqrtm @ point @ base_inv_sqrtm
+    log_transformed = logm_SPD(transformed)[0]
+    return base_sqrtm @ log_transformed @ base_sqrtm
+
+
+# -------------------------------------------
+# Affine-invariant projection onto SPD
+# -------------------------------------------
+def affine_invariant_projx(data: torch.Tensor) -> torch.Tensor:
+    """
+    Project matrices onto the SPD manifold by symmetrizing and
+    clamping eigenvalues to be strictly positive.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n, n)
+        Batch of matrices
+
+    Returns
+    -------
+    projected : torch.Tensor of shape (..., n, n)
+        Batch of SPD matrices
+    """
+    data = symmetrize(data)
+    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals = eigvals.clamp(min=1e-8)
+    return (eigvecs * eigvals.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)

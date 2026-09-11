@@ -18,8 +18,10 @@ from yetanotherspdnet.functions.scalar_functions import (
 
 
 def symmetrize(data: torch.Tensor) -> torch.Tensor:
-    """
-    Symmetrize a tensor along the last two dimensions
+    r"""
+    Symmetrize a tensor along the last two dimensions.
+
+    .. math:: \operatorname{sym}(A) = \frac{1}{2}\big(A + A^\top\big)
 
     Parameters
     ----------
@@ -228,8 +230,18 @@ class VechBatch(Function):
 def eigh_operation(
     eigvals: torch.Tensor, eigvecs: torch.Tensor, operation: Callable
 ) -> torch.Tensor:
-    """
-    Applies a function on the eigenvalues of a batch of symmetric matrices
+    r"""
+    Applies a function on the eigenvalues of a batch of symmetric matrices.
+
+    .. math::
+
+        f(A) = V \operatorname{diag}\big(f(\lambda_1), \dots, f(\lambda_n)\big) V^\top
+
+    given the eigendecomposition :math:`A = V \operatorname{diag}(\lambda) V^\top`.
+    This is the core primitive behind every matrix function in this module
+    (:func:`sqrtm_SPD`, :func:`inv_sqrtm_SPD`, :func:`powm_SPD`,
+    :func:`logm_SPD`, :func:`expm_symmetric`, …): each just picks a
+    different scalar ``operation`` applied eigenvalue-wise.
 
     Parameters
     ----------
@@ -341,9 +353,18 @@ def eigh_operation_grad(
 def solve_sylvester_SPD(
     eigvals: torch.Tensor, eigvecs: torch.Tensor, mat: torch.Tensor
 ) -> torch.Tensor:
-    """
-    Solve Sylvester equations in the context of SPD matrices
-    relying on eigenvalue decomposition
+    r"""
+    Solve Sylvester equations in the context of SPD matrices relying on
+    eigenvalue decomposition.
+
+    Given :math:`A = V \operatorname{diag}(\lambda) V^\top` (via
+    ``eigvals``, ``eigvecs``), solves :math:`AX + XA = \text{mat}` for
+    :math:`X` in closed form:
+
+    .. math::
+
+        X = V\left[\frac{1}{\lambda_i + \lambda_j}
+            \,(V^\top \,\text{mat}\, V)_{ij}\right]_{ij} V^\top
 
     Parameters
     ----------
@@ -375,8 +396,12 @@ def solve_sylvester_SPD(
 # SPD matrix square root
 # ----------------------
 def sqrtm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Matrix square root of a batch of SPD matrices
+    r"""
+    Matrix square root of a batch of SPD matrices.
+
+    .. math:: P^{1/2} = V \operatorname{diag}(\sqrt{\lambda}) V^\top
+
+    via :func:`eigh_operation` with ``operation=torch.sqrt``.
 
     Parameters
     ----------
@@ -456,8 +481,12 @@ class SqrtmSPD(Function):
 def inv_sqrtm_SPD(
     data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Inverse matrix square root of a batch of SPD matrices
+    r"""
+    Inverse matrix square root of a batch of SPD matrices.
+
+    .. math:: P^{-1/2} = V \operatorname{diag}(\lambda^{-1/2}) V^\top
+
+    via :func:`eigh_operation` with ``operation=inv_sqrt``.
 
     Parameters
     ----------
@@ -537,8 +566,12 @@ class InvSqrtmSPD(Function):
 def powm_SPD(
     data: torch.Tensor, exponent: float | torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Matrix power of a batch of SPD matrices
+    r"""
+    Matrix power of a batch of SPD matrices.
+
+    .. math:: P^{p} = V \operatorname{diag}(\lambda^{p}) V^\top
+
+    via :func:`eigh_operation` with ``operation=lambda x: x**exponent``.
 
     Parameters
     ----------
@@ -635,8 +668,15 @@ class PowmSPD(Function):
 # SPD matrix logarithm
 # --------------------
 def logm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Matrix logarithm of a batch of SPD matrices
+    r"""
+    Matrix logarithm of a batch of SPD matrices.
+
+    .. math:: \log(P) = V \operatorname{diag}(\log\lambda) V^\top
+
+    via :func:`eigh_operation` with ``operation=torch.log``. Maps the SPD
+    manifold to the vector space of symmetric matrices — the basis of the
+    Log-Euclidean geometry (see
+    :mod:`~yetanotherspdnet.functions.spd_geometries.log_euclidean`).
 
     Parameters
     ----------
@@ -714,8 +754,14 @@ class LogmSPD(Function):
 def expm_symmetric(
     data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Matrix exponential of a batch of symmetric matrices
+    r"""
+    Matrix exponential of a batch of symmetric matrices.
+
+    .. math:: \exp(S) = V \operatorname{diag}(\exp\lambda) V^\top
+
+    via :func:`eigh_operation` with ``operation=torch.exp``. The result is
+    always SPD (eigenvalues :math:`\exp\lambda > 0`); inverse of
+    :func:`logm_SPD`.
 
     Parameters
     ----------
@@ -793,10 +839,16 @@ class ExpmSymmetric(Function):
 def scaled_softplus_symmetric(
     data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
+    r"""
     Scaled matrix SoftPlus of a batch of symmetric matrices.
-    It is scaled so that: f(0) = 1, f(x) -> 0 as x -> -inf and
-    f'(x) -> 1 as x -> +inf
+
+    .. math:: f(S) = V \operatorname{diag}\big(\log_2(1 + 2^{\lambda})\big) V^\top
+
+    via :func:`eigh_operation` with
+    ``operation=`` :func:`~yetanotherspdnet.functions.scalar_functions.scaled_softplus`.
+    Maps any symmetric matrix to an SPD matrix (eigenvalues strictly
+    positive) — used to parametrize BiMap weights or BatchNorm scale so
+    they stay on the SPD manifold under unconstrained optimization.
 
     Parameters
     ----------
@@ -877,8 +929,12 @@ class ScaledSoftPlusSymmetric(Function):
 def inv_scaled_softplus_SPD(
     data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Inverse scaled SoftPlus of a batch of SPD matrices
+    r"""
+    Inverse scaled SoftPlus of a batch of SPD matrices.
+
+    .. math:: f^{-1}(P) = V \operatorname{diag}\big(\log_2(2^{\lambda} - 1)\big) V^\top
+
+    via :func:`eigh_operation`. Inverse of :func:`scaled_softplus_symmetric`.
 
     Parameters
     ----------
@@ -961,8 +1017,18 @@ class InvScaledSoftPlusSPD(Function):
 def eigh_relu(
     data: torch.Tensor, eps: float
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    ReLu activation function on the eigenvalues of SPD matrices
+    r"""
+    ReLu activation function on the eigenvalues of SPD matrices.
+
+    .. math::
+
+        \operatorname{ReEig}_\epsilon(P) = V \operatorname{diag}\big(
+            \max(\lambda, \epsilon)\big) V^\top
+
+    via :func:`eigh_operation`. This is the ReEig layer's core operation
+    (:class:`~yetanotherspdnet.nn.base.ReEig`): clamps small/negative
+    eigenvalues to :math:`\epsilon > 0` to keep the result SPD, the
+    manifold analogue of ReLU rectification.
 
     Parameters
     ----------
@@ -1053,8 +1119,14 @@ class EighReLu(Function):
 # Various congruences of SPD matrices
 # -----------------------------------
 def congruence_SPD(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
-    """
-    Congruence of a batch of SPD matrices with an SPD matrix
+    r"""
+    Congruence of a batch of SPD matrices with an SPD matrix.
+
+    .. math:: P' = A\, P\, A
+
+    (here :math:`A` is itself SPD, hence symmetric, so :math:`A^\top = A`
+    and there is no separate transpose). Congruence by an SPD matrix
+    preserves the SPD manifold.
 
     Parameters
     ----------
@@ -1134,8 +1206,14 @@ class CongruenceSPD(Function):
 
 
 def whitening(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
-    """
-    Whitening of a batch of SPD matrices with an SPD matrix
+    r"""
+    Whitening of a batch of SPD matrices with an SPD matrix.
+
+    .. math:: P' = A^{-1/2}\, P\, A^{-1/2}
+
+    i.e. :func:`congruence_SPD` with :math:`A^{-1/2}` (see
+    :func:`inv_sqrtm_SPD`) — transforms data so that :math:`A` itself maps
+    to the identity, the SPD analogue of standardizing by the covariance.
 
     Parameters
     ----------
@@ -1221,8 +1299,16 @@ class Whitening(Function):
 
 
 def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
-    """
-    Forward pass of the congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
+    r"""
+    Forward pass of the congruence of a batch of SPD matrices with a
+    (full-rank) rectangular matrix.
+
+    .. math:: P' = W^\top P\, W, \qquad W \in \mathbb{R}^{n_{in} \times n_{out}}
+
+    with :math:`n_{in} \geq n_{out}`. This is the BiMap layer's core
+    operation (:class:`~yetanotherspdnet.nn.base.BiMap`): a dimension
+    reduction that keeps the result SPD as long as :math:`W` has full
+    column rank.
 
     Parameters
     ----------

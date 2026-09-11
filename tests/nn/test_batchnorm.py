@@ -1797,3 +1797,194 @@ class TestBatchNormSPDMeanScalarVariance:
 
         layer.eval()
         assert layer.training is False
+
+
+class TestBatchNormBuresWasserstein:
+    """Tests specific to Bures-Wasserstein batch normalization (GBWBN)."""
+
+    @pytest.mark.parametrize("n_features", [10])
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
+    @pytest.mark.parametrize("use_autograd", [False, True])
+    def test_initialization(
+        self, n_features, bw_theta, parametrization, use_autograd, device, dtype
+    ):
+        """Test that BW batchnorm initializes correctly with extra parameters."""
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type="bures_wasserstein",
+            bw_theta=bw_theta,
+            parametrization=parametrization,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+        )
+        assert layer.mean_type == "bures_wasserstein"
+        assert layer.bw_theta == bw_theta
+        assert layer.bw_M.shape == (n_features, n_features)
+        assert layer.bw_G_hat.shape == (n_features, n_features)
+        eye = torch.eye(n_features, device=device, dtype=dtype)
+        assert_close(layer.bw_M, eye)
+        assert_close(layer.bw_G_hat, eye)
+
+    @pytest.mark.parametrize("n_matrices", [5])
+    @pytest.mark.parametrize("n_features, cond", [(10, 100)])
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    @pytest.mark.parametrize(
+        "norm_strategy, minibatch_mode",
+        [
+            ("classical", ""),
+            ("minibatch", "constant"),
+        ],
+    )
+    @pytest.mark.parametrize("use_autograd", [True])
+    def test_forward_pass(
+        self,
+        n_matrices,
+        n_features,
+        cond,
+        bw_theta,
+        norm_strategy,
+        minibatch_mode,
+        use_autograd,
+        device,
+        dtype,
+        generator,
+    ):
+        """Test that BW batchnorm forward returns SPD matrices of correct shape."""
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type="bures_wasserstein",
+            bw_theta=bw_theta,
+            norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+        )
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        layer.train()
+        output = layer(X)
+        assert output.shape == X.shape
+        assert output.dtype == X.dtype
+        assert output.device == X.device
+        assert is_spd(output)
+
+    @pytest.mark.parametrize("n_matrices", [5])
+    @pytest.mark.parametrize("n_features, cond", [(10, 100)])
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    @pytest.mark.parametrize("use_autograd", [True])
+    def test_eval_mode(
+        self,
+        n_matrices,
+        n_features,
+        cond,
+        bw_theta,
+        use_autograd,
+        device,
+        dtype,
+        generator,
+    ):
+        """Test train then eval mode works correctly."""
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type="bures_wasserstein",
+            bw_theta=bw_theta,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+        )
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        layer.train()
+        for _ in range(3):
+            layer(X)
+
+        layer.eval()
+        output = layer(X)
+        assert output.shape == X.shape
+        assert is_spd(output)
+
+    @pytest.mark.parametrize("n_matrices", [5])
+    @pytest.mark.parametrize("n_features, cond", [(10, 100)])
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    @pytest.mark.parametrize("use_autograd", [True])
+    def test_backward_pass(
+        self,
+        n_matrices,
+        n_features,
+        cond,
+        bw_theta,
+        use_autograd,
+        device,
+        dtype,
+        generator,
+    ):
+        """Test that gradients flow through BW batchnorm."""
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type="bures_wasserstein",
+            bw_theta=bw_theta,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+        )
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X.requires_grad_(True)
+
+        layer.train()
+        output = layer(X)
+        loss = output.sum()
+        loss.backward()
+
+        assert X.grad is not None
+        assert not torch.any(torch.isnan(X.grad))
+
+    @pytest.mark.parametrize("n_features", [10])
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_repr(self, n_features, bw_theta, device, dtype):
+        """Test that repr includes bw_theta."""
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type="bures_wasserstein",
+            bw_theta=bw_theta,
+            device=device,
+            dtype=dtype,
+        )
+        r = repr(layer)
+        assert "bures_wasserstein" in r
+        assert f"bw_theta={bw_theta}" in r
+
+    @pytest.mark.parametrize("n_features", [10])
+    def test_n_iterations_option(self, n_features, device, dtype):
+        """Test that mean_options n_iterations works for BW."""
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type="bures_wasserstein",
+            mean_options={"n_iterations": 3},
+            device=device,
+            dtype=dtype,
+        )
+        assert layer.mean_type == "bures_wasserstein"

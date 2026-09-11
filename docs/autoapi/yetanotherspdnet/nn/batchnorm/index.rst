@@ -176,7 +176,7 @@ Module Contents
 
 
 
-.. py:class:: BatchNormSPDMeanScalarVariance(n_features: int, mean_type: str = 'affine_invariant', mean_options: dict | None = None, momentum: float = 0.01, norm_strategy: str = 'classical', minibatch_mode: str = 'constant', minibatch_momentum: float = 0.01, minibatch_maxstep: int = 100, parametrization: str = 'softplus', parametrization_mode: str = 'static', n_steps_ref_update: int = 100, use_autograd: bool = False, device: torch.device = torch.device('cpu'), dtype: torch.dtype = torch.float64)
+.. py:class:: BatchNormSPDMeanScalarVariance(n_features: int, mean_type: str = 'affine_invariant', mean_options: dict | None = None, momentum: float = 0.01, norm_strategy: str = 'classical', minibatch_mode: str = 'constant', minibatch_momentum: float = 0.01, minibatch_maxstep: int = 100, parametrization: str = 'softplus', parametrization_mode: str = 'static', n_steps_ref_update: int = 100, use_autograd: bool = False, bw_theta: float = 1.0, device: torch.device = torch.device('cpu'), dtype: torch.dtype = torch.float64)
 
    Bases: :py:obj:`BatchNormSPDMean`
 
