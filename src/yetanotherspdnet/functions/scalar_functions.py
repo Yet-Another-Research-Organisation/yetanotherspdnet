@@ -1,3 +1,7 @@
+"""Scalar functions applied element-wise to eigenvalues: sqrt, inv_sqrt, softplus, and derivatives."""
+
+import math
+
 import torch
 
 
@@ -85,9 +89,7 @@ def scaled_softplus(x: torch.Tensor) -> torch.Tensor:
     x_softplus : torch.Tensor
         SoftPlus of x
     """
-    return torch.log2(
-        1.0 + torch.pow(torch.tensor(2.0, dtype=x.dtype, device=x.device), x)
-    )
+    return torch.log2(1.0 + torch.exp2(x))
 
 
 def scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
@@ -104,7 +106,7 @@ def scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
     x_softplus_deriv : torch.Tensor
         Derivative of SoftPlus of x
     """
-    return 1 / (1.0 + torch.pow(torch.tensor(2.0, device=x.device, dtype=x.dtype), -x))
+    return torch.sigmoid(x * math.log(2))
 
 
 def inv_scaled_softplus(x: torch.Tensor) -> torch.Tensor:
@@ -121,9 +123,7 @@ def inv_scaled_softplus(x: torch.Tensor) -> torch.Tensor:
     x_inv_softplus : torch.Tensor
         Inverse of SoftPlus of x
     """
-    return torch.log2(
-        torch.pow(torch.tensor(2.0, device=x.device, dtype=x.dtype), x) - 1.0
-    )
+    return torch.log2(torch.exp2(x) - 1.0)
 
 
 def inv_scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
@@ -140,4 +140,4 @@ def inv_scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
     x_softplus_deriv : torch.Tensor
         Derivative of the inverse SoftPlus of x
     """
-    return 1 / (1.0 - torch.pow(torch.tensor(2.0, device=x.device, dtype=x.dtype), -x))
+    return 1 / (1.0 - torch.exp2(-x))

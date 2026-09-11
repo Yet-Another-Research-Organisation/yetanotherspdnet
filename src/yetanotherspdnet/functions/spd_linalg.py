@@ -1,3 +1,5 @@
+"""Core SPD matrix linear algebra: eigendecomposition, matrix functions, congruence, and vectorization."""
+
 from collections.abc import Callable
 
 import torch
@@ -374,7 +376,7 @@ def solve_sylvester_SPD(
 # ----------------------
 def sqrtm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Matrix logarithm of a batch of SPD matrices
+    Matrix square root of a batch of SPD matrices
 
     Parameters
     ----------
@@ -384,7 +386,7 @@ def sqrtm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Ten
     Returns
     -------
     sqrtm_data : torch.Tensor of shape (..., n_features, n_features)
-        Matrix logarithms of the input batch of SPD matrices
+        Matrix square roots of the input batch of SPD matrices
 
     eigvals : torch.Tensor of shape (..., n_features)
         Eigenvalues of matrices in data
@@ -455,7 +457,7 @@ def inv_sqrtm_SPD(
     data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Matrix logarithm of a batch of SPD matrices
+    Inverse matrix square root of a batch of SPD matrices
 
     Parameters
     ----------
@@ -464,8 +466,8 @@ def inv_sqrtm_SPD(
 
     Returns
     -------
-    logm_data : torch.Tensor of shape (..., n_features, n_features)
-        Matrix logarithms of the input batch of SPD matrices
+    inv_sqrtm_data : torch.Tensor of shape (..., n_features, n_features)
+        Inverse matrix square roots of the input batch of SPD matrices
 
     eigvals : torch.Tensor of shape (..., n_features)
         Eigenvalues of matrices in data

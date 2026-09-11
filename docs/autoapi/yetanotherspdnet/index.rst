@@ -44,7 +44,7 @@ Package Contents
    :value: '0.1.0'
 
 
-.. py:class:: SPDnet(input_dim: int, hidden_layers_size: list[int], output_dim: int, softmax: bool = False, reeig_eps: float = 0.001, bimap_parametrized: bool = True, bimap_parametrization: type[torch.nn.Module] | collections.abc.Callable = parametrizations.orthogonal, bimap_parametrization_options: dict | None = None, batchnorm: bool = False, batchnorm_type: str = 'mean_only', batchnorm_mean_type: str = 'geometric_arithmetic_harmonic', batchnorm_mean_options: dict | None = None, batchnorm_momentum: float = 0.01, batchnorm_norm_strategy: str = 'classical', batchnorm_minibatch_mode: str = 'constant', batchnorm_minibatch_momentum: float = 0.01, batchnorm_minibatch_maxstep: int = 100, batchnorm_parametrization: str = 'softplus', vec_type: str = 'vec', use_logeig: bool = True, device: torch.device = torch.device('cpu'), dtype: torch.dtype = torch.float64, generator: torch.Generator | None = None, use_autograd: bool | dict = False)
+.. py:class:: SPDnet(input_dim: int, hidden_layers_size: list[int], output_dim: int, softmax: bool = False, reeig_eps: float = 0.001, bimap_parametrized: bool = True, bimap_parametrization_mode: str = 'static', bimap_parametrization_options: dict | None = None, bimap_n_steps_ref_update: int = 100, batchnorm: bool = False, batchnorm_type: str = 'mean_only', batchnorm_mean_type: str = 'geometric_arithmetic_harmonic', batchnorm_mean_options: dict | None = None, batchnorm_momentum: float = 0.01, batchnorm_norm_strategy: str = 'classical', batchnorm_minibatch_mode: str = 'constant', batchnorm_minibatch_momentum: float = 0.01, batchnorm_minibatch_maxstep: int = 100, batchnorm_parametrization: str = 'softplus', batchnorm_parametrization_mode: str = 'static', batchnorm_n_steps_ref_update: int = 100, vec_type: str = 'vec', use_logeig: bool = True, use_autograd: bool | dict = False, device: torch.device = torch.device('cpu'), dtype: torch.dtype = torch.float64, generator: torch.Generator | None = None)
 
    Bases: :py:obj:`torch.nn.Module`
 
@@ -53,11 +53,12 @@ Package Contents
 
    Your models should also subclass this class.
 
-   Modules can also contain other Modules, allowing to nest them in
+   Modules can also contain other Modules, allowing them to be nested in
    a tree structure. You can assign the submodules as regular attributes::
 
        import torch.nn as nn
        import torch.nn.functional as F
+
 
        class Model(nn.Module):
            def __init__(self) -> None:
@@ -69,8 +70,8 @@ Package Contents
                x = F.relu(self.conv1(x))
                return F.relu(self.conv2(x))
 
-   Submodules assigned in this way will be registered, and will have their
-   parameters converted too when you call :meth:`to`, etc.
+   Submodules assigned in this way will be registered, and will also have their
+   parameters converted when you call :meth:`to`, etc.
 
    .. note::
        As per the example above, an ``__init__()`` call to the parent class
@@ -105,11 +106,18 @@ Package Contents
 
 
 
-   .. py:attribute:: bimap_parametrization
+   .. py:attribute:: bimap_parametrization_mode
+      :value: 'static'
+
 
 
    .. py:attribute:: bimap_parametrization_options
       :value: None
+
+
+
+   .. py:attribute:: bimap_n_steps_ref_update
+      :value: 100
 
 
 
@@ -163,6 +171,16 @@ Package Contents
 
 
 
+   .. py:attribute:: batchnorm_parametrization_mode
+      :value: 'static'
+
+
+
+   .. py:attribute:: batchnorm_n_steps_ref_update
+      :value: 100
+
+
+
    .. py:attribute:: vec_type
       :value: 'vec'
 
@@ -201,18 +219,20 @@ Package Contents
 
 
 
+   .. py:method:: register_optimizer_hook(optimizer: torch.optim.Optimizer) -> None
+
+      Register optimizer hooks for all layers with dynamic parametrization.
+      This method automatically finds all layers that use dynamic parametrization
+      and registers the appropriate hooks
+
+      :param optimizer: The optimizer used for training
+      :type optimizer: :py:class:`torch.optim.Optimizer`
+
+
+
    .. py:method:: __repr__() -> str
 
       String representation of SPDnet
-
-
-
-   .. py:method:: __str__() -> str
-
-      String representation of SPDnet
-
-      :returns: String representation of SPDnet
-      :rtype: :py:class:`str`
 
 
 

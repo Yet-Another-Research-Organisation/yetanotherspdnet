@@ -1,3 +1,7 @@
+"""Log-Euclidean Riemannian geometry: geodesic, mean, and standard deviation."""
+
+import math
+
 import torch
 from torch.autograd import Function
 
@@ -146,7 +150,7 @@ def log_euclidean_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
-    n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+    n_matrices = math.prod(data.shape[:-2])
     logm_data = logm_SPD(data)[0]
     logm_G = logm_SPD(reference_point)[0]
     return torch.sqrt(torch.sum((logm_data - logm_G) ** 2) / n_matrices)
@@ -178,7 +182,7 @@ class LogEuclideanStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+        n_matrices = math.prod(data.shape[:-2])
         logm_data, eigvals_data, eigvecs_data = logm_SPD(data)
         logm_G, eigvals_G, eigvecs_G = logm_SPD(reference_point)
         std_scalar = torch.sqrt(torch.sum((logm_data - logm_G) ** 2) / n_matrices)

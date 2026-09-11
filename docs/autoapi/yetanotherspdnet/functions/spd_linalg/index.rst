@@ -3,6 +3,11 @@ yetanotherspdnet.functions.spd_linalg
 
 .. py:module:: yetanotherspdnet.functions.spd_linalg
 
+.. autoapi-nested-parse::
+
+   Core SPD matrix linear algebra: eigendecomposition, matrix functions, congruence, and vectorization.
+
+
 
 Classes
 -------
@@ -249,12 +254,12 @@ Module Contents
 
 .. py:function:: sqrtm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 
-   Matrix logarithm of a batch of SPD matrices
+   Matrix square root of a batch of SPD matrices
 
    :param data: Batch of SPD matrices
    :type data: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`
 
-   :returns: * **sqrtm_data** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`) -- Matrix logarithms of the input batch of SPD matrices
+   :returns: * **sqrtm_data** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`) -- Matrix square roots of the input batch of SPD matrices
              * **eigvals** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features)`) -- Eigenvalues of matrices in data
              * **eigvecs** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`) -- Eigenvectors of matrices in data
 
@@ -302,12 +307,12 @@ Module Contents
 
 .. py:function:: inv_sqrtm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 
-   Matrix logarithm of a batch of SPD matrices
+   Inverse matrix square root of a batch of SPD matrices
 
    :param data: Batch of SPD matrices
    :type data: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`
 
-   :returns: * **logm_data** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`) -- Matrix logarithms of the input batch of SPD matrices
+   :returns: * **inv_sqrtm_data** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`) -- Inverse matrix square roots of the input batch of SPD matrices
              * **eigvals** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features)`) -- Eigenvalues of matrices in data
              * **eigvecs** (:py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`) -- Eigenvectors of matrices in data
 
