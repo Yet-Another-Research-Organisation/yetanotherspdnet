@@ -6,6 +6,16 @@ import torch
 from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
 
+from yetanotherspdnet.functions.spd_geometries.bures_wasserstein import (
+    BuresWassersteinMean,
+    BuresWassersteinStdScalar,
+    bures_wasserstein_bias,
+    bures_wasserstein_center,
+    bures_wasserstein_geodesic,
+    bures_wasserstein_mean,
+    bures_wasserstein_scale,
+    bures_wasserstein_std_scalar,
+)
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     ArithmeticMean,
     EuclideanGeodesic,
@@ -54,7 +64,9 @@ from ..functions.spd_linalg import (
     PowmSPD,
     Whitening,
     congruence_SPD,
+    inv_sqrtm_SPD,
     powm_SPD,
+    sqrtm_SPD,
     whitening,
 )
 from .parametrizations import (
@@ -95,7 +107,8 @@ class BatchNormSPDMean(nn.Module):
         mean_type : str, optional
             Choice of SPD mean. Default is "affine_invariant".
             Choices are: "affine_invariant", "log_euclidean",
-            "arithmetic", "harmonic", "geometric_arithmetic_harmonic"
+            "arithmetic", "harmonic", "geometric_arithmetic_harmonic",
+            "bures_wasserstein"
 
         mean_options : dict | None, optional
             Options for the SPD mean computation.
@@ -230,10 +243,11 @@ class BatchNormSPDMean(nn.Module):
             "harmonic",
             "geometric_arithmetic_harmonic",
             "adaptive_geometric_arithmetic_harmonic",
+            "bures_wasserstein",
         ], (
             f"formula must be in ['affine_invariant', 'log_euclidean', "
             f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic', "
-            f"'adaptive_geometric_arithmetic_harmonic'], "
+            f"'adaptive_geometric_arithmetic_harmonic', 'bures_wasserstein'], "
             f"got {self.mean_type}"
         )
 
@@ -284,6 +298,15 @@ class BatchNormSPDMean(nn.Module):
                 self.mean_fun = lambda data: AdaptiveGeometricArithmeticHarmonicMean(
                     data, self.t_gah
                 )
+        elif self.mean_type == "bures_wasserstein":
+            n_iter = 1
+            if self.mean_options is not None and "n_iterations" in self.mean_options:
+                n_iter = self.mean_options["n_iterations"]
+            self.mean_fun = (
+                partial(bures_wasserstein_mean, n_iterations=n_iter)
+                if self.use_autograd
+                else partial(BuresWassersteinMean, n_iterations=n_iter)
+            )
 
     def _init_adaptive_mean_fun(self) -> None:
         """
@@ -311,6 +334,8 @@ class BatchNormSPDMean(nn.Module):
                         p1, p2, torch.tensor(t, dtype=self.dtype, device=self.device)
                     )
                 )
+        elif self.mean_type == "bures_wasserstein":
+            self.adaptive_mean_fun = bures_wasserstein_geodesic
 
     def _init_norm_strategy_mean(self) -> None:
         """
@@ -368,6 +393,8 @@ class BatchNormSPDMean(nn.Module):
                             torch.tensor(t, dtype=self.dtype, device=self.device),
                         )
                     )
+            elif self.mean_type == "bures_wasserstein":
+                self.regularize_mean_fun = bures_wasserstein_geodesic
             self._init_minibatch_mode()
 
     def _init_minibatch_mode(self) -> None:
@@ -555,6 +582,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         parametrization_mode: str = "static",
         n_steps_ref_update: int = 100,
         use_autograd: bool = False,
+        bw_theta: float = 1.0,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
@@ -570,12 +598,13 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         mean_type : str, optional
             Choice of SPD mean. Default is "affine_invariant".
             Choices are: "affine_invariant", "log_euclidean",
-            "arithmetic", "harmonic", "geometric_arithmetic_harmonic"
+            "arithmetic", "harmonic", "geometric_arithmetic_harmonic",
+            "bures_wasserstein"
 
         mean_options : dict | None, optional
             Options for the SPD mean computation.
             For affine-invariant mean, one can typically set {'n_iterations': 5}.
-            Currently, for others, no options available.
+            For bures_wasserstein, one can set {'n_iterations': 1}.
             Default is None
 
         momentum : float, optional
@@ -622,6 +651,12 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             Use torch autograd for the computation of the gradient rather than
             the analytical formula.
             Default is False
+
+        bw_theta : float, optional
+            Power deformation parameter for Bures-Wasserstein geometry.
+            Only used when mean_type="bures_wasserstein".
+            theta=1.0 is standard BW, theta=0.5 often works best.
+            Default is 1.0
 
         device: torch.device, optional
             Device on which to store the parameters.
@@ -674,6 +709,24 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             1.0, dtype=self.dtype, device=self.device
         )
 
+        # Bures-Wasserstein specific parameters
+        if self.mean_type == "bures_wasserstein":
+            self.bw_theta = bw_theta
+            # M: learnable SPD metric (n x n)
+            self.bw_M = torch.nn.Parameter(
+                torch.eye(n_features, dtype=self.dtype, device=self.device)
+            )
+            register_parametrization(
+                self, "bw_M", SPDParametrization(mapping=self.parametrization)
+            )
+            # G_hat: learnable bias in BW space (n x n)
+            self.bw_G_hat = torch.nn.Parameter(
+                torch.eye(n_features, dtype=self.dtype, device=self.device)
+            )
+            register_parametrization(
+                self, "bw_G_hat", SPDParametrization(mapping=self.parametrization)
+            )
+
     def _init_std(self) -> None:
         """
         Auxiliray function to select std function
@@ -707,6 +760,12 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
                 symmetrized_kullback_leibler_std_scalar
                 if self.use_autograd
                 else SymmetrizedKullbackLeiblerStdScalar.apply
+            )
+        elif self.mean_type == "bures_wasserstein":
+            self.std_fun = (
+                bures_wasserstein_std_scalar
+                if self.use_autograd
+                else BuresWassersteinStdScalar.apply
             )
 
     def _init_norm_strategy_std(self) -> None:
@@ -759,12 +818,17 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of transformed (normalized then biased) SPD matrices
         """
+        if self.mean_type == "bures_wasserstein":
+            return self._forward_bures_wasserstein(data)
+        return self._forward_standard(data)
+
+    def _forward_standard(self, data: torch.Tensor) -> torch.Tensor:
+        """Standard forward pass (affine-invariant, log-euclidean, etc.)"""
         if self.training:
             mean_batch = self.mean_fun(data)
             mean = self.get_norm_mean(mean_batch)
             std_batch = self.std_fun(data, mean)
             std = self.get_norm_std(std_batch)
-            # update running mean
             with torch.no_grad():
                 self.running_mean = self.adaptive_mean_fun(
                     self.running_mean.to(data.device), mean_batch, self.momentum
@@ -776,18 +840,58 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             if self.is_dynamic:
                 self.current_ref_step += 1
         else:
-            # training over, use overall mean learnt on all batches
             mean = self.running_mean.to(data.device)
             std = self.running_std_scalar.to(data.device)
 
-        # Normalize data and add bias
         data_normalized = self.normalize_mean(data, mean)
         data_std_transf = self.norm_and_bias_var(
             data_normalized, self.stdScalarbias / std
         )
-        data_transformed = self.add_bias_mean(data_std_transf, self.Covbias)
+        return self.add_bias_mean(data_std_transf, self.Covbias)
 
-        return data_transformed
+    def _forward_bures_wasserstein(self, data: torch.Tensor) -> torch.Tensor:
+        """
+        GBWBN forward pass (Generalized Bures-Wasserstein Batch Normalization).
+
+        Pipeline: pre-transform -> BW center -> BW scale -> BW bias -> post-transform
+        """
+        theta = self.bw_theta
+        M = self.bw_M
+        G_hat = self.bw_G_hat
+
+        # Pre-transform: X_hat = M^{-1/2} X^theta M^{-1/2}
+        M_isqrt = inv_sqrtm_SPD(M)[0]
+        data_pow = powm_SPD(data, theta)[0] if theta != 1.0 else data
+        data_hat = M_isqrt @ data_pow @ M_isqrt
+
+        if self.training:
+            mean_batch = self.mean_fun(data_hat)
+            mean = self.get_norm_mean(mean_batch)
+            std_batch = self.std_fun(data_hat, mean)
+            std = self.get_norm_std(std_batch)
+            with torch.no_grad():
+                self.running_mean = self.adaptive_mean_fun(
+                    self.running_mean.to(data.device), mean_batch, self.momentum
+                )
+                self.running_std_scalar = self.adaptive_std_fun(
+                    self.running_std_scalar.to(data.device), std_batch, self.momentum
+                )
+            self.training_step = self.training_step + 1
+            if self.is_dynamic:
+                self.current_ref_step += 1
+        else:
+            mean = self.running_mean.to(data.device)
+            std = self.running_std_scalar.to(data.device)
+
+        # BW center, scale, bias
+        centered = bures_wasserstein_center(data_hat, mean)
+        scaled = bures_wasserstein_scale(centered, std**2, self.stdScalarbias)
+        biased = bures_wasserstein_bias(scaled, G_hat)
+
+        # Post-transform: output = (M^{1/2} X_tilde M^{1/2})^{1/theta}
+        M_sqrt = sqrtm_SPD(M)[0]
+        result = M_sqrt @ biased @ M_sqrt
+        return powm_SPD(result, 1.0 / theta)[0] if theta != 1.0 else result
 
     def __repr__(self) -> str:
         """
@@ -798,6 +902,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         str
             Representation of the layer
         """
+        bw_info = ""
+        if self.mean_type == "bures_wasserstein":
+            bw_info = f"  bw_theta={self.bw_theta},\n"
         return (
             f"BatchNormSPDMeanScalarVariance(\n"
             f"  n_features={self.n_features},\n"
@@ -812,6 +919,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             f"  parametrization_mode={self.parametrization_mode},\n"
             f"  n_steps_ref_update={self.n_steps_ref_update},\n"
             f"  use_autograd={self.use_autograd},\n"
+            f"{bw_info}"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f")"

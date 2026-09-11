@@ -1,5 +1,6 @@
 from .base import BiMap, LogEig, ReEig, Vec, Vech
-from .batchnorm import BatchNormSPDMean
+from .batchnorm import BatchNormSPDMean, BatchNormSPDMeanScalarVariance
+from .rresnet_layers import ResidualBlock, SpectralVectorField
 
 
 __all__ = [
@@ -9,4 +10,7 @@ __all__ = [
     "Vec",
     "Vech",
     "BatchNormSPDMean",
+    "BatchNormSPDMeanScalarVariance",
+    "SpectralVectorField",
+    "ResidualBlock",
 ]
