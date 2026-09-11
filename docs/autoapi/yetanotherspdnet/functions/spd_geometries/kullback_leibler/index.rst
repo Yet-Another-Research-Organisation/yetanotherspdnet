@@ -40,8 +40,11 @@ Module Contents
 
 .. py:function:: euclidean_geodesic(point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor) -> torch.Tensor
 
-   Euclidean geodesic:
-   (1-t)*point1 + t*point2
+   Euclidean geodesic between two symmetric matrices.
+
+   .. math::
+
+       \gamma(t) = (1-t)\,P_1 + t\,P_2, \quad t \in [0, 1]
 
    :param point1: Symmetric matrices
    :type point1: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`
@@ -100,7 +103,11 @@ Module Contents
 
 .. py:function:: arithmetic_mean(data: torch.Tensor) -> torch.Tensor
 
-   Arithmetic mean of a batch of symmetric matrices
+   Arithmetic (Euclidean) mean of a batch of symmetric matrices.
+
+   .. math::
+
+       \bar{P} = \frac{1}{N}\sum_{i=1}^{N} P_i
 
    :param data: Batch of symmetric matrices. The mean is computed along ... axes
    :type data: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`
@@ -151,7 +158,21 @@ Module Contents
 
 .. py:function:: left_kullback_leibler_std_scalar(data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor
 
-   Scalar standard deviation with respect to the left Kullback-Leibler divergence
+   Scalar standard deviation with respect to the left Kullback-Leibler
+   divergence.
+
+   .. math::
+
+       \sigma^2 = \frac{1}{N}\sum_{i=1}^{N}\Big[
+           \operatorname{tr}(G^{-1} P_i) - \log\det(P_i)\Big]
+           + \log\det(G) - n
+
+   where :math:`n` is the matrix dimension and :math:`G` is the reference
+   point. Up to a factor 2, this is the average Kullback-Leibler
+   divergence :math:`\mathrm{KL}\big(\mathcal{N}(0, P_i) \,\|\,
+   \mathcal{N}(0, G)\big)` between zero-mean Gaussians with the batch's
+   covariances and the reference covariance — hence "left" (:math:`G` is
+   the second argument of the KL divergence).
 
    :param data: Batch of SPD matrices
    :type data: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`
@@ -204,8 +225,14 @@ Module Contents
 
 .. py:function:: harmonic_curve(point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor) -> torch.Tensor
 
-   Curve for adaptive harmonic mean computation:
-   ((1-t)*point1^{-1} + t*point2^{-1})^{-1}
+   Curve for adaptive harmonic mean computation.
+
+   .. math::
+
+       \gamma(t) = \big((1-t)\,P_1^{-1} + t\,P_2^{-1}\big)^{-1}
+
+   the harmonic analogue of :func:`euclidean_geodesic`: a Euclidean
+   geodesic between the matrix inverses, inverted back.
 
    :param point1: SPD matrices
    :type point1: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`
@@ -264,7 +291,13 @@ Module Contents
 
 .. py:function:: harmonic_mean(data: torch.Tensor) -> torch.Tensor
 
-   Harmonic mean of a batch of SPD matrices
+   Harmonic mean of a batch of SPD matrices.
+
+   .. math::
+
+       \bar{P} = \left(\frac{1}{N}\sum_{i=1}^{N} P_i^{-1}\right)^{-1}
+
+   the inverse of the arithmetic mean of the matrix inverses.
 
    :param data: Batch of SPD matrices. The mean is computed along ... axes
    :type data: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`
@@ -315,7 +348,19 @@ Module Contents
 
 .. py:function:: right_kullback_leibler_std_scalar(data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor
 
-   Scalar standard deviation with respect to the left Kullback-Leibler divergence
+   Scalar standard deviation with respect to the right Kullback-Leibler
+   divergence (docstring previously said "left" — copy-paste bug, fixed).
+
+   .. math::
+
+       \sigma^2 = \frac{1}{N}\sum_{i=1}^{N}\Big[
+           \operatorname{tr}(P_i^{-1} G) + \log\det(P_i)\Big]
+           - \log\det(G) - n
+
+   Up to a factor 2, this is the average reverse Kullback-Leibler
+   divergence :math:`\mathrm{KL}\big(\mathcal{N}(0, G) \,\|\,
+   \mathcal{N}(0, P_i)\big)` — the roles of :math:`G` and :math:`P_i` are
+   swapped relative to :func:`left_kullback_leibler_std_scalar`.
 
    :param data: Batch of SPD matrices
    :type data: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_features`, :py:class:`n_features)`

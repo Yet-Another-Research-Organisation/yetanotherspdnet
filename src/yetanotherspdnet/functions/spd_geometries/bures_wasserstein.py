@@ -34,11 +34,16 @@ from .kullback_leibler import arithmetic_mean
 def bures_wasserstein_distance_squared(
     point1: torch.Tensor, point2: torch.Tensor
 ) -> torch.Tensor:
-    """
+    r"""
     Squared Bures-Wasserstein distance between SPD matrices.
 
-    d_BW^2(X1, X2) = tr(X1) + tr(X2)
-                      - 2 tr( (X1^{1/2} X2 X1^{1/2})^{1/2} )
+    .. math::
+
+        d_{BW}^2(X_1, X_2) = \operatorname{tr}(X_1) + \operatorname{tr}(X_2)
+            - 2\operatorname{tr}\!\Big(\big(X_1^{1/2} X_2 X_1^{1/2}\big)^{1/2}\Big)
+
+    This is the (squared) 2-Wasserstein distance between the zero-mean
+    Gaussian distributions with covariances :math:`X_1` and :math:`X_2`.
 
     Parameters
     ----------
@@ -69,10 +74,12 @@ def bures_wasserstein_distance_squared(
 def bures_wasserstein_log_identity(
     X: torch.Tensor,
 ) -> torch.Tensor:
-    """
+    r"""
     Logarithmic map at the identity under Bures-Wasserstein geometry.
 
-    Log_I(X) = 2 (X^{1/2} - I)
+    .. math::
+
+        \mathrm{Log}_I(X) = 2\big(X^{1/2} - I\big)
 
     Parameters
     ----------
@@ -92,10 +99,14 @@ def bures_wasserstein_log_identity(
 def bures_wasserstein_exp_identity(
     S: torch.Tensor,
 ) -> torch.Tensor:
-    """
+    r"""
     Exponential map at the identity under Bures-Wasserstein geometry.
 
-    Exp_I(S) = (I + S/2)^2
+    .. math::
+
+        \mathrm{Exp}_I(S) = \left(I + \frac{S}{2}\right)^2
+
+    Inverse of :func:`bures_wasserstein_log_identity`.
 
     Parameters
     ----------
@@ -116,13 +127,16 @@ def bures_wasserstein_exp_identity(
 # Log / Exp maps at general base point
 # ----------------------------------------
 def bures_wasserstein_log(X: torch.Tensor, base: torch.Tensor) -> torch.Tensor:
-    """
+    r"""
     Logarithmic map at a general base point under BW geometry.
 
-    Log_B(X) = (XB)^{1/2} + (BX)^{1/2} - 2 B
+    .. math::
 
-    Uses the identity  (BX)^{1/2} = B^{1/2} (B^{1/2} X B^{1/2})^{1/2} B^{-1/2}
-    and (XB)^{1/2} = [(BX)^{1/2}]^T.
+        \mathrm{Log}_B(X) = (XB)^{1/2} + (BX)^{1/2} - 2B
+
+    computed via the identity :math:`(BX)^{1/2} = B^{1/2}
+    (B^{1/2} X B^{1/2})^{1/2} B^{-1/2}` and
+    :math:`(XB)^{1/2} = \big[(BX)^{1/2}\big]^\top`.
 
     Parameters
     ----------
@@ -150,11 +164,16 @@ def bures_wasserstein_log(X: torch.Tensor, base: torch.Tensor) -> torch.Tensor:
 def _bures_wasserstein_exp(
     tangent_vec: torch.Tensor, base: torch.Tensor
 ) -> torch.Tensor:
-    """
+    r"""
     Exponential map at a general base point under BW geometry.
 
-    Exp_B(V) = B + V + Z^2
-    where Z solves the Sylvester equation  B^{1/2} Z + Z B^{1/2} = V.
+    .. math::
+
+        \mathrm{Exp}_B(V) = B + V + Z^2, \quad\text{where } Z \text{ solves }
+        B^{1/2} Z + Z B^{1/2} = V
+
+    (a Sylvester equation, solved by
+    :func:`~yetanotherspdnet.functions.spd_linalg.solve_sylvester_SPD`).
 
     Parameters
     ----------
@@ -180,13 +199,16 @@ def _bures_wasserstein_exp(
 def bures_wasserstein_parallel_transport_to_identity(
     tangent_vec: torch.Tensor, source: torch.Tensor
 ) -> torch.Tensor:
-    """
+    r"""
     Parallel transport from *source* to the identity under BW geometry.
 
-    Given source = V diag(lambda) V^T:
-        Gamma_{source -> I}(S)
-            = V [ sqrt(2 / (lambda_i + lambda_j))
-                  * (V^T S V)_{ij} ] V^T
+    Given :math:`\text{source} = V \operatorname{diag}(\lambda) V^\top`:
+
+    .. math::
+
+        \Gamma_{\text{source}\to I}(S) = V\left[
+            \sqrt{\frac{2}{\lambda_i + \lambda_j}} \,(V^\top S V)_{ij}
+            \right]_{ij} V^\top
 
     Parameters
     ----------
@@ -211,13 +233,18 @@ def bures_wasserstein_parallel_transport_to_identity(
 def bures_wasserstein_parallel_transport_from_identity(
     tangent_vec: torch.Tensor, target: torch.Tensor
 ) -> torch.Tensor:
-    """
+    r"""
     Parallel transport from the identity to *target* under BW geometry.
 
-    Given target = U diag(delta) U^T:
-        Gamma_{I -> target}(S)
-            = U [ sqrt((delta_i + delta_j) / 2)
-                  * (U^T S U)_{ij} ] U^T
+    Given :math:`\text{target} = U \operatorname{diag}(\delta) U^\top`:
+
+    .. math::
+
+        \Gamma_{I\to\text{target}}(S) = U\left[
+            \sqrt{\frac{\delta_i + \delta_j}{2}} \,(U^\top S U)_{ij}
+            \right]_{ij} U^\top
+
+    Inverse of :func:`bures_wasserstein_parallel_transport_to_identity`.
 
     Parameters
     ----------
@@ -247,13 +274,16 @@ def bures_wasserstein_geodesic(
     point2: torch.Tensor,
     t: float | torch.Tensor,
 ) -> torch.Tensor:
-    """
+    r"""
     Bures-Wasserstein geodesic (closed-form 2-sample weighted mean).
 
-    E_2(X1, X2; t) = (1-t)^2 X1 + t^2 X2
-                      + t(1-t) [(X2 X1)^{1/2} + (X1 X2)^{1/2}]
+    .. math::
 
-    where (X1 X2)^{1/2} = X1^{1/2} (X1^{1/2} X2 X1^{1/2})^{1/2} X1^{-1/2}.
+        E_2(X_1, X_2; t) = (1-t)^2 X_1 + t^2 X_2
+            + t(1-t)\Big[(X_2 X_1)^{1/2} + (X_1 X_2)^{1/2}\Big]
+
+    where :math:`(X_1 X_2)^{1/2} = X_1^{1/2}
+    (X_1^{1/2} X_2 X_1^{1/2})^{1/2} X_1^{-1/2}` and :math:`t \in [0, 1]`.
 
     Parameters
     ----------
@@ -285,15 +315,18 @@ def bures_wasserstein_geodesic(
 # Bures-Wasserstein mean (barycenter)
 # ----------------------------------------
 def bures_wasserstein_mean(data: torch.Tensor, n_iterations: int = 1) -> torch.Tensor:
-    """
-    Bures-Wasserstein barycenter (Frechet mean) via fixed-point iteration.
+    r"""
+    Bures-Wasserstein barycenter (Fréchet mean) via fixed-point iteration.
 
-    Update rule:
-        G_{k+1} = G^{-1/2}
-                   ( (1/N) sum_i (G^{1/2} X_i G^{1/2})^{1/2} )^2
-                   G^{-1/2}
+    .. math::
 
-    The initial estimate is the arithmetic mean of *data*.
+        G_{k+1} = G_k^{-1/2}\left(\frac{1}{N}\sum_{i=1}^{N}
+            \big(G_k^{1/2} X_i G_k^{1/2}\big)^{1/2}\right)^2 G_k^{-1/2}
+
+    the unique fixed point of this map is the barycenter minimizing
+    :math:`\sum_i d_{BW}(G, X_i)^2` (see
+    :func:`bures_wasserstein_distance_squared`). The initial estimate
+    :math:`G_0` is the arithmetic mean of *data*.
 
     Parameters
     ----------
@@ -351,10 +384,16 @@ def BuresWassersteinMean(data: torch.Tensor, n_iterations: int = 1) -> torch.Ten
 def bures_wasserstein_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> torch.Tensor:
-    """
+    r"""
     Scalar standard deviation under the Bures-Wasserstein distance.
 
-    std = sqrt( (1/N) sum_i d_BW^2(B, X_i) )
+    .. math::
+
+        \sigma = \sqrt{\frac{1}{N}\sum_{i=1}^{N} d_{BW}^2(G, X_i)}
+
+    where :math:`G` is the reference point (typically the BW barycenter)
+    and :math:`d_{BW}` is the Bures-Wasserstein distance (see
+    :func:`bures_wasserstein_distance_squared`).
 
     Parameters
     ----------
@@ -509,10 +548,17 @@ class BuresWassersteinStdScalar(Function):
 def bures_wasserstein_center(
     data: torch.Tensor, barycenter: torch.Tensor
 ) -> torch.Tensor:
-    """
+    r"""
     Center SPD data by parallel-transporting from the barycenter to the identity.
 
-    X_centered = Exp_I( Gamma_{B -> I}( Log_B(X) ) )
+    .. math::
+
+        X_{\text{centered}} = \mathrm{Exp}_I\big(\Gamma_{B\to I}(\mathrm{Log}_B(X))\big)
+
+    composing :func:`bures_wasserstein_log`,
+    :func:`bures_wasserstein_parallel_transport_to_identity`, and
+    :func:`bures_wasserstein_exp_identity` — the BatchNorm analogue of
+    subtracting the mean, but on the SPD manifold.
 
     Parameters
     ----------
@@ -540,11 +586,18 @@ def bures_wasserstein_scale(
     shift: torch.Tensor,
     eps: float = 1e-5,
 ) -> torch.Tensor:
-    """
+    r"""
     Scale centered SPD data at the identity.
 
-    X_scaled = Exp_I( s / sqrt(var + eps) * Log_I(X) )
-             = ( I + s / sqrt(var + eps) * (X^{1/2} - I) )^2
+    .. math::
+
+        X_{\text{scaled}} = \mathrm{Exp}_I\!\left(
+            \frac{s}{\sqrt{\text{var} + \epsilon}}\, \mathrm{Log}_I(X)\right)
+        = \left(I + \frac{s}{\sqrt{\text{var} + \epsilon}}\,
+            \big(X^{1/2} - I\big)\right)^2
+
+    the BatchNorm analogue of dividing by the standard deviation and
+    multiplying by a learnable scale :math:`s`.
 
     Parameters
     ----------
@@ -573,12 +626,16 @@ def bures_wasserstein_scale(
 def bures_wasserstein_bias(
     data: torch.Tensor, bias_point: torch.Tensor
 ) -> torch.Tensor:
-    """
+    r"""
     Bias SPD data by parallel-transporting from the identity to *bias_point*.
 
-    X_biased = Exp_G( Gamma_{I -> G}( Log_I(X) ) )
+    .. math::
 
-    where Exp_G(V) = G + V + Z^2 with G^{1/2} Z + Z G^{1/2} = V.
+        X_{\text{biased}} = \mathrm{Exp}_G\big(\Gamma_{I\to G}(\mathrm{Log}_I(X))\big)
+
+    where :math:`\mathrm{Exp}_G(V) = G + V + Z^2` with :math:`G^{1/2} Z +
+    Z G^{1/2} = V` (see :func:`bures_wasserstein_parallel_transport_from_identity`).
+    The BatchNorm analogue of adding a learnable bias :math:`G`.
 
     Parameters
     ----------

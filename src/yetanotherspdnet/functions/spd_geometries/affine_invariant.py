@@ -26,9 +26,20 @@ from .kullback_leibler import arithmetic_mean
 def affine_invariant_geodesic(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
-    """
-    Affine-invariant geodesic:
-    point1^{1/2} ( point1^{-1/2} point2 point1^{-1/2} )^t point1^{1/2}
+    r"""
+    Affine-invariant geodesic between two SPD matrices.
+
+    .. math::
+
+        \gamma(t) = P_1^{1/2}
+            \big(P_1^{-1/2} P_2 P_1^{-1/2}\big)^{t}
+            P_1^{1/2}
+
+    with :math:`t \in [0, 1]` (:math:`\gamma(0) = P_1`,
+    :math:`\gamma(1) = P_2`). This is the geodesic for the affine-invariant
+    Riemannian metric on the SPD manifold, invariant under congruence
+    transformations :math:`P \mapsto A P A^\top` for any invertible
+    :math:`A`.
 
     Parameters
     ----------
@@ -216,8 +227,17 @@ class AffineInvariantGeodesic(Function):
 def affine_invariant_mean_2points(
     point1: torch.Tensor, point2: torch.Tensor
 ) -> torch.Tensor:
-    """
-    Affine-invariant (geometric) mean of two SPD matrices
+    r"""
+    Affine-invariant (geometric) mean of two SPD matrices.
+
+    .. math::
+
+        G(P_1, P_2) = P_1^{1/2}
+            \big(P_1^{-1/2} P_2 P_1^{-1/2}\big)^{1/2}
+            P_1^{1/2}
+
+    the midpoint (:math:`t=1/2`) of the affine-invariant geodesic between
+    :math:`P_1` and :math:`P_2` (see :func:`affine_invariant_geodesic`).
 
     Parameters
     ----------
@@ -340,8 +360,24 @@ class AffineInvariantMean2Points(Function):
 # Affine-invariant mean
 # ---------------------
 def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
-    """
-    Affine-invariant (geometric) mean computed with fixed-point algorithm
+    r"""
+    Affine-invariant (geometric/Fréchet) mean computed with a fixed-point
+    (Karcher flow) algorithm.
+
+    Starting from :math:`M_0 = I`, each iteration :math:`k` moves along the
+    average tangent direction at :math:`M_k` and retracts back onto the
+    manifold with the affine-invariant exponential map
+    (:func:`affine_invariant_exp`):
+
+    .. math::
+
+        M_{k+1} = M_k^{1/2} \exp\!\left(\eta_k \cdot
+            \frac{1}{N}\sum_{i=1}^{N} \log\big(M_k^{-1/2} P_i M_k^{-1/2}\big)
+            \right) M_k^{1/2}
+
+    with step size :math:`\eta_k = 0.95^k`. This converges to the unique
+    minimizer of :math:`\sum_i d_{AI}(M, P_i)^2` for the affine-invariant
+    distance :math:`d_{AI}`.
 
     Parameters
     ----------
@@ -560,8 +596,17 @@ def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tens
 def affine_invariant_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> torch.Tensor:
-    """
-    Scalar standard deviation with respect to the affine-invariant distance
+    r"""
+    Scalar standard deviation with respect to the affine-invariant distance.
+
+    .. math::
+
+        \sigma = \sqrt{\frac{1}{N}\sum_{i=1}^{N}
+            \big\lVert \log\big(G^{-1/2} P_i G^{-1/2}\big) \big\rVert_F^2}
+
+    where :math:`G` is the reference point (typically the affine-invariant
+    mean) — equivalently, the norm of :math:`\mathrm{Log}_G(P_i)` under the
+    affine-invariant metric (:func:`affine_invariant_log`).
 
     Parameters
     ----------
@@ -687,13 +732,17 @@ class AffineInvariantStdScalar(Function):
 # Affine-invariant exponential map
 # --------------------------------
 def affine_invariant_exp(base: torch.Tensor, tangent: torch.Tensor) -> torch.Tensor:
-    """
-    Affine-invariant exponential map on SPD manifold.
+    r"""
+    Affine-invariant exponential map on the SPD manifold.
 
-    Exp_X(V) = X^{1/2} expm(X^{-1/2} V X^{-1/2}) X^{1/2}
+    .. math::
 
-    Maps a tangent vector V at base point X to a point on the SPD manifold
-    by following the geodesic from X in direction V for unit time.
+        \mathrm{Exp}_X(V) = X^{1/2} \exp\big(X^{-1/2} V X^{-1/2}\big) X^{1/2}
+
+    Maps a tangent vector :math:`V` at base point :math:`X` (a symmetric
+    matrix) to a point on the SPD manifold, by following the geodesic from
+    :math:`X` in direction :math:`V` for unit time. Inverse of
+    :func:`affine_invariant_log`.
 
     Parameters
     ----------
@@ -863,13 +912,15 @@ class AffineInvariantExp(Function):
 # Affine-invariant log map
 # ----------------------------
 def affine_invariant_log(base: torch.Tensor, point: torch.Tensor) -> torch.Tensor:
-    """
-    Affine-invariant logarithmic map on SPD manifold.
+    r"""
+    Affine-invariant logarithmic map on the SPD manifold.
 
-    Log_X(Y) = X^{1/2} logm(X^{-1/2} Y X^{-1/2}) X^{1/2}
+    .. math::
 
-    Maps a point Y on the manifold to a tangent vector at base X.
-    Inverse of affine_invariant_exp.
+        \mathrm{Log}_X(Y) = X^{1/2} \log\big(X^{-1/2} Y X^{-1/2}\big) X^{1/2}
+
+    Maps a point :math:`Y` on the manifold to a tangent vector at base
+    :math:`X`. Inverse of :func:`affine_invariant_exp`.
 
     Parameters
     ----------
