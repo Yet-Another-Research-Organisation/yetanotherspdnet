@@ -1,3 +1,5 @@
+"""SPD batch normalization layers with configurable Riemannian geometry."""
+
 from functools import partial
 
 import torch
@@ -275,10 +277,8 @@ class BatchNormSPDMean(nn.Module):
             )
             register_parametrization(self, "t_gah", ScalarSigmoidParametrization())
             if self.use_autograd:
-                self.mean_fun = (
-                    lambda data: adaptive_geometric_arithmetic_harmonic_mean(
-                        data, self.t_gah
-                    )
+                self.mean_fun = lambda data: (
+                    adaptive_geometric_arithmetic_harmonic_mean(data, self.t_gah)
                 )
             else:
                 self.mean_fun = lambda data: AdaptiveGeometricArithmeticHarmonicMean(
@@ -302,14 +302,12 @@ class BatchNormSPDMean(nn.Module):
         elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
             # Use the adaptive geodesic with learnable t for running mean update
             if self.use_autograd:
-                self.adaptive_mean_fun = (
-                    lambda p1, p2, t: adaptive_geometric_arithmetic_harmonic_geodesic(
-                        p1, p2, t
-                    )
+                self.adaptive_mean_fun = lambda p1, p2, t: (
+                    adaptive_geometric_arithmetic_harmonic_geodesic(p1, p2, t)
                 )
             else:
-                self.adaptive_mean_fun = (
-                    lambda p1, p2, t: AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
+                self.adaptive_mean_fun = lambda p1, p2, t: (
+                    AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
                         p1, p2, torch.tensor(t, dtype=self.dtype, device=self.device)
                     )
                 )
@@ -363,10 +361,8 @@ class BatchNormSPDMean(nn.Module):
                         adaptive_geometric_arithmetic_harmonic_geodesic
                     )
                 else:
-                    self.regularize_mean_fun = (
-                        lambda p1,
-                        p2,
-                        t: AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
+                    self.regularize_mean_fun = lambda p1, p2, t: (
+                        AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
                             p1,
                             p2,
                             torch.tensor(t, dtype=self.dtype, device=self.device),
@@ -542,17 +538,6 @@ class BatchNormSPDMean(nn.Module):
             f"  dtype={self.dtype},\n"
             f")"
         )
-
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
 
 
 class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):

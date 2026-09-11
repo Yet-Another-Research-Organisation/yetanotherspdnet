@@ -1,3 +1,7 @@
+"""Symmetrized KL geometry: GAH curves/means and adaptive geodesic with learnable parameter."""
+
+import math
+
 import torch
 from torch.autograd import Function
 
@@ -158,7 +162,7 @@ def symmetrized_kullback_leibler_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
-    n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+    n_matrices = math.prod(data.shape[:-2])
     n_features = data.shape[-1]
     G_inv = torch.cholesky_inverse(torch.linalg.cholesky(reference_point))
     data_inv = torch.cholesky_inverse(torch.linalg.cholesky(data))
@@ -196,7 +200,7 @@ class SymmetrizedKullbackLeiblerStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+        n_matrices = math.prod(data.shape[:-2])
         n_features = data.shape[-1]
         G_inv = torch.cholesky_inverse(torch.linalg.cholesky(reference_point))
         data_inv = torch.cholesky_inverse(torch.linalg.cholesky(data))
@@ -259,9 +263,7 @@ def adaptive_geometric_arithmetic_harmonic_geodesic(
     Adaptive geodesic between harmonic (point1) and arithmetic (point2) means:
     point1^{1/2} ( point1^{-1/2} point2 point1^{-1/2} )^t point1^{1/2}
 
-    This is the same formula as the affine-invariant geodesic, but intended
-    for use with point1 = harmonic mean and point2 = arithmetic mean, with
-    learnable parameter t.
+    This is mathematically identical to the affine-invariant geodesic.
 
     Parameters
     ----------
@@ -280,21 +282,16 @@ def adaptive_geometric_arithmetic_harmonic_geodesic(
     point : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
     """
-    eigvals1, eigvecs1 = torch.linalg.eigh(point1)
-    point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-    point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
-    eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
-        point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
-    )
-    pow_t = lambda x: torch.pow(x, t)
-    middle_term1 = eigh_operation(eigvals_middle_term1, eigvecs_middle_term1, pow_t)
-    return point1_sqrtm @ middle_term1 @ point1_sqrtm
+    return affine_invariant_geodesic(point1, point2, t)
 
 
 class AdaptiveGeometricArithmeticHarmonicGeodesic(Function):
     """
     Adaptive geodesic between harmonic and arithmetic means with learnable parameter t.
-    Includes gradient with respect to t for learning.
+
+    This is mathematically identical to the affine-invariant geodesic.
+    It delegates to AffineInvariantGeodesic and includes gradient with respect to t
+    for learning.
     """
 
     @staticmethod
@@ -302,7 +299,9 @@ class AdaptiveGeometricArithmeticHarmonicGeodesic(Function):
         ctx, point1: torch.Tensor, point2: torch.Tensor, t: torch.Tensor
     ) -> torch.Tensor:
         """
-        Forward pass of the adaptive GAH geodesic
+        Forward pass of the adaptive GAH geodesic.
+
+        Delegates to AffineInvariantGeodesic.
 
         Parameters
         ----------
@@ -347,7 +346,10 @@ class AdaptiveGeometricArithmeticHarmonicGeodesic(Function):
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the adaptive GAH geodesic
+        Backward pass of the adaptive GAH geodesic.
+
+        Uses the same gradient logic as AffineInvariantGeodesic,
+        with the addition of grad_t using broadcasting pattern.
 
         Parameters
         ----------
@@ -414,18 +416,14 @@ class AdaptiveGeometricArithmeticHarmonicGeodesic(Function):
             @ point2_inv_sqrtm
         )
 
-        # Gradient with respect to t
-        # d/dt [V D^t V^T] = V (D^t * log(D)) V^T
+        # Gradient with respect to t using broadcasting (GPU-efficient)
+        # d/dt [V D^t V^T] = V diag(D^t * log(D)) V^T
         log_eigvals = torch.log(eigvals_middle_term1)
         pow_t_eigvals = torch.pow(eigvals_middle_term1, t)
-        # middle_term_deriv = V @ diag(D^t * log(D)) @ V^T
+        d_eigvals = pow_t_eigvals * log_eigvals
         middle_term_deriv = (
-            eigvecs_middle_term1
-            @ torch.diag_embed(pow_t_eigvals * log_eigvals)
-            @ eigvecs_middle_term1.transpose(-1, -2)
-        )
-        # d(output)/dt = point1_sqrtm @ middle_term_deriv @ point1_sqrtm
-        # grad_t = sum(grad_output * d(output)/dt)
+            eigvecs_middle_term1 * d_eigvals.unsqueeze(-2)
+        ) @ eigvecs_middle_term1.transpose(-1, -2)
         deriv_output_t = point1_sqrtm @ middle_term_deriv @ point1_sqrtm
         grad_t = torch.sum(grad_output * deriv_output_t)
 

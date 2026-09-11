@@ -3,6 +3,11 @@ yetanotherspdnet.nn.parametrizations
 
 .. py:module:: yetanotherspdnet.nn.parametrizations
 
+.. autoapi-nested-parse::
+
+   SPD and Stiefel manifold parametrizations for constrained optimization.
+
+
 
 Classes
 -------
@@ -10,6 +15,7 @@ Classes
 .. autoapisummary::
 
    yetanotherspdnet.nn.parametrizations.ScalarSoftPlusParametrization
+   yetanotherspdnet.nn.parametrizations.ScalarSigmoidParametrization
    yetanotherspdnet.nn.parametrizations.SPDParametrization
    yetanotherspdnet.nn.parametrizations.SPDAdaptiveParametrization
    yetanotherspdnet.nn.parametrizations.StiefelAdaptiveParametrization
@@ -18,7 +24,7 @@ Classes
 Module Contents
 ---------------
 
-.. py:class:: ScalarSoftPlusParametrization(*args, **kwargs)
+.. py:class:: ScalarSoftPlusParametrization(*args: Any, **kwargs: Any)
 
    Bases: :py:obj:`torch.nn.Module`
 
@@ -27,11 +33,12 @@ Module Contents
 
    Your models should also subclass this class.
 
-   Modules can also contain other Modules, allowing to nest them in
+   Modules can also contain other Modules, allowing them to be nested in
    a tree structure. You can assign the submodules as regular attributes::
 
        import torch.nn as nn
        import torch.nn.functional as F
+
 
        class Model(nn.Module):
            def __init__(self) -> None:
@@ -43,8 +50,8 @@ Module Contents
                x = F.relu(self.conv1(x))
                return F.relu(self.conv2(x))
 
-   Submodules assigned in this way will be registered, and will have their
-   parameters converted too when you call :meth:`to`, etc.
+   Submodules assigned in this way will be registered, and will also have their
+   parameters converted when you call :meth:`to`, etc.
 
    .. note::
        As per the example above, an ``__init__()`` call to the parent class
@@ -81,6 +88,38 @@ Module Contents
 
 
 
+.. py:class:: ScalarSigmoidParametrization(*args: Any, **kwargs: Any)
+
+   Bases: :py:obj:`torch.nn.Module`
+
+
+   Parametrization to constrain a scalar to the interval [0, 1] using sigmoid.
+
+
+   .. py:method:: forward(scalar: torch.Tensor) -> torch.Tensor
+
+      Mapping from real scalar to [0, 1] through sigmoid function
+
+      :param scalar: Real scalar (unconstrained)
+      :type scalar: :py:class:`torch.Tensor` of :py:class:`shape ()`
+
+      :returns: **scalar_constrained** -- Scalar in [0, 1]
+      :rtype: :py:class:`torch.Tensor` of :py:class:`shape ()`
+
+
+
+   .. py:method:: right_inverse(scalar_constrained: torch.Tensor) -> torch.Tensor
+
+      Mapping from [0, 1] to real scalars through inverse sigmoid (logit)
+
+      :param scalar_constrained: Scalar in [0, 1]
+      :type scalar_constrained: :py:class:`torch.Tensor` of :py:class:`shape ()`
+
+      :returns: **scalar** -- Real scalar (unconstrained)
+      :rtype: :py:class:`torch.Tensor` of :py:class:`shape ()`
+
+
+
 .. py:class:: SPDParametrization(mapping: str = 'softplus', use_autograd: bool = False)
 
    Bases: :py:obj:`torch.nn.Module`
@@ -90,11 +129,12 @@ Module Contents
 
    Your models should also subclass this class.
 
-   Modules can also contain other Modules, allowing to nest them in
+   Modules can also contain other Modules, allowing them to be nested in
    a tree structure. You can assign the submodules as regular attributes::
 
        import torch.nn as nn
        import torch.nn.functional as F
+
 
        class Model(nn.Module):
            def __init__(self) -> None:
@@ -106,8 +146,8 @@ Module Contents
                x = F.relu(self.conv1(x))
                return F.relu(self.conv2(x))
 
-   Submodules assigned in this way will be registered, and will have their
-   parameters converted too when you call :meth:`to`, etc.
+   Submodules assigned in this way will be registered, and will also have their
+   parameters converted when you call :meth:`to`, etc.
 
    .. note::
        As per the example above, an ``__init__()`` call to the parent class
@@ -161,15 +201,6 @@ Module Contents
 
 
 
-   .. py:method:: __str__() -> str
-
-      String representation of the layer
-
-      :returns: String representation of the layer
-      :rtype: :py:class:`str`
-
-
-
 .. py:class:: SPDAdaptiveParametrization(n_features: int, initial_reference: torch.Tensor | None = None, mapping: str = 'softplus', use_autograd: bool = False, device: torch.device = torch.device('cpu'), dtype: torch.dtype = torch.float64)
 
    Bases: :py:obj:`torch.nn.Module`
@@ -179,11 +210,12 @@ Module Contents
 
    Your models should also subclass this class.
 
-   Modules can also contain other Modules, allowing to nest them in
+   Modules can also contain other Modules, allowing them to be nested in
    a tree structure. You can assign the submodules as regular attributes::
 
        import torch.nn as nn
        import torch.nn.functional as F
+
 
        class Model(nn.Module):
            def __init__(self) -> None:
@@ -195,8 +227,8 @@ Module Contents
                x = F.relu(self.conv1(x))
                return F.relu(self.conv2(x))
 
-   Submodules assigned in this way will be registered, and will have their
-   parameters converted too when you call :meth:`to`, etc.
+   Submodules assigned in this way will be registered, and will also have their
+   parameters converted when you call :meth:`to`, etc.
 
    .. note::
        As per the example above, an ``__init__()`` call to the parent class
@@ -272,15 +304,6 @@ Module Contents
 
 
 
-   .. py:method:: __str__() -> str
-
-      String representation of the layer
-
-      :returns: String representation of the layer
-      :rtype: :py:class:`str`
-
-
-
 .. py:class:: StiefelAdaptiveParametrization(n_in: int, n_out: int, initial_reference: torch.Tensor | None = None, mapping: str = 'QR', use_autograd: bool = False, device: torch.device = torch.device('cpu'), dtype: torch.dtype = torch.float64, generator: torch.Generator | None = None)
 
    Bases: :py:obj:`torch.nn.Module`
@@ -290,11 +313,12 @@ Module Contents
 
    Your models should also subclass this class.
 
-   Modules can also contain other Modules, allowing to nest them in
+   Modules can also contain other Modules, allowing them to be nested in
    a tree structure. You can assign the submodules as regular attributes::
 
        import torch.nn as nn
        import torch.nn.functional as F
+
 
        class Model(nn.Module):
            def __init__(self) -> None:
@@ -306,8 +330,8 @@ Module Contents
                x = F.relu(self.conv1(x))
                return F.relu(self.conv2(x))
 
-   Submodules assigned in this way will be registered, and will have their
-   parameters converted too when you call :meth:`to`, etc.
+   Submodules assigned in this way will be registered, and will also have their
+   parameters converted when you call :meth:`to`, etc.
 
    .. note::
        As per the example above, an ``__init__()`` call to the parent class
@@ -391,15 +415,6 @@ Module Contents
       Representation of the layer
 
       :returns: Representation of the layer
-      :rtype: :py:class:`str`
-
-
-
-   .. py:method:: __str__() -> str
-
-      String representation of the layer
-
-      :returns: String representation of the layer
       :rtype: :py:class:`str`
 
 

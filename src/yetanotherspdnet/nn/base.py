@@ -1,3 +1,5 @@
+"""Core SPDNet layers: BiMap, ReEig, LogEig, Vec, Vech."""
+
 import torch
 from torch import nn
 from torch.nn.utils import parametrizations
@@ -211,17 +213,6 @@ class BiMap(nn.Module):
             f"device={self.device}, dtype={self.dtype}, generator={self.generator})"
         )
 
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
 
 class ReEig(nn.Module):
     def __init__(
@@ -283,17 +274,6 @@ class ReEig(nn.Module):
         """
         return f"ReEig(eps={self.eps}, use_autograd={self.use_autograd})"
 
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
 
 class LogEig(nn.Module):
     def __init__(self, use_autograd: bool = False) -> None:
@@ -341,17 +321,6 @@ class LogEig(nn.Module):
         """
         return f"LogEig(use_autograd={self.use_autograd})"
 
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
 
 class Vec(nn.Module):
     def __init__(self, use_autograd: bool = False):
@@ -394,16 +363,6 @@ class Vec(nn.Module):
             Representation of the layer
         """
         return f"Vec(use_autograd={self.use_autograd})"
-
-    def __str__(self) -> str:
-        """String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
 
 
 class Vech(nn.Module):

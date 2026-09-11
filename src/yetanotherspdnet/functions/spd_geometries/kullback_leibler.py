@@ -1,3 +1,7 @@
+"""Base geometries: Euclidean geodesic, arithmetic mean, harmonic mean/curve, and KL divergence."""
+
+import math
+
 import torch
 from torch.autograd import Function
 
@@ -162,7 +166,7 @@ class ArithmeticMean(Function):
         shape = ctx.shape
         if len(shape) == 2:
             return symmetrize(grad_output)
-        n_matrices = torch.prod(torch.tensor(shape[:-2]))
+        n_matrices = math.prod(shape[:-2])
         grad_input = torch.zeros(shape, device=grad_output.device)
         grad_input[..., :, :] = symmetrize(grad_output / n_matrices)
         return grad_input
@@ -190,7 +194,7 @@ def left_kullback_leibler_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
-    n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+    n_matrices = math.prod(data.shape[:-2])
     n_features = data.shape[-1]
     L_G = torch.linalg.cholesky(reference_point)
     G_inv = torch.cholesky_inverse(L_G)
@@ -226,7 +230,7 @@ class LeftKullbackLeiblerStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+        n_matrices = math.prod(data.shape[:-2])
         n_features = data.shape[-1]
         L_G = torch.linalg.cholesky(reference_point)
         G_inv = torch.cholesky_inverse(L_G)
@@ -457,7 +461,7 @@ class HarmonicMean(Function):
         shape = ctx.shape
         if len(shape) == 2:
             return symmetrize(grad_output)
-        n_matrices = torch.prod(torch.tensor(shape[:-2]))
+        n_matrices = math.prod(shape[:-2])
         inv_data, mean = ctx.saved_tensors
         tmp = symmetrize(mean @ grad_output @ mean)
         grad_input = symmetrize(inv_data @ tmp @ inv_data / n_matrices)
@@ -486,7 +490,7 @@ def right_kullback_leibler_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
-    n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+    n_matrices = math.prod(data.shape[:-2])
     n_features = data.shape[-1]
     L_G = torch.linalg.cholesky(reference_point)
     L_data = torch.linalg.cholesky(data)
@@ -522,7 +526,7 @@ class RightKullbackLeiblerStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+        n_matrices = math.prod(data.shape[:-2])
         n_features = data.shape[-1]
         L_G = torch.linalg.cholesky(reference_point)
         L_data = torch.linalg.cholesky(data)

@@ -10,6 +10,7 @@ Submodules
 .. toctree::
    :maxdepth: 1
 
+   /autoapi/yetanotherspdnet/functions/scalar_functions/index
    /autoapi/yetanotherspdnet/functions/spd_geometries/index
    /autoapi/yetanotherspdnet/functions/spd_linalg/index
    /autoapi/yetanotherspdnet/functions/stiefel/index

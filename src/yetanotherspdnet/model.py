@@ -1,3 +1,5 @@
+"""SPDNet model definition, serialization, and summary utilities."""
+
 import zlib
 
 import torch
@@ -459,17 +461,6 @@ class SPDnet(nn.Module):
             f"  generator={self.generator},\n"
             f")"
         )
-
-    def __str__(self) -> str:
-        """
-        String representation of SPDnet
-
-        Returns
-        -------
-        str
-            String representation of SPDnet
-        """
-        return self.__repr__()
 
     def layers_str(self) -> str:
         """Return a formatted string listing the layers of SPDnet."""
