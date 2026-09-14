@@ -121,7 +121,7 @@ def arithmetic_mean(data: torch.Tensor) -> torch.Tensor:
     """
     if data.ndim == 2:
         return data
-    return symmetrize(torch.real(torch.mean(data, dim=tuple(range(data.ndim - 2)))))
+    return symmetrize(torch.real(torch.mean(data, im=tuple(range(data.ndim - 2)))))
 
 
 class ArithmeticMean(Function):

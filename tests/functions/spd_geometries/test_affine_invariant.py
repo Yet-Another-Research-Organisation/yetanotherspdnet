@@ -6,7 +6,6 @@ import yetanotherspdnet.functions.spd_geometries.affine_invariant as affine_inva
 import yetanotherspdnet.functions.spd_linalg as spd_linalg
 from utils import is_spd, is_symmetric
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler import arithmetic_mean
-from yetanotherspdnet.random import spd
 from yetanotherspdnet.random.spd import random_DPD, random_SPD
 from yetanotherspdnet.random.stiefel import random_stiefel
 

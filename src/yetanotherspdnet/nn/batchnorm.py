@@ -474,6 +474,7 @@ class BatchNormSPDBase(ABC, nn.Module):
         running_parameters
             Running parameters
         """
+        pass
 
     @abstractmethod
     def _norm_and_bias(self, data: torch.Tensor, parameters) -> torch.Tensor:
@@ -508,6 +509,7 @@ class BatchNormSPDBase(ABC, nn.Module):
         optimizer : torch.optim.Optimizer
             Torch optimizer used for training
         """
+        pass
 
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """
@@ -1152,7 +1154,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         )
 
 
-class BatchNormSPDMeanMultivariateVariance(BatchNormSPDMean):
+class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
     def __init__(
         self,
         n_features: int,
