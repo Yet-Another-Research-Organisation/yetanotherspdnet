@@ -47,7 +47,9 @@ from yetanotherspdnet.model import SPDnet
 from yetanotherspdnet.random.spd import random_SPD
 
 # Generate random SPD matrices (batch of 32, size 50x50)
-X = random_SPD(n_features=50, n_matrices=32, cond=100, device="cuda", dtype=torch.float64)
+X = random_SPD(
+    n_features=50, n_matrices=32, cond=100, device="cuda", dtype=torch.float64
+)
 
 # Create an SPDNet model
 model = SPDnet(
@@ -81,13 +83,13 @@ from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import LogEuclideanMean
 
 # Matrix functions (return (result, eigvals, eigvecs) tuples)
-X_log = logm_SPD(X)[0]           # Matrix logarithm
-X_sqrt = sqrtm_SPD(X)[0]         # Matrix square root
-X_sqrt_inv = inv_sqrtm_SPD(X)[0] # Inverse square root
+X_log = logm_SPD(X)[0]  # Matrix logarithm
+X_sqrt = sqrtm_SPD(X)[0]  # Matrix square root
+X_sqrt_inv = inv_sqrtm_SPD(X)[0]  # Inverse square root
 
 # Riemannian means (manual gradient, GPU-efficient)
 mean_ai = AffineInvariantMean(X)  # Affine-invariant (Karcher) mean
-mean_le = LogEuclideanMean(X)     # Log-Euclidean mean
+mean_le = LogEuclideanMean(X)  # Log-Euclidean mean
 
 # Geodesic between two SPD matrices at parameter t in [0, 1]
 G = affine_invariant_geodesic(X[0], X[1], t=0.5)
