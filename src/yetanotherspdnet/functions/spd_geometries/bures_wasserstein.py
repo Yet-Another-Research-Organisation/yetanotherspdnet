@@ -169,11 +169,15 @@ def _bures_wasserstein_exp(
 
     .. math::
 
-        \mathrm{Exp}_B(V) = B + V + Z^2, \quad\text{where } Z \text{ solves }
-        B^{1/2} Z + Z B^{1/2} = V
+        \mathrm{Exp}_B(V) = B + V + Z B Z, \quad\text{where } Z \text{ solves }
+        B Z + Z B = V
 
-    (a Sylvester equation, solved by
+    (a Lyapunov equation, solved by
     :func:`~yetanotherspdnet.functions.spd_linalg.solve_sylvester_SPD`).
+    Inverse of :func:`bures_wasserstein_log`: with :math:`T` the optimal
+    transport map from :math:`B` to :math:`X`, :math:`\mathrm{Log}_B(X) =
+    TB + BT - 2B` gives :math:`Z = T - I` and :math:`\mathrm{Exp}_B = TBT = X`.
+    At :math:`B = I` it reduces to :func:`bures_wasserstein_exp_identity`.
 
     Parameters
     ----------
@@ -189,8 +193,8 @@ def _bures_wasserstein_exp(
         SPD matrices
     """
     eigvals_B, eigvecs_B = torch.linalg.eigh(base)
-    Z = solve_sylvester_SPD(torch.sqrt(eigvals_B), eigvecs_B, tangent_vec)
-    return base + tangent_vec + Z @ Z
+    Z = solve_sylvester_SPD(eigvals_B, eigvecs_B, tangent_vec)
+    return base + tangent_vec + Z @ base @ Z
 
 
 # ----------------------------------------
@@ -633,8 +637,8 @@ def bures_wasserstein_bias(
 
         X_{\text{biased}} = \mathrm{Exp}_G\big(\Gamma_{I\to G}(\mathrm{Log}_I(X))\big)
 
-    where :math:`\mathrm{Exp}_G(V) = G + V + Z^2` with :math:`G^{1/2} Z +
-    Z G^{1/2} = V` (see :func:`bures_wasserstein_parallel_transport_from_identity`).
+    where :math:`\mathrm{Exp}_G(V) = G + V + Z G Z` with :math:`G Z + Z G = V`
+    (see :func:`bures_wasserstein_parallel_transport_from_identity`).
     The BatchNorm analogue of adding a learnable bias :math:`G`.
 
     Parameters

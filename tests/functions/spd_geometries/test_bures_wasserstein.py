@@ -107,8 +107,20 @@ class TestBuresWassersteinLogExp:
         base, X = pts[0], pts[1]
         log_X = bw.bures_wasserstein_log(X, base)
         recovered = bw._bures_wasserstein_exp(log_X, base)
-        # BW log/exp at general base has limited numerical precision
-        assert_close(recovered, X, atol=2.0, rtol=0.5)
+        assert_close(recovered, X, atol=1e-8, rtol=0)
+
+    @pytest.mark.parametrize("n_features, cond", [(10, 100)])
+    @pytest.mark.parametrize("t", [0.3, 0.7])
+    def test_exp_follows_geodesic(self, n_features, cond, t, device, dtype, generator):
+        # Exp_B(t Log_B X) is the BW geodesic from B to X evaluated at t
+        pts = random_SPD(
+            n_features, 2, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+        base, X = pts[0], pts[1]
+        log_X = bw.bures_wasserstein_log(X, base)
+        on_geodesic = bw._bures_wasserstein_exp(t * log_X, base)
+        expected = bw.bures_wasserstein_geodesic(base, X, t)
+        assert_close(on_geodesic, expected, atol=1e-8, rtol=0)
 
 
 class TestBuresWassersteinMean:
@@ -206,7 +218,7 @@ class TestBuresWassersteinCenterScaleBias:
 
     @pytest.mark.parametrize("n_features, cond", [(10, 100)])
     @pytest.mark.parametrize("n_matrices", [5])
-    def test_centered_mean_near_identity(
+    def test_transported_logs_sum_to_zero(
         self, n_features, n_matrices, cond, device, dtype, generator
     ):
         data = random_SPD(
@@ -217,12 +229,42 @@ class TestBuresWassersteinCenterScaleBias:
             dtype=dtype,
             generator=generator,
         )
-        mean = bw.bures_wasserstein_mean(data, n_iterations=5)
+        # Centering is exact in the tangent space: the logs at the barycenter sum
+        # to zero, and the (linear) transport to the identity preserves that.
+        mean = bw.bures_wasserstein_mean(data, n_iterations=50)
+        log_at_mean = bw.bures_wasserstein_log(data, mean)
+        transported = bw.bures_wasserstein_parallel_transport_to_identity(
+            log_at_mean, mean
+        )
+        zero = torch.zeros(n_features, n_features, device=device, dtype=dtype)
+        assert_close(transported.mean(dim=0), zero, atol=1e-8, rtol=0)
+
+    @pytest.mark.parametrize("n_features, cond", [(10, 100)])
+    @pytest.mark.parametrize("n_matrices", [5])
+    def test_centered_mean_is_identity_for_concentrated_data(
+        self, n_features, n_matrices, cond, device, dtype, generator
+    ):
+        # The centered BW mean is exactly the identity only while every transported
+        # vector V keeps I + V/2 positive definite (injectivity domain of Exp_I);
+        # spread-out data leave that domain and Exp_I folds them. Build data
+        # concentrated around a base point so the property must hold exactly.
+        base = random_SPD(
+            n_features, 1, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+        far = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        data = bw.bures_wasserstein_geodesic(base.expand_as(far), far, 0.2)
+        mean = bw.bures_wasserstein_mean(data, n_iterations=50)
         centered = bw.bures_wasserstein_center(data, mean)
-        centered_mean = bw.bures_wasserstein_mean(centered, n_iterations=5)
+        centered_mean = bw.bures_wasserstein_mean(centered, n_iterations=50)
         eye = torch.eye(n_features, device=device, dtype=dtype)
-        # BW centering has limited precision due to log at general base
-        assert_close(centered_mean, eye, atol=0.5, rtol=0)
+        assert_close(centered_mean, eye, atol=1e-8, rtol=0)
 
     @pytest.mark.parametrize("n_features, cond", [(10, 100)])
     @pytest.mark.parametrize("n_matrices", [5])
