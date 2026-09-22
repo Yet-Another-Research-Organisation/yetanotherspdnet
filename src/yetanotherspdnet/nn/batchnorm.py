@@ -1,5 +1,6 @@
 """SPD batch normalization layers with configurable Riemannian geometry."""
 
+import warnings
 from functools import partial
 
 import torch
@@ -77,7 +78,55 @@ from .parametrizations import (
 )
 
 
+def _use_batch_statistics(module: nn.Module, data: torch.Tensor) -> bool:
+    """
+    Whether batch statistics can be computed for this forward pass.
+
+    Batch statistics need at least two SPD matrices: with a single one the batch
+    mean is the matrix itself and the batch dispersion is zero, so normalization
+    maps every input to the identity, erasing all information and feeding exactly
+    repeated eigenvalues to downstream eigendecompositions. In that case (as for
+    an unbatched ``(n_features, n_features)`` input) the running statistics are
+    used instead and left unchanged, as in evaluation mode.
+
+    Parameters
+    ----------
+    module : nn.Module
+        Batch normalization layer (its ``training`` flag is read)
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Input SPD matrices
+
+    Returns
+    -------
+    bool
+        True if the layer is training and the batch holds at least two matrices
+    """
+    if not module.training:
+        return False
+    if data.shape[:-2].numel() < 2:
+        warnings.warn(
+            "SPD batch normalization received a single matrix in training mode; "
+            "batch statistics are undefined, so running statistics are used and "
+            "not updated.",
+            UserWarning,
+            stacklevel=3,
+        )
+        return False
+    return True
+
+
 class BatchNormSPDMean(nn.Module):
+    r"""
+    Riemannian batch normalization of SPD matrices: mean centring and bias.
+
+    In training mode each batch is centred on its SPD mean :math:`\bar X`
+    (computed in the geometry selected by ``mean_type``) and re-biased by a
+    learnable SPD matrix :math:`G`; in evaluation mode the running mean replaces
+    the batch mean. A batch holding a single matrix has no batch statistics and
+    is normalized with the running mean, which is then left unchanged.
+
+    """
+
     def __init__(
         self,
         n_features: int,
@@ -168,6 +217,22 @@ class BatchNormSPDMean(nn.Module):
         dtype : torch.dtype, optional
             Data type of the layer.
             Default is torch.float64
+
+        Attributes
+        ----------
+        Covbias : torch.Tensor of shape (n_features, n_features)
+            Learnable SPD bias :math:`G` (parametrized; trainable tensor
+            ``parametrizations.Covbias.original``).
+        running_mean : torch.Tensor of shape (n_features, n_features)
+            Buffer: running SPD mean used in evaluation mode.
+        mean_type : str
+            Geometry of the mean: ``"affine_invariant"``, ``"log_euclidean"``,
+            ``"arithmetic"``, ``"harmonic"``, ``"geometric_arithmetic_harmonic"``,
+            ``"adaptive_geometric_arithmetic_harmonic"`` or ``"bures_wasserstein"``.
+        momentum : float
+            Update rate of ``running_mean``.
+        training_step : int
+            Number of training batches seen (drives the ``"minibatch"`` strategy).
         """
         super().__init__()
 
@@ -484,7 +549,7 @@ class BatchNormSPDMean(nn.Module):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of transformed (normalized then biased) SPD matrices
         """
-        if self.training:
+        if _use_batch_statistics(self, data):
             mean_batch = self.mean_fun(data)
             mean = self.get_norm_mean(mean_batch)
             with torch.no_grad():
@@ -568,6 +633,18 @@ class BatchNormSPDMean(nn.Module):
 
 
 class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
+    r"""
+    Riemannian batch normalization of SPD matrices: mean, scalar dispersion, bias.
+
+    Extends :class:`BatchNormSPDMean` with a scalar dispersion: centred matrices
+    are rescaled along geodesics from the identity by
+    :math:`s / \sigma`, where :math:`\sigma` is the batch (or running) standard
+    deviation and :math:`s` a learnable positive scalar. With
+    ``mean_type="bures_wasserstein"`` the layer implements GBWBN (generalized
+    Bures-Wasserstein batch normalization) with learnable pre/post transforms.
+
+    """
+
     def __init__(
         self,
         n_features: int,
@@ -586,7 +663,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
-        """
+        r"""
         Batch normalization layer for SPDnet relying on a SPD mean.
         Both the SPD mean and scalar variance are normalized
 
@@ -665,6 +742,21 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         dtype : torch.dtype, optional
             Data type of the layer.
             Default is torch.float64
+        Attributes
+        ----------
+        Covbias : torch.Tensor of shape (n_features, n_features)
+            Learnable SPD bias.
+        stdScalarbias : torch.Tensor
+            Learnable positive scalar scale :math:`s`.
+        running_mean : torch.Tensor of shape (n_features, n_features)
+            Buffer: running SPD mean.
+        running_std_scalar : torch.Tensor
+            Buffer: running scalar standard deviation.
+        bw_M, bw_G_hat : torch.Tensor of shape (n_features, n_features)
+            GBWBN only: learnable SPD pre-transform :math:`M` and bias
+            :math:`\hat G`.
+        bw_theta : float
+            GBWBN only: power of the pre-transform :math:`X \mapsto X^\theta`.
         """
         super().__init__(
             n_features=n_features,
@@ -824,7 +916,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
 
     def _forward_standard(self, data: torch.Tensor) -> torch.Tensor:
         """Standard forward pass (affine-invariant, log-euclidean, etc.)"""
-        if self.training:
+        if _use_batch_statistics(self, data):
             mean_batch = self.mean_fun(data)
             mean = self.get_norm_mean(mean_batch)
             std_batch = self.std_fun(data, mean)
@@ -864,7 +956,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         data_pow = powm_SPD(data, theta)[0] if theta != 1.0 else data
         data_hat = M_isqrt @ data_pow @ M_isqrt
 
-        if self.training:
+        if _use_batch_statistics(self, data):
             mean_batch = self.mean_fun(data_hat)
             mean = self.get_norm_mean(mean_batch)
             std_batch = self.std_fun(data_hat, mean)

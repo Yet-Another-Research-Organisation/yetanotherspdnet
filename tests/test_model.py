@@ -788,7 +788,13 @@ class TestGBWBNRResNet:
         X = random_SPD(
             10, n_samples, device=device, dtype=torch.float64, generator=generator
         )
-        output = model(X)
+        if n_samples == 1:
+            # a single matrix has no batch statistics: BatchNorm falls back to
+            # its running statistics instead of collapsing the input to identity
+            with pytest.warns(UserWarning, match="single matrix"):
+                output = model(X)
+        else:
+            output = model(X)
         expected_shape = (n_samples, 3) if n_samples > 1 else (3,)
         assert output.shape == expected_shape
         assert output.dtype == torch.float64

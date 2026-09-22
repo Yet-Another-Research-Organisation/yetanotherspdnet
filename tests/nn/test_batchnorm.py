@@ -1988,3 +1988,49 @@ class TestBatchNormBuresWasserstein:
             dtype=dtype,
         )
         assert layer.mean_type == "bures_wasserstein"
+
+
+class TestSingleMatrixBatch:
+    """
+    A batch holding a single SPD matrix has no batch statistics (the mean is the
+    matrix itself, the dispersion is zero). Training-mode forward must fall back
+    to the running statistics, leave them untouched, and warn.
+    """
+
+    @pytest.mark.parametrize(
+        "layer_class, mean_type",
+        [
+            (batchnorm.BatchNormSPDMean, "affine_invariant"),
+            (batchnorm.BatchNormSPDMean, "log_euclidean"),
+            (batchnorm.BatchNormSPDMeanScalarVariance, "affine_invariant"),
+            (batchnorm.BatchNormSPDMeanScalarVariance, "bures_wasserstein"),
+        ],
+    )
+    @pytest.mark.parametrize("unbatched", [True, False])
+    def test_single_matrix_uses_running_statistics(
+        self, layer_class, mean_type, unbatched, device, dtype, generator
+    ):
+        n_features = 5
+        layer = layer_class(n_features, mean_type=mean_type, device=device, dtype=dtype)
+        data = random_SPD(
+            n_features, 1, device=device, dtype=dtype, generator=generator
+        )
+        if not unbatched:
+            data = data.unsqueeze(0)
+        state_before = {k: v.clone() for k, v in layer.state_dict().items()}
+        step_before = layer.training_step
+
+        layer.train()
+        with pytest.warns(UserWarning, match="single matrix"):
+            out_train = layer(data)
+        layer.eval()
+        out_eval = layer(data)
+
+        assert_close(out_train, out_eval)
+        assert layer.training_step == step_before
+        for key, value in layer.state_dict().items():
+            assert_close(value, state_before[key])
+        # the output is not collapsed to the identity
+        eye = torch.eye(n_features, device=device, dtype=dtype)
+        assert not torch.allclose(out_train.reshape(n_features, n_features), eye)
+        assert is_spd(out_train)
