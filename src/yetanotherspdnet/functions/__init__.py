@@ -1,3 +1,5 @@
+"""Pure tensor functions on SPD matrices: linear algebra, geometries, Stiefel tools."""
+
 from . import scalar_functions, spd_geometries, spd_linalg
 
 

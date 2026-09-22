@@ -1,3 +1,5 @@
+"""Random SPD matrices with a prescribed condition number."""
+
 import torch
 
 from .stiefel import random_stiefel

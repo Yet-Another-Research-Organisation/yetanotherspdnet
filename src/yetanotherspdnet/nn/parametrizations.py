@@ -33,6 +33,10 @@ from ..functions.stiefel import (
 
 
 class ScalarSoftPlusParametrization(nn.Module):
+    """
+    Parametrization constraining a scalar to be positive with a softplus.
+    """
+
     def forward(self, scalar: torch.Tensor) -> torch.Tensor:
         """
         Positive definite scalars parametrization using the SoftPlus function
@@ -110,6 +114,14 @@ class ScalarSigmoidParametrization(nn.Module):
 
 
 class SPDParametrization(nn.Module):
+    """
+    Parametrization mapping a symmetric matrix to an SPD matrix.
+
+    The eigenvalues of the unconstrained symmetric matrix go through a softplus
+    (``mapping="softplus"``) or an exponential (``mapping="exp"``). Used for
+    the SPD biases of batch normalization.
+    """
+
     def __init__(self, mapping: str = "softplus", use_autograd: bool = False) -> None:
         """
         SPD Parametrization
@@ -200,6 +212,15 @@ class SPDParametrization(nn.Module):
 
 
 class SPDAdaptiveParametrization(nn.Module):
+    """
+    SPD parametrization around a moving reference point.
+
+    The trainable tensor is a tangent vector at the current reference point.
+    Calling ``update_reference_point`` moves the reference to the current value,
+    which keeps the chart well conditioned during long trainings
+    (``parametrization_mode="dynamic"`` in the layers).
+    """
+
     def __init__(
         self,
         n_features: int,
@@ -387,6 +408,14 @@ class SPDAdaptiveParametrization(nn.Module):
 
 
 class StiefelAdaptiveParametrization(nn.Module):
+    """
+    Stiefel parametrization around a moving reference point.
+
+    The trainable tensor is a tangent vector at the current reference point,
+    mapped back to the Stiefel manifold by a QR or polar retraction. Used by
+    BiMap with ``parametrization_mode="dynamic"``.
+    """
+
     def __init__(
         self,
         n_in: int,

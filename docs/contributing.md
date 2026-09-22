@@ -95,31 +95,39 @@ pytest
 # Run with coverage
 pytest --cov=yetanotherspdnet
 
-# Run specific test file
-pytest tests/test_spd.py
+# Run specific test file (coverage is enforced by default, skip it here)
+pytest tests/functions/test_spd_linalg.py --no-cov
 
-# Run specific test
-pytest tests/test_spd.py::TestLogmSPDExpmSymmetric::test_LogmSPD
+# Run specific test class
+pytest tests/nn/test_base.py::TestBiMap --no-cov
 ```
 
 #### Test Structure
 
+Tests use pytest fixtures for `device`, `dtype` and a seeded `generator`
+(see the top of each test module). Operations that exist on both gradient
+paths must be tested on both (`torch.autograd.gradcheck` in float64, plus
+agreement between the autograd and manual gradients):
+
 ```python
-from unittest import TestCase
+import pytest
 import torch
 from torch.testing import assert_close
-from yetanotherspdnet import spd
 
-class TestMyFeature(TestCase):
-    def setUp(self):
-        """Set up test fixtures."""
-        self.X = spd.random_SPD(50, 10)
+from yetanotherspdnet.functions.spd_linalg import LogmSPD, logm_SPD
+from yetanotherspdnet.random.spd import random_SPD
 
-    def test_basic_functionality(self):
-        """Test basic functionality."""
-        result = spd.my_new_function(self.X)
-        assert result.shape == self.X.shape
-        assert_close(result, expected_result)
+
+@pytest.mark.parametrize("n_features, n_matrices", [(10, 5)])
+def test_logm_gradients_agree(n_features, n_matrices, device, dtype, generator):
+    X = random_SPD(
+        n_features, n_matrices, device=device, dtype=dtype, generator=generator
+    )
+    X_auto = X.clone().requires_grad_()
+    X_manual = X.clone().requires_grad_()
+    logm_SPD(X_auto)[0].sum().backward()
+    LogmSPD.apply(X_manual).sum().backward()
+    assert_close(X_auto.grad, X_manual.grad)
 ```
 
 ### 4. Writing Documentation
@@ -128,7 +136,9 @@ We use **Sphinx** with **MyST** (Markdown support):
 
 #### Docstring Format
 
-Use Google or NumPy style docstrings:
+Use NumPy style docstrings. Classes get a class docstring (description and an
+`Attributes` section for parameters and buffers). Constructor arguments are
+documented in the `__init__` docstring. The API reference shows both.
 
 ```python
 def my_function(X: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
@@ -156,7 +166,7 @@ def my_function(X: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
 
     Examples
     --------
-    >>> X = spd.random_SPD(50, 10)
+    >>> X = random_SPD(50, 10, dtype=torch.float64)
     >>> result = my_function(X, eps=1e-4)
     """
     ...
@@ -165,10 +175,14 @@ def my_function(X: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
 #### Building Documentation
 
 ```bash
+pip install -e ".[docs]"
 cd docs
-make html
-open _build/html/index.html
+make html SPHINXOPTS="-W --keep-going"   # warnings are errors
+xdg-open _build/html/index.html
 ```
+
+The API reference (`docs/reference/`) is generated at build time by
+sphinx-autoapi and is not committed.
 
 ## Pull Request Process
 
@@ -207,7 +221,7 @@ Go to GitHub and create a pull request from your fork to the main repository.
 - [ ] Code follows style guidelines (ruff passes)
 - [ ] All tests pass (`pytest`)
 - [ ] New tests added for new features
-- [ ] Test coverage maintained (≥80%)
+- [ ] Coverage not decreased (CI enforces ≥ 40%; aim for ≥ 80% on new code)
 - [ ] Documentation updated (docstrings and/or markdown files)
 - [ ] Type hints added for new functions
 - [ ] Commit messages follow conventional commits
@@ -232,38 +246,26 @@ Once approved and CI passes, a maintainer will merge your PR into main.
 
 All pull requests must pass CI checks:
 
-1. **Tests**: All tests must pass on Python 3.11 and 3.12
-2. **Coverage**: Test coverage must be ≥80%
-3. **Linting**: Ruff checks must pass
-4. **Type Checking**: MyPy checks should pass (warnings OK)
+1. **Tests**: all tests must pass on Python 3.11 and 3.12
+2. **Coverage**: the suite fails below 40% (`--cov-fail-under` in `pyproject.toml`)
+3. **Linting**: `ruff check .` and `ruff format --check .` must pass, with the
+   ruff version pinned in `pyproject.toml` (`dev` extra), in the CI workflow and in
+   `.pre-commit-config.yaml`. Bump all three together.
+4. **Type checking**: `mypy src/` is not run in CI (known pre-existing errors)
 
 Only merges to **main** require all CI checks to pass. Development branches can be pushed without restrictions for fast iteration.
 
 ## Testing Requirements
 
-### Coverage Threshold
+### Coverage
 
-Maintain ≥80% test coverage:
+`pytest` measures coverage by default and fails below 40%. New code should
+come with tests covering both gradient paths.
 
-```bash
-pytest --cov=yetanotherspdnet --cov-fail-under=80
-```
+### Markers
 
-### Test Categories
-
-Mark tests appropriately:
-
-```python
-import pytest
-
-@pytest.mark.slow
-def test_expensive_computation():
-    """This test takes a long time."""
-    ...
-
-# Run only fast tests
-pytest -m "not slow"
-```
+`slow` and `integration` markers are declared in `pyproject.toml`; deselect
+with `pytest -m "not slow"`.
 
 ## Getting Help
 
@@ -278,4 +280,4 @@ pytest -m "not slow"
 - Focus on what is best for the project
 - Show empathy towards other contributors
 
-Thank you for contributing to Yet Another SPDNet! 🎉
+Thank you for contributing to Yet Another SPDNet!

@@ -1,170 +1,129 @@
-# Quick Start Guide
+# Quickstart
 
-This guide will help you get started with Yet Another SPDNet.
+Every snippet on this page runs as-is against the current version.
 
-## Basic SPD Matrix Operations
+```{important}
+Work in **float64**. All layers and models default to `torch.float64`, because
+eigendecompositions lose accuracy quickly in float32. `random_SPD` defaults to
+float32, so pass `dtype=torch.float64` explicitly (mixing both raises a dtype
+error in the first layer).
+```
 
-### Creating Random SPD Matrices
+## SPD matrices and matrix functions
 
 ```python
 import torch
-from yetanotherspdnet import spd
+from yetanotherspdnet.random.spd import random_SPD
+from yetanotherspdnet.functions.spd_linalg import expm_symmetric, logm_SPD
 
-# Generate random SPD matrices
-n_features = 50
-n_matrices = 10
-X = spd.random_SPD(n_features, n_matrices, cond=100)
+generator = torch.Generator().manual_seed(0)
+X = random_SPD(
+    n_features=8, n_matrices=32, cond=100, dtype=torch.float64, generator=generator
+)
+print(X.shape)  # torch.Size([32, 8, 8]): a batch of 32 matrices 8 x 8
 
-print(f"Shape: {X.shape}")  # (10, 50, 50)
+log_X = logm_SPD(X)[0]  # matrix functions return (result, eigvals, eigvecs)
+print(torch.allclose(expm_symmetric(log_X)[0], X))  # True
 ```
 
-### Matrix Logarithm and Exponential
+Every function accepts any number of leading batch dimensions
+`(..., n, n)`: `(B, n, n)` for a batch, `(B, T, n, n)` for sequences.
+
+## Riemannian means
+
+The mean of SPD matrices depends on the geometry. Each geometry lives in its
+own module under `functions.spd_geometries`:
 
 ```python
-# Compute matrix logarithm
-X_log = spd.logm_SPD(X)
+from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
+    affine_invariant_mean,
+)
+from yetanotherspdnet.functions.spd_geometries.bures_wasserstein import (
+    bures_wasserstein_mean,
+)
+from yetanotherspdnet.functions.spd_geometries.log_euclidean import log_euclidean_mean
 
-# Compute matrix exponential (inverse operation)
-X_reconstructed = spd.expm_symmetric(X_log)
-
-# Verify reconstruction
-print(torch.allclose(X, X_reconstructed))  # True
+G_ai = affine_invariant_mean(X, n_iterations=10)  # Karcher flow
+G_le = log_euclidean_mean(X)  # closed form
+G_bw = bures_wasserstein_mean(X, n_iterations=10)  # fixed point
+print(G_ai.shape)  # torch.Size([8, 8])
 ```
 
-### Square Root and Inverse Square Root
+See {doc}`user_guide/geometries` for the formulas and when to use which.
+
+## Layers
+
+Layers are regular `torch.nn.Module`s and compose with `torch.nn.Sequential`:
 
 ```python
-# Compute matrix square root
-X_sqrt = spd.sqrtm_SPD(X)
+from yetanotherspdnet.nn import BiMap, LogEig, ReEig, Vech
 
-# Verify: X_sqrt @ X_sqrt = X
-print(torch.allclose(X_sqrt @ X_sqrt, X))  # True
-
-# Compute inverse square root
-X_inv_sqrt = spd.inv_sqrtm_SPD(X)
+features = torch.nn.Sequential(
+    BiMap(8, 4),  # 8x8 -> 4x4, orthonormal weight
+    ReEig(eps=1e-4),  # clamp eigenvalues below eps
+    LogEig(),  # SPD -> symmetric
+    Vech(),  # 4x4 symmetric -> 10 coefficients
+)
+print(features(X).shape)  # torch.Size([32, 10])
 ```
 
-## Computing SPD Means
+## A complete model
 
 ```python
-from yetanotherspdnet import means
+from yetanotherspdnet import SPDnet
 
-# Arithmetic mean (Euclidean)
-mean_arith = means.mean_arithmetic(X)
-
-# Geometric mean (Riemannian)
-mean_geom = means.mean_geometric(X, max_iter=10)
-
-# Log-Euclidean mean
-mean_log = means.mean_log_euclidean(X)
-
-# Harmonic mean
-mean_harm = means.mean_harmonic(X)
-
-print(f"Arithmetic mean shape: {mean_arith.shape}")  # (50, 50)
-```
-
-## Building an SPDNet Model
-
-```python
-from yetanotherspdnet.models import SPDNet
-
-# Create an SPDNet model
-model = SPDNet(
-    input_dim=50,
-    hidden_layers_size=[30, 20],
-    output_dim=10,
-    softmax=True,
+model = SPDnet(
+    input_dim=8,
+    hidden_layers_size=[6, 4],  # BiMap 8->6->4
+    output_dim=3,  # number of classes
     batchnorm=True,
-    batchnorm_method="geometric",
-    eps=1e-3,
+    batchnorm_mean_type="affine_invariant",
 )
-
-# Forward pass
-X = spd.random_SPD(50, batch_size=32)
-output = model(X)
-
-print(f"Output shape: {output.shape}")  # (32, 10)
+print(model(X).shape)  # torch.Size([32, 3])
 ```
 
-## Using Neural Network Layers
+It trains like any PyTorch model:
 
 ```python
-from yetanotherspdnet.nn import BiMap, ReEig, LogEig, Vec
+y = torch.randint(0, 3, (32,), generator=generator)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+loss_fn = torch.nn.CrossEntropyLoss()
 
-# BiMap layer (bilinear mapping)
-bimap = BiMap(n_in=50, n_out=30)
-X_mapped = bimap(X)
-print(f"After BiMap: {X_mapped.shape}")  # (32, 30, 30)
-
-# ReEig layer (eigenvalue rectification)
-reeig = ReEig(eps=1e-3, dim=30)
-X_rectified = reeig(X_mapped)
-
-# LogEig layer (matrix logarithm)
-logeig = LogEig()
-X_log = logeig(X_rectified)
-
-# Vec layer (vectorization)
-vec = Vec()
-X_vec = vec(X_log)
-print(f"After Vec: {X_vec.shape}")  # (32, 900)
-```
-
-## Training Example
-
-```python
-import torch.nn as nn
-import torch.optim as optim
-
-# Create model
-model = SPDNet(
-    input_dim=50,
-    hidden_layers_size=[30, 20],
-    output_dim=5,
-    softmax=True,
-)
-
-# Define loss and optimizer
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-
-# Training loop (pseudo-code)
-for epoch in range(num_epochs):
-    # Generate batch of SPD matrices and labels
-    X_batch = spd.random_SPD(50, batch_size=32)
-    y_batch = torch.randint(0, 5, (32,))
-
-    # Forward pass
-    outputs = model(X_batch)
-    loss = criterion(outputs, y_batch)
-
-    # Backward pass and optimization
+model.train()
+for epoch in range(5):
     optimizer.zero_grad()
+    loss = loss_fn(model(X), y)
     loss.backward()
     optimizer.step()
 
-    print(f"Epoch {epoch+1}, Loss: {loss.item():.4f}")
+model.eval()  # batch normalization now uses its running statistics
+with torch.no_grad():
+    predictions = model(X).argmax(dim=-1)
 ```
 
-## Batch Normalization for SPD Matrices
+The orthonormality of the BiMap weights and the positivity of the batch
+normalization biases are handled by `torch.nn.utils.parametrize`, so a plain
+Euclidean optimizer such as Adam or SGD is enough.
+
+## Batch normalization on its own
 
 ```python
-from yetanotherspdnet.nn import BatchNormSPDMean
+from yetanotherspdnet.nn import BatchNormSPDMeanScalarVariance
 
-# Create batch normalization layer
-batchnorm = BatchNormSPDMean(
-    n_features=50,
-    mean_type="geometric",
-    momentum=0.1,
-)
-
-# Apply batch normalization
-X_normalized = batchnorm(X)
+bn = BatchNormSPDMeanScalarVariance(n_features=8, mean_type="log_euclidean")
+print(bn(X).shape)  # torch.Size([32, 8, 8])
 ```
 
-## Next Steps
+See {doc}`user_guide/batchnorm` for the available geometries and options.
 
-- Explore the [API Reference](api.md) for detailed documentation
-- Check out the [Contributing Guide](contributing.md) to contribute
-- Read the source code for advanced usage patterns
+## Residual networks
+
+```python
+from yetanotherspdnet import GBWBNRResNet, RResNet
+
+rresnet = RResNet(
+    input_dim=8, hidden_layers_size=[6, 4], n_residual_blocks=[1, 1], output_dim=3
+)
+gbwbn = GBWBNRResNet(input_dim=8, hidden_dim=4, output_dim=3)
+print(rresnet(X).shape, gbwbn(X).shape)  # torch.Size([32, 3]) torch.Size([32, 3])
+```

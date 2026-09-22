@@ -14,6 +14,14 @@ from yetanotherspdnet.nn.rresnet_layers import ResidualBlock
 
 
 class SPDnet(nn.Module):
+    r"""
+    SPDNet classifier: ``[BiMap -> (BatchNorm) -> ReEig] x L -> LogEig -> Vec -> Linear``.
+
+    Implements the architecture of Huang & Van Gool (AAAI 2017), with optional
+    Riemannian batch normalization after each BiMap.
+
+    """
+
     def __init__(
         self,
         input_dim: int,
@@ -162,6 +170,15 @@ class SPDnet(nn.Module):
 
         generator : torch.Generator, optional
             Generator to ensure reproducibility. Default is None
+
+        Attributes
+        ----------
+        spdnet_layers : torch.nn.Sequential
+            The SPD part of the network (BiMap, BatchNorm, ReEig and LogEig layers).
+        vectorization : Vec or Vech
+            Flattens the final symmetric matrices.
+        linear : torch.nn.Linear
+            Euclidean classification head.
         """
         super().__init__()
         self.input_dim = input_dim
