@@ -1830,3 +1830,75 @@ class TestCongruenceRectangular:
         assert torch.isfinite(W_manual.grad).all()
         assert torch.isfinite(W_auto.grad).all()
         assert_close(W_manual.grad, W_auto.grad)
+
+
+# ------------
+# EighReLuBias
+# ------------
+class TestEighReLuBias:
+    """
+    Test suite for eigh_relu_bias and the EighReLuBias Function
+    """
+
+    @pytest.mark.parametrize("n_features, n_matrices", [(5, 3), (8, 10)])
+    def test_zero_bias_is_two_sided_reeig(
+        self, n_features, n_matrices, device, dtype, generator
+    ):
+        data = random_SPD(
+            n_features,
+            n_matrices,
+            cond=1e3,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        eps = 1e-2
+        bias = torch.zeros(n_features, device=device, dtype=dtype)
+        result = spd_linalg.EighReLuBias.apply(data, bias, eps)
+        eigvals, eigvecs = torch.linalg.eigh(data)
+        expected = (
+            eigvecs
+            @ torch.diag_embed(torch.clamp(eigvals, min=eps, max=1 / eps))
+            @ eigvecs.transpose(-1, -2)
+        )
+        assert_close(result, expected)
+        assert is_spd(result)
+
+    @pytest.mark.parametrize("n_features, n_matrices", [(5, 3)])
+    def test_gradients(self, n_features, n_matrices, device, dtype, generator):
+        data = random_SPD(
+            n_features,
+            n_matrices,
+            cond=20,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        bias = 0.3 * torch.randn(
+            n_features, device=device, dtype=dtype, generator=generator
+        )
+        eps = 0.05
+        manual = lambda x, b: spd_linalg.EighReLuBias.apply(  # noqa: E731
+            spd_linalg.symmetrize(x), b, eps
+        )
+        auto = lambda x, b: spd_linalg.eigh_relu_bias(  # noqa: E731
+            spd_linalg.symmetrize(x), b, eps
+        )[0]
+        inputs = (data.clone().requires_grad_(), bias.clone().requires_grad_())
+        assert torch.autograd.gradcheck(manual, inputs)
+        assert torch.autograd.gradcheck(auto, inputs)
+        grad_output = torch.randn(
+            n_matrices,
+            n_features,
+            n_features,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        grads = []
+        for fun in (manual, auto):
+            x, b = data.clone().requires_grad_(), bias.clone().requires_grad_()
+            (fun(x, b) * grad_output).sum().backward()
+            grads.append((x.grad, b.grad))
+        assert_close(grads[0][0], grads[1][0])
+        assert_close(grads[0][1], grads[1][1])

@@ -31,12 +31,22 @@ summary table of its classes and functions. Classes list their attributes
   {py:mod}`~yetanotherspdnet.functions.spd_geometries.bures_wasserstein`
   (see {doc}`user_guide/geometries`).
 
+{py:mod}`yetanotherspdnet.functions.m_estimators`
+: Sample covariance and robust M-estimators of scatter (Tyler, Student-t,
+  Huber weights), with an unrolled autograd path and an implicit
+  fixed-point backward.
+
 {py:mod}`yetanotherspdnet.functions.scalar_functions`, {py:mod}`yetanotherspdnet.functions.stiefel`
 : Scalar maps applied to eigenvalues (and their derivatives), and
   projections/retractions on the Stiefel manifold.
 
 {py:mod}`yetanotherspdnet.nn.base`
-: The SPDNet layers: `BiMap`, `ReEig`, `LogEig`, `Vec`, `Vech`.
+: The SPDNet layers: `BiMap`, `ReEig`, `ReEigBias` (learned eigenvalue
+  shift, two-sided clamp), `LogEig`, `Vec`, `Vech`.
+
+{py:mod}`yetanotherspdnet.nn.estimation`
+: `SampleCovariance` and `MEstimation`: layers mapping raw samples to SPD
+  matrices, differentiable with respect to the samples.
 
 {py:mod}`yetanotherspdnet.nn.batchnorm`
 : `BatchNormSPDMean` and `BatchNormSPDMeanScalarVariance`

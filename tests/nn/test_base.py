@@ -1137,3 +1137,43 @@ class TestVech:
 
         layer.eval()
         assert layer.training is False
+
+
+class TestReEigBias:
+    """
+    Test suite for the ReEigBias layer
+    """
+
+    @pytest.mark.parametrize("use_autograd", [True, False])
+    def test_forward_backward(self, use_autograd, device, dtype, generator):
+        n_features = 6
+        layer = nn_spd_base.ReEigBias(
+            n_features, eps=1e-3, use_autograd=use_autograd, device=device, dtype=dtype
+        )
+        data = random_SPD(
+            n_features, 4, cond=1e4, device=device, dtype=dtype, generator=generator
+        )
+        output = layer(data)
+        assert output.shape == data.shape
+        assert is_spd(output)
+        eigvals = torch.linalg.eigvalsh(output)
+        assert eigvals.min() >= 1e-3 * (1 - 1e-8)
+        assert eigvals.max() <= 1e3 * (1 + 1e-8)
+        output.sum().backward()
+        assert layer.bias.grad is not None
+        assert layer.bias.grad.shape == (n_features,)
+
+    def test_bias_shifts_eigenvalues(self, device, dtype):
+        layer = nn_spd_base.ReEigBias(3, eps=1e-3, device=device, dtype=dtype)
+        with torch.no_grad():
+            layer.bias.copy_(torch.tensor([0.5, 1.0, 2.0], dtype=dtype))
+        data = torch.diag(torch.tensor([1.0, 2.0, 3.0], device=device, dtype=dtype))
+        assert_close(
+            torch.linalg.eigvalsh(layer(data)),
+            torch.tensor([1.5, 3.0, 5.0], device=device, dtype=dtype),
+        )
+
+    def test_wrong_dimension(self, device, dtype):
+        layer = nn_spd_base.ReEigBias(3, device=device, dtype=dtype)
+        with pytest.raises(AssertionError):
+            layer(torch.eye(4, device=device, dtype=dtype))
