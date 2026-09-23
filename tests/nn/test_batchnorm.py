@@ -2034,3 +2034,63 @@ class TestSingleMatrixBatch:
         eye = torch.eye(n_features, device=device, dtype=dtype)
         assert not torch.allclose(out_train.reshape(n_features, n_features), eye)
         assert is_spd(out_train)
+
+
+class TestBuresWassersteinGradients:
+    """
+    GBWBN parameters bw_M and bw_G_hat start at the identity; their gradients
+    must be finite and correct there (they were NaN through autograd eigh).
+    """
+
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_parameters_train(self, bw_theta, device, dtype, generator):
+        n_features = 5
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type="bures_wasserstein",
+            bw_theta=bw_theta,
+            device=device,
+            dtype=dtype,
+        )
+        data = random_SPD(
+            n_features, 8, cond=10, device=device, dtype=dtype, generator=generator
+        )
+        optimizer = torch.optim.SGD(layer.parameters(), lr=1e-2)
+        for _ in range(3):
+            optimizer.zero_grad()
+            layer(data).square().sum().backward()
+            for name, param in layer.named_parameters():
+                if param.grad is not None:
+                    assert torch.isfinite(param.grad).all(), name
+            optimizer.step()
+        assert is_spd(layer.bw_M) and is_spd(layer.bw_G_hat)
+
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_parameters_gradcheck_at_init(self, bw_theta, device, dtype, generator):
+        from torch.func import functional_call
+
+        n_features = 4
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type="bures_wasserstein",
+            bw_theta=bw_theta,
+            device=device,
+            dtype=dtype,
+        )
+        data = random_SPD(
+            n_features, 6, cond=10, device=device, dtype=dtype, generator=generator
+        )
+        params = dict(layer.named_parameters())
+        names = (
+            "parametrizations.bw_M.original",
+            "parametrizations.bw_G_hat.original",
+        )
+
+        def fun(m_original, g_original):
+            overrides = dict(params)
+            overrides[names[0]] = 0.5 * (m_original + m_original.T)
+            overrides[names[1]] = 0.5 * (g_original + g_original.T)
+            return functional_call(layer, overrides, (data,))
+
+        inputs = tuple(params[n].detach().clone().requires_grad_() for n in names)
+        assert torch.autograd.gradcheck(fun, inputs, atol=1e-6)

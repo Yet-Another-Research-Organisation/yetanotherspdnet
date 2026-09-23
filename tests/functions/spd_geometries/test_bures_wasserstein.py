@@ -429,3 +429,73 @@ class TestBuresWassersteinGradients:
         loss.backward()
         assert data.grad is not None
         assert not torch.any(torch.isnan(data.grad))
+
+
+def _symmetrize(x):
+    return 0.5 * (x + x.transpose(-2, -1))
+
+
+class TestDegenerateSafeGradients:
+    """
+    The BW bias step differentiates with respect to a learnable SPD point that
+    starts at the identity (all eigenvalues equal). Autograd through
+    torch.linalg.eigh returns NaN there; the dedicated Functions must not.
+    """
+
+    @pytest.mark.parametrize("point", ["identity", "random"])
+    def test_lyapunov_solve_gradcheck(self, point, device, dtype, generator):
+        n = 5
+        base = (
+            torch.eye(n, device=device, dtype=dtype)
+            if point == "identity"
+            else random_SPD(
+                n, 1, cond=10, device=device, dtype=dtype, generator=generator
+            )
+        )
+        rhs = _symmetrize(
+            torch.randn(3, n, n, device=device, dtype=dtype, generator=generator)
+        )
+        fun = lambda b, v: bw.LyapunovSolveSPD.apply(_symmetrize(b), _symmetrize(v))  # noqa: E731
+        inputs = (base.clone().requires_grad_(), rhs.clone().requires_grad_())
+        assert torch.autograd.gradcheck(fun, inputs)
+
+    @pytest.mark.parametrize("point", ["identity", "random"])
+    def test_transport_from_identity_gradcheck(self, point, device, dtype, generator):
+        n = 5
+        target = (
+            torch.eye(n, device=device, dtype=dtype)
+            if point == "identity"
+            else random_SPD(
+                n, 1, cond=10, device=device, dtype=dtype, generator=generator
+            )
+        )
+        tangent = _symmetrize(
+            torch.randn(3, n, n, device=device, dtype=dtype, generator=generator)
+        )
+        fun = lambda s, g: bw.ParallelTransportFromIdentityBW.apply(  # noqa: E731
+            _symmetrize(s), _symmetrize(g)
+        )
+        inputs = (tangent.clone().requires_grad_(), target.clone().requires_grad_())
+        assert torch.autograd.gradcheck(fun, inputs)
+
+    def test_transport_matches_reference(self, device, dtype, generator):
+        n = 6
+        target = random_SPD(
+            n, 1, cond=10, device=device, dtype=dtype, generator=generator
+        )
+        tangent = _symmetrize(
+            torch.randn(4, n, n, device=device, dtype=dtype, generator=generator)
+        )
+        assert_close(
+            bw.ParallelTransportFromIdentityBW.apply(tangent, target),
+            bw.bures_wasserstein_parallel_transport_from_identity(tangent, target),
+        )
+
+    def test_bias_gradient_finite_at_identity(self, device, dtype, generator):
+        n = 5
+        data = random_SPD(
+            n, 4, cond=10, device=device, dtype=dtype, generator=generator
+        )
+        bias_point = torch.eye(n, device=device, dtype=dtype, requires_grad=True)
+        bw.bures_wasserstein_bias(data, bias_point).sum().backward()
+        assert torch.isfinite(bias_point.grad).all()

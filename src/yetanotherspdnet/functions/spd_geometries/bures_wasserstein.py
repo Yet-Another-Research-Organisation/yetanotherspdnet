@@ -161,6 +161,61 @@ def bures_wasserstein_log(X: torch.Tensor, base: torch.Tensor) -> torch.Tensor:
     return XB_sqrt + BX_sqrt - 2 * base
 
 
+def _sum_to_shape(grad: torch.Tensor, shape: torch.Size) -> torch.Tensor:
+    """Sum a broadcast gradient back to the shape of the input it came from."""
+    while grad.ndim > len(shape):
+        grad = grad.sum(dim=0)
+    for dim, size in enumerate(shape):
+        if size == 1 and grad.shape[dim] != 1:
+            grad = grad.sum(dim=dim, keepdim=True)
+    return grad
+
+
+class LyapunovSolveSPD(Function):
+    r"""
+    Solution :math:`Z` of :math:`BZ + ZB = V` for SPD :math:`B`, with an
+    implicit backward.
+
+    Differentiating the equation gives :math:`B\,dZ + dZ\,B = dV - (dB\,Z +
+    Z\,dB)`, so with :math:`W` solving :math:`BW + WB = \bar Z`:
+    :math:`\bar V = W` and :math:`\bar B = -(WZ + ZW)`. Only solves with the
+    eigendecomposition of :math:`B` are needed, never the derivative of
+    ``torch.linalg.eigh``, so the gradient stays finite when :math:`B` has
+    repeated eigenvalues (e.g. a parameter initialized at the identity).
+    """
+
+    @staticmethod
+    def forward(ctx, base: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        base : torch.Tensor of shape (..., n_features, n_features)
+            SPD matrices :math:`B` (broadcast against ``rhs``)
+
+        rhs : torch.Tensor of shape (..., n_features, n_features)
+            Right-hand sides :math:`V`
+
+        Returns
+        -------
+        solution : torch.Tensor of shape (..., n_features, n_features)
+            Solutions :math:`Z`
+        """
+        eigvals, eigvecs = torch.linalg.eigh(base)
+        solution = solve_sylvester_SPD(eigvals, eigvecs, rhs)
+        ctx.save_for_backward(eigvals, eigvecs, solution)
+        ctx.base_shape = base.shape
+        return solution
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        eigvals, eigvecs, solution = ctx.saved_tensors
+        adjoint = solve_sylvester_SPD(eigvals, eigvecs, grad_output)
+        solution_t = solution.transpose(-2, -1)
+        grad_base = -(adjoint @ solution_t + solution_t @ adjoint)
+        grad_base = 0.5 * (grad_base + grad_base.transpose(-2, -1))
+        return _sum_to_shape(grad_base, ctx.base_shape), adjoint
+
+
 def _bures_wasserstein_exp(
     tangent_vec: torch.Tensor, base: torch.Tensor
 ) -> torch.Tensor:
@@ -192,8 +247,7 @@ def _bures_wasserstein_exp(
     point : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
     """
-    eigvals_B, eigvecs_B = torch.linalg.eigh(base)
-    Z = solve_sylvester_SPD(eigvals_B, eigvecs_B, tangent_vec)
+    Z = LyapunovSolveSPD.apply(base, tangent_vec)
     return base + tangent_vec + Z @ base @ Z
 
 
@@ -268,6 +322,74 @@ def bures_wasserstein_parallel_transport_from_identity(
     scale = torch.sqrt(delta_sum / 2.0)
     rotated = eigvecs.transpose(-2, -1) @ tangent_vec @ eigvecs
     return eigvecs @ (scale * rotated) @ eigvecs.transpose(-2, -1)
+
+
+class ParallelTransportFromIdentityBW(Function):
+    r"""
+    BW transport from the identity, :math:`\Gamma_{I\to G} = \mathcal{A}_G^{1/2}`,
+    with a backward that stays finite for repeated eigenvalues of :math:`G`.
+
+    :math:`\mathcal{A}_G(S) = (GS + SG)/2` is the Lyapunov operator; in the
+    eigenbasis :math:`u_i` of :math:`G` it is diagonal with entries
+    :math:`a_{ij} = (\delta_i + \delta_j)/2`, and the transport multiplies
+    :math:`(U^\top S U)_{ij}` by :math:`b_{ij} = \sqrt{a_{ij}}`. Its derivative
+    with respect to :math:`G` follows from the Sylvester equation
+    :math:`\mathcal{B}\,d\mathcal{B} + d\mathcal{B}\,\mathcal{B} = d\mathcal{A}`
+    between operators (:math:`\mathcal{B} = \mathcal{A}^{1/2}`):
+
+    .. math::
+
+        d\tilde W_{ij} = \frac12 \sum_k \frac{\tilde E_{ik} \tilde S_{kj}}{b_{ij} + b_{kj}}
+            + \frac12 \sum_k \frac{\tilde S_{ik} \tilde E_{kj}}{b_{ij} + b_{ik}},
+        \qquad \tilde E = U^\top dG\, U,
+
+    whose denominators are positive, unlike the :math:`1/(\delta_i - \delta_j)`
+    terms of the autograd path through ``torch.linalg.eigh``.
+    """
+
+    @staticmethod
+    def forward(ctx, tangent_vec: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        tangent_vec : torch.Tensor of shape (..., n_features, n_features)
+            Tangent vectors :math:`S` at the identity
+
+        target : torch.Tensor of shape (n_features, n_features)
+            Target point :math:`G` (SPD)
+
+        Returns
+        -------
+        transported : torch.Tensor of shape (..., n_features, n_features)
+            Tangent vectors at *target*
+        """
+        if target.ndim != 2:
+            raise ValueError(
+                "ParallelTransportFromIdentityBW expects a single target matrix, "
+                f"got shape {tuple(target.shape)}"
+            )
+        eigvals, eigvecs = torch.linalg.eigh(target)
+        scale = torch.sqrt((eigvals.unsqueeze(-1) + eigvals.unsqueeze(-2)) / 2.0)
+        rotated = eigvecs.transpose(-2, -1) @ tangent_vec @ eigvecs
+        ctx.save_for_backward(eigvecs, scale, rotated)
+        return eigvecs @ (scale * rotated) @ eigvecs.transpose(-2, -1)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        eigvecs, scale, rotated = ctx.saved_tensors
+        grad_rot = eigvecs.transpose(-2, -1) @ grad_output @ eigvecs
+        grad_tangent = eigvecs @ (scale * grad_rot) @ eigvecs.transpose(-2, -1)
+        n = scale.shape[-1]
+        grad_rot = grad_rot.reshape(-1, n, n)
+        rotated = rotated.expand_as(grad_output).reshape(-1, n, n)
+        # kernel[p, q, j] = 1 / (b_pj + b_qj)
+        kernel = 1.0 / (scale.unsqueeze(1) + scale.unsqueeze(0))
+        first = torch.einsum("bpj,bqj->pqj", grad_rot, rotated)
+        second = torch.einsum("bip,biq->pqi", rotated, grad_rot)
+        grad_rot_target = 0.5 * ((first + second) * kernel).sum(dim=-1)
+        grad_target = eigvecs @ grad_rot_target @ eigvecs.transpose(-2, -1)
+        grad_target = 0.5 * (grad_target + grad_target.transpose(-2, -1))
+        return grad_tangent, grad_target
 
 
 # ----------------------------------------
@@ -655,7 +777,7 @@ def bures_wasserstein_bias(
         Biased SPD matrices
     """
     log_at_I = bures_wasserstein_log_identity(data)
-    transported = bures_wasserstein_parallel_transport_from_identity(
-        log_at_I, bias_point
-    )
+    # degenerate-safe backward: bias_point is typically a learnable parameter
+    # initialized at the identity (all eigenvalues equal)
+    transported = ParallelTransportFromIdentityBW.apply(log_at_I, bias_point)
     return _bures_wasserstein_exp(transported, bias_point)
