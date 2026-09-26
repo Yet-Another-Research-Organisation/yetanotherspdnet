@@ -8,6 +8,12 @@ from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
     affine_invariant_exp,
     affine_invariant_projx,
 )
+from yetanotherspdnet.functions.spd_linalg import (
+    ExpmSymmetric,
+    LogmSPD,
+    expm_symmetric,
+    logm_SPD,
+)
 from yetanotherspdnet.nn.parametrizations import (
     StiefelAdaptiveParametrization,
 )
@@ -247,15 +253,46 @@ class SpectralVectorField(nn.Module):
         )
 
 
+def affine_invariant_norm(base: torch.Tensor, tangent: torch.Tensor) -> torch.Tensor:
+    r"""
+    Affine-invariant norm of tangent vectors.
+
+    :math:`\lVert X^{-1/2} V X^{-1/2} \rVert_F = \lVert L^{-1} V L^{-\top} \rVert_F`
+    with :math:`X = LL^\top`: Cholesky and triangular solves only, so the
+    gradient does not go through an eigendecomposition.
+
+    Parameters
+    ----------
+    base : torch.Tensor of shape (..., n, n)
+        SPD base points
+
+    tangent : torch.Tensor of shape (..., n, n)
+        Symmetric tangent vectors at *base*
+
+    Returns
+    -------
+    norm : torch.Tensor of shape (...)
+        Affine-invariant norms
+    """
+    cholesky = torch.linalg.cholesky(base)
+    half = torch.linalg.solve_triangular(cholesky, tangent, upper=False)
+    whitened = torch.linalg.solve_triangular(cholesky, half.mT, upper=False)
+    return torch.linalg.matrix_norm(whitened)
+
+
 class ResidualBlock(nn.Module):
     """
     Riemannian residual block on SPD manifold.
 
-    Applies one geodesic step:
-        X_new = projx(Exp_X(VF(X)))
+    Applies one residual step along the vector field V = VF(X) (a
+    SpectralVectorField), following Katsman et al., *Riemannian Residual
+    Neural Networks* (NeurIPS 2023) and their reference implementation:
 
-    where VF is a SpectralVectorField and Exp is the affine-invariant
-    exponential map.
+    - ``metric="affine_invariant"``: X_new = projx(Exp_X(V / ||V||_X)), a step
+      of unit affine-invariant length. Without this normalization,
+      ||V||_X = ||X^{-1/2} V X^{-1/2}||_F grows like 1 / lambda_min(X) and the
+      matrix exponential overflows on ill-conditioned inputs.
+    - ``metric="log_euclidean"``: X_new = exp(log(X) + V).
 
     Parameters
     ----------
@@ -283,6 +320,9 @@ class ResidualBlock(nn.Module):
     use_autograd : bool, optional
         Use autograd for exp map gradient. Default is False
 
+    metric : str, optional
+        "affine_invariant" (default) or "log_euclidean", see above
+
     device : torch.device, optional
         Device. Default is torch.device("cpu")
 
@@ -303,13 +343,18 @@ class ResidualBlock(nn.Module):
         stiefel_parametrization_mode: str = "static",
         stiefel_n_steps_ref_update: int = 100,
         use_autograd: bool = False,
+        metric: str = "affine_invariant",
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
     ) -> None:
         super().__init__()
+        assert metric in ["affine_invariant", "log_euclidean"], (
+            f"metric must be 'affine_invariant' or 'log_euclidean', got {metric}"
+        )
         self.n_features = n_features
         self.use_autograd = use_autograd
+        self.metric = metric
 
         self.vector_field = SpectralVectorField(
             n_features=n_features,
@@ -325,18 +370,18 @@ class ResidualBlock(nn.Module):
             generator=generator,
         )
 
-        # Select exp map implementation
-        self.exp_map = (
-            affine_invariant_exp
-            if use_autograd
-            else lambda base, tangent: AffineInvariantExp.apply(base, tangent)
-        )
+        # Select implementations (autograd or manual backward)
+        if use_autograd:
+            self.exp_map = affine_invariant_exp
+            self.logm = lambda x: logm_SPD(x)[0]
+            self.expm = lambda x: expm_symmetric(x)[0]
+        else:
+            self.exp_map = AffineInvariantExp.apply
+            self.logm, self.expm = LogmSPD.apply, ExpmSymmetric.apply
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass: geodesic residual step.
-
-        X_new = projx(Exp_X(VF(X)))
+        Forward pass: one residual step (see the class docstring).
 
         Parameters
         ----------
@@ -349,7 +394,11 @@ class ResidualBlock(nn.Module):
             Updated SPD matrices after one residual step
         """
         tangent = self.vector_field(data)
-        result = self.exp_map(data, tangent)
+        if self.metric == "log_euclidean":
+            return self.expm(self.logm(data) + tangent)
+        # unit affine-invariant step (reference implementation)
+        norm = affine_invariant_norm(data, tangent).clamp_min(1e-12)
+        result = self.exp_map(data, tangent / norm[..., None, None])
         return affine_invariant_projx(result)
 
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
@@ -358,6 +407,6 @@ class ResidualBlock(nn.Module):
 
     def __repr__(self) -> str:
         return (
-            f"ResidualBlock(n_features={self.n_features}, "
+            f"ResidualBlock(n_features={self.n_features}, metric={self.metric}, "
             f"vector_field={self.vector_field})"
         )

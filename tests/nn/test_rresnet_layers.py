@@ -334,3 +334,102 @@ class TestResidualBlock:
         block.eval()
         Y_eval = block(X)
         assert is_spd(Y_eval)
+
+
+# ========================================================================
+# Ill-conditioned inputs (real covariances, e.g. HyperLeaf: eigenvalues
+# spanning 1e-4 .. 3e3). The unnormalized affine-invariant step overflowed.
+# ========================================================================
+def _ill_conditioned_spd(n, n_matrices, device, dtype, generator):
+    """SPD matrices with log-uniform eigenvalues in [1e-4, 3e3]."""
+    from yetanotherspdnet.random.stiefel import random_stiefel
+
+    eigvecs = random_stiefel(
+        n, n, n_matrices=n_matrices, device=device, dtype=dtype, generator=generator
+    )
+    log_eigvals = torch.empty(n_matrices, n, device=device, dtype=dtype)
+    log_eigvals.uniform_(-9.2, 8.0, generator=generator)  # log(1e-4), log(3e3)
+    return (eigvecs * log_eigvals.exp().unsqueeze(-2)) @ eigvecs.transpose(-1, -2)
+
+
+class TestResidualBlockIllConditioned:
+    @pytest.mark.parametrize("metric", ["affine_invariant", "log_euclidean"])
+    @pytest.mark.parametrize("use_autograd", [False, True])
+    def test_finite_spd_and_gradients(
+        self, metric, use_autograd, device, dtype, generator
+    ):
+        X = _ill_conditioned_spd(20, 8, device, dtype, generator)
+        X.requires_grad_(True)
+        block = ResidualBlock(
+            20,
+            metric=metric,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        Y = block(X)
+        assert torch.isfinite(Y).all() and is_spd(Y.detach())
+        Y.square().sum().backward()
+        grads = [X.grad] + [p.grad for p in block.parameters() if p.grad is not None]
+        assert all(torch.isfinite(g).all() for g in grads)
+
+    def test_affine_invariant_step_has_unit_length(self, device, dtype, generator):
+        from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
+            affine_invariant_log,
+        )
+        from yetanotherspdnet.nn.rresnet_layers import affine_invariant_norm
+
+        X = _ill_conditioned_spd(10, 6, device, dtype, generator)
+        block = ResidualBlock(10, device=device, dtype=dtype, generator=generator)
+        with torch.no_grad():
+            step = affine_invariant_norm(X, affine_invariant_log(X, block(X)))
+        assert_close(step, torch.ones_like(step), atol=1e-6, rtol=0)
+
+    def test_affine_invariant_norm(self, device, dtype, generator):
+        from yetanotherspdnet.functions.spd_linalg import inv_sqrtm_SPD
+        from yetanotherspdnet.nn.rresnet_layers import affine_invariant_norm
+
+        X = random_SPD(6, 4, cond=100, device=device, dtype=dtype, generator=generator)
+        V = torch.randn(4, 6, 6, device=device, dtype=dtype, generator=generator)
+        V = V + V.transpose(-1, -2)
+        X_isqrt = inv_sqrtm_SPD(X)[0]
+        expected = torch.linalg.matrix_norm(X_isqrt @ V @ X_isqrt)
+        assert_close(affine_invariant_norm(X, V), expected)
+
+    def test_log_euclidean_step(self, device, dtype, generator):
+        from yetanotherspdnet.functions.spd_linalg import expm_symmetric, logm_SPD
+
+        X = _ill_conditioned_spd(8, 4, device, dtype, generator)
+        block = ResidualBlock(
+            8, metric="log_euclidean", device=device, dtype=dtype, generator=generator
+        )
+        with torch.no_grad():
+            expected = expm_symmetric(logm_SPD(X)[0] + block.vector_field(X))[0]
+            assert_close(block(X), expected)
+
+    @pytest.mark.parametrize("metric", ["affine_invariant", "log_euclidean"])
+    def test_gradient_paths_agree(self, metric, device, dtype, generator):
+        """Same weights: the manual and autograd paths give the same gradients."""
+        X = random_SPD(6, 4, cond=50, device=device, dtype=dtype, generator=generator)
+        blocks = [
+            ResidualBlock(
+                6, metric=metric, use_autograd=use_autograd, device=device, dtype=dtype
+            )
+            for use_autograd in (True, False)
+        ]
+        blocks[1].load_state_dict(blocks[0].state_dict())
+        outputs, grads = [], []
+        for block in blocks:
+            block.eval()  # BatchNorm1d of the spectrum map: deterministic
+            X_leaf = X.clone().requires_grad_(True)
+            Y = block(X_leaf)
+            Y.square().sum().backward()
+            outputs.append(Y.detach())
+            grads.append(X_leaf.grad)
+        assert_close(outputs[0], outputs[1])
+        assert_close(grads[0], grads[1])
+
+    def test_invalid_metric(self, device, dtype):
+        with pytest.raises(AssertionError):
+            ResidualBlock(4, metric="bures_wasserstein", device=device, dtype=dtype)
