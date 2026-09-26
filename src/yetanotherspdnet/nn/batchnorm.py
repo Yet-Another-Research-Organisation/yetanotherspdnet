@@ -62,7 +62,9 @@ from ..functions.spd_geometries.affine_invariant import (
 )
 from ..functions.spd_linalg import (
     CongruenceSPD,
+    InvSqrtmSPD,
     PowmSPD,
+    SqrtmSPD,
     Whitening,
     congruence_SPD,
     inv_sqrtm_SPD,
@@ -952,8 +954,23 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         G_hat = self.bw_G_hat
 
         # Pre-transform: X_hat = M^{-1/2} X^theta M^{-1/2}
-        M_isqrt = inv_sqrtm_SPD(M)[0]
-        data_pow = powm_SPD(data, theta)[0] if theta != 1.0 else data
+        # bw_M is initialized at the identity: with use_autograd=False the
+        # manual (Daleckii-Krein) backwards keep its gradient finite, whereas
+        # autograd through torch.linalg.eigh is undefined for repeated
+        # eigenvalues
+        if self.use_autograd:
+            inv_sqrtm = lambda x: inv_sqrtm_SPD(x)[0]  # noqa: E731
+            sqrtm = lambda x: sqrtm_SPD(x)[0]  # noqa: E731
+            powm = lambda x, p: powm_SPD(x, p)[0]  # noqa: E731
+        else:
+            inv_sqrtm, sqrtm = InvSqrtmSPD.apply, SqrtmSPD.apply
+
+            def powm(x: torch.Tensor, p: float) -> torch.Tensor:
+                exponent = torch.tensor(p, dtype=x.dtype, device=x.device)
+                return PowmSPD.apply(x, exponent)
+
+        M_isqrt = inv_sqrtm(M)
+        data_pow = powm(data, theta) if theta != 1.0 else data
         data_hat = M_isqrt @ data_pow @ M_isqrt
 
         if _use_batch_statistics(self, data):
@@ -981,9 +998,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         biased = bures_wasserstein_bias(scaled, G_hat)
 
         # Post-transform: output = (M^{1/2} X_tilde M^{1/2})^{1/theta}
-        M_sqrt = sqrtm_SPD(M)[0]
+        M_sqrt = sqrtm(M)
         result = M_sqrt @ biased @ M_sqrt
-        return powm_SPD(result, 1.0 / theta)[0] if theta != 1.0 else result
+        return powm(result, 1.0 / theta) if theta != 1.0 else result
 
     def __repr__(self) -> str:
         """

@@ -21,6 +21,15 @@ chosen with `mean_type` (see {doc}`geometries`).
   With `mean_type="bures_wasserstein"` this is **GBWBN**, which additionally
   learns a pre-transform $X \mapsto M^{-1/2} X^\theta M^{-1/2}$ and its inverse.
 
+```{note}
+The GBWBN parameters $M$ and $\hat G$ start at the identity, where all
+eigenvalues are equal. Gradients through `torch.linalg.eigh` are undefined
+there, so keep `use_autograd=False` (the default) for this layer: the manual
+backwards (Daleckii–Krein for $M^{\pm 1/2}$ and $M^\theta$, implicit
+differentiation for the Lyapunov solve and the transport to $\hat G$) stay
+finite and exact at the identity.
+```
+
 In the models (`SPDnet`, `RResNet`, `GBWBNRResNet`) these correspond to
 `batchnorm_type="mean_only"` and `batchnorm_type="mean_var_scalar"`, and every
 layer option is exposed with a `batchnorm_` prefix.
