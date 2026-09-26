@@ -691,6 +691,11 @@ class GBWBNRResNet(nn.Module):
     stiefel_n_steps_ref_update : int, optional
         Steps between Q reference updates. Default is 100
 
+    residual_metric : str, optional
+        Residual step of the ResidualBlocks: "affine_invariant" (unit-length
+        exponential-map step) or "log_euclidean" (exp(log X + V)).
+        Default is "affine_invariant"
+
     vec_type : str, optional
         "vec" or "vech". Default is "vec"
 
@@ -740,6 +745,7 @@ class GBWBNRResNet(nn.Module):
         spectrum_kernel_size: int = 5,
         stiefel_parametrization_mode: str = "static",
         stiefel_n_steps_ref_update: int = 100,
+        residual_metric: str = "affine_invariant",
         vec_type: str = "vec",
         use_logeig: bool = True,
         use_autograd: bool | dict = False,
@@ -838,6 +844,7 @@ class GBWBNRResNet(nn.Module):
                 spectrum_kernel_size=spectrum_kernel_size,
                 stiefel_parametrization_mode=stiefel_parametrization_mode,
                 stiefel_n_steps_ref_update=stiefel_n_steps_ref_update,
+                metric=residual_metric,
                 use_autograd=self.use_autograd["residual"],
                 device=device,
                 dtype=dtype,
@@ -1048,6 +1055,11 @@ class RResNet(nn.Module):
     stiefel_n_steps_ref_update : int, optional
         Steps between Q reference updates. Default is 100
 
+    residual_metric : str, optional
+        Residual step of the ResidualBlocks: "affine_invariant" (unit-length
+        exponential-map step) or "log_euclidean" (exp(log X + V)).
+        Default is "affine_invariant"
+
     vec_type : str, optional
         "vec" or "vech". Default is "vec"
 
@@ -1100,6 +1112,7 @@ class RResNet(nn.Module):
         spectrum_kernel_size: int = 5,
         stiefel_parametrization_mode: str = "static",
         stiefel_n_steps_ref_update: int = 100,
+        residual_metric: str = "affine_invariant",
         vec_type: str = "vec",
         use_logeig: bool = True,
         use_autograd: bool | dict = False,
@@ -1227,6 +1240,7 @@ class RResNet(nn.Module):
                         spectrum_kernel_size=spectrum_kernel_size,
                         stiefel_parametrization_mode=stiefel_parametrization_mode,
                         stiefel_n_steps_ref_update=stiefel_n_steps_ref_update,
+                        metric=residual_metric,
                         use_autograd=self.use_autograd["residual"],
                         device=device,
                         dtype=dtype,

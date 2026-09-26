@@ -303,7 +303,9 @@ class SPDAdaptiveParametrization(nn.Module):
             )
 
         # Last SPD value (for reference point update)
-        self.register_buffer("last_spd_value", self.reference_point.detach())
+        # clone: a plain .detach() would share storage with reference_point, so
+        # every training forward would silently move the reference point
+        self.register_buffer("last_spd_value", self.reference_point.detach().clone())
 
         # Deal with mapping
         if self.mapping == "softplus":
@@ -503,7 +505,11 @@ class StiefelAdaptiveParametrization(nn.Module):
             self.register_buffer("reference_point", self.initial_reference.clone())
 
         # Last Stiefel value (for reference point update)
-        self.register_buffer("last_stiefel_value", self.reference_point.detach())
+        # clone: a plain .detach() would share storage with reference_point, so
+        # every training forward would silently move the reference point
+        self.register_buffer(
+            "last_stiefel_value", self.reference_point.detach().clone()
+        )
 
         # Deal with retraction and tangent projection functions
         self.projectionTangent = (

@@ -949,7 +949,8 @@ def affine_invariant_log(base: torch.Tensor, point: torch.Tensor) -> torch.Tenso
 def affine_invariant_projx(data: torch.Tensor) -> torch.Tensor:
     """
     Project matrices onto the SPD manifold by symmetrizing and
-    clamping eigenvalues to be strictly positive.
+    clamping eigenvalues to [1e-8, 1e8] (as in the reference RResNet
+    implementation, which also bounds the conditioning).
 
     Parameters
     ----------
@@ -963,5 +964,5 @@ def affine_invariant_projx(data: torch.Tensor) -> torch.Tensor:
     """
     data = symmetrize(data)
     eigvals, eigvecs = torch.linalg.eigh(data)
-    eigvals = eigvals.clamp(min=1e-8)
+    eigvals = eigvals.clamp(min=1e-8, max=1e8)
     return (eigvecs * eigvals.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)
