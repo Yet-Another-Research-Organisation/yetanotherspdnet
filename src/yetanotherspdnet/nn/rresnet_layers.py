@@ -9,8 +9,10 @@ from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
     affine_invariant_projx,
 )
 from yetanotherspdnet.functions.spd_linalg import (
+    EighReLu,
     ExpmSymmetric,
     LogmSPD,
+    eigh_relu,
     expm_symmetric,
     logm_SPD,
 )
@@ -18,6 +20,11 @@ from yetanotherspdnet.nn.parametrizations import (
     StiefelAdaptiveParametrization,
 )
 from yetanotherspdnet.random.stiefel import random_stiefel
+
+
+# eigenvalue floor applied to the input of ResidualBlock (lower bound of
+# affine_invariant_projx, which bounds the output)
+INPUT_EIGVAL_FLOOR = 1e-8
 
 
 class SpectralVectorField(nn.Module):
@@ -375,9 +382,11 @@ class ResidualBlock(nn.Module):
             self.exp_map = affine_invariant_exp
             self.logm = lambda x: logm_SPD(x)[0]
             self.expm = lambda x: expm_symmetric(x)[0]
+            self.floor = lambda x: eigh_relu(x, INPUT_EIGVAL_FLOOR)[0]
         else:
             self.exp_map = AffineInvariantExp.apply
             self.logm, self.expm = LogmSPD.apply, ExpmSymmetric.apply
+            self.floor = lambda x: EighReLu.apply(x, INPUT_EIGVAL_FLOOR)
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -393,6 +402,11 @@ class ResidualBlock(nn.Module):
         result : torch.Tensor of shape (..., n, n)
             Updated SPD matrices after one residual step
         """
+        # the input may be numerically singular (e.g. a Bures-Wasserstein batch
+        # normalization folds matrices outside the injectivity domain of its
+        # exponential): floor its eigenvalues, a no-op on well-conditioned
+        # inputs, so that the Cholesky of the norm and the logarithm are defined
+        data = self.floor(data)
         tangent = self.vector_field(data)
         if self.metric == "log_euclidean":
             return self.expm(self.logm(data) + tangent)
