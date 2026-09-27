@@ -45,6 +45,7 @@ class SPDnet(nn.Module):
         batchnorm_parametrization: str = "softplus",
         batchnorm_parametrization_mode: str = "static",
         batchnorm_n_steps_ref_update: int = 100,
+        batchnorm_bw_options: dict | None = None,
         vec_type: str = "vec",
         use_logeig: bool = True,
         use_autograd: bool | dict = False,
@@ -147,6 +148,12 @@ class SPDnet(nn.Module):
             number of steps in between each reference point update.
             Default is 100
 
+        batchnorm_bw_options : dict | None, optional
+            GBWBN keyword arguments of :class:`BatchNormSPDMeanScalarVariance`
+            (``bw_theta``, ``bw_batch_stats_grad``), used when
+            ``batchnorm_type="mean_var_scalar"``.
+            Default is None (the layer defaults)
+
         vec_type : str, optional
             Whether to use Vec or Vech module.
             Default is "vec".
@@ -211,6 +218,7 @@ class SPDnet(nn.Module):
         self.batchnorm_parametrization = batchnorm_parametrization
         self.batchnorm_parametrization_mode = batchnorm_parametrization_mode
         self.batchnorm_n_steps_ref_update = batchnorm_n_steps_ref_update
+        self.batchnorm_bw_options = batchnorm_bw_options
 
         self.vec_type = vec_type
         assert self.vec_type in [
@@ -304,6 +312,7 @@ class SPDnet(nn.Module):
                         parametrization=self.batchnorm_parametrization,
                         parametrization_mode=self.batchnorm_parametrization_mode,
                         n_steps_ref_update=self.batchnorm_n_steps_ref_update,
+                        **(self.batchnorm_bw_options or {}),
                         use_autograd=self.use_autograd["batchnorm"],
                         device=self.device,
                         dtype=self.dtype,
@@ -366,6 +375,7 @@ class SPDnet(nn.Module):
                             parametrization=self.batchnorm_parametrization,
                             parametrization_mode=self.batchnorm_parametrization_mode,
                             n_steps_ref_update=self.batchnorm_n_steps_ref_update,
+                            **(self.batchnorm_bw_options or {}),
                             use_autograd=self.use_autograd["batchnorm"],
                             device=self.device,
                             dtype=self.dtype,
@@ -558,6 +568,7 @@ def _make_batchnorm(
     use_autograd: bool,
     device: torch.device,
     dtype: torch.dtype,
+    bw_options: dict | None = None,
 ) -> nn.Module:
     """Factory function to create a batchnorm layer from parameters."""
     kwargs = {
@@ -579,7 +590,7 @@ def _make_batchnorm(
     if batchnorm_type == "mean_only":
         return BatchNormSPDMean(**kwargs)
     elif batchnorm_type == "mean_var_scalar":
-        return BatchNormSPDMeanScalarVariance(**kwargs)
+        return BatchNormSPDMeanScalarVariance(**kwargs, **(bw_options or {}))
     else:
         raise ValueError(
             f"Unknown batchnorm_type '{batchnorm_type}', "
@@ -673,6 +684,10 @@ class GBWBNRResNet(nn.Module):
     batchnorm_n_steps_ref_update : int, optional
         Steps between reference updates for BN. Default is 100
 
+    batchnorm_bw_options : dict | None, optional
+        GBWBN keyword arguments of BatchNormSPDMeanScalarVariance
+        (``bw_theta``, ``bw_batch_stats_grad``). Default is None
+
     spectrum_type : str, optional
         "conv1d" or "mlp" for spectral vector field. Default is "conv1d"
 
@@ -739,6 +754,7 @@ class GBWBNRResNet(nn.Module):
         batchnorm_parametrization: str = "softplus",
         batchnorm_parametrization_mode: str = "static",
         batchnorm_n_steps_ref_update: int = 100,
+        batchnorm_bw_options: dict | None = None,
         spectrum_type: str = "conv1d",
         spectrum_hidden_dim: int = 3,
         spectrum_n_layers: int = 2,
@@ -829,6 +845,7 @@ class GBWBNRResNet(nn.Module):
                     parametrization_mode=batchnorm_parametrization_mode,
                     n_steps_ref_update=batchnorm_n_steps_ref_update,
                     use_autograd=self.use_autograd["batchnorm"],
+                    bw_options=batchnorm_bw_options,
                     device=device,
                     dtype=dtype,
                 )
@@ -1037,6 +1054,10 @@ class RResNet(nn.Module):
     batchnorm_n_steps_ref_update : int, optional
         Steps between BN reference updates. Default is 100
 
+    batchnorm_bw_options : dict | None, optional
+        GBWBN keyword arguments of BatchNormSPDMeanScalarVariance
+        (``bw_theta``, ``bw_batch_stats_grad``). Default is None
+
     spectrum_type : str, optional
         "conv1d" or "mlp". Default is "conv1d"
 
@@ -1106,6 +1127,7 @@ class RResNet(nn.Module):
         batchnorm_parametrization: str = "softplus",
         batchnorm_parametrization_mode: str = "static",
         batchnorm_n_steps_ref_update: int = 100,
+        batchnorm_bw_options: dict | None = None,
         spectrum_type: str = "conv1d",
         spectrum_hidden_dim: int = 3,
         spectrum_n_layers: int = 2,
@@ -1224,6 +1246,7 @@ class RResNet(nn.Module):
                         parametrization_mode=batchnorm_parametrization_mode,
                         n_steps_ref_update=batchnorm_n_steps_ref_update,
                         use_autograd=self.use_autograd["batchnorm"],
+                        bw_options=batchnorm_bw_options,
                         device=device,
                         dtype=dtype,
                     )
