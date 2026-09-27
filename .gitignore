@@ -491,7 +491,6 @@ build/
 # Sphinx documentation
 docs/_build/
 docs/_autosummary/
-docs/_static/
 docs/_templates/
 
 # Pytest and coverage
@@ -521,6 +520,5 @@ experiments/
 .serena/
 checkpoints/
 
-# Sphinx generated API reference (sphinx-autoapi)
+# Sphinx generated API reference (sphinx-autoapi, no longer used)
 docs/autoapi/
-docs/reference/

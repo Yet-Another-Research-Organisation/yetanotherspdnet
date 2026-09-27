@@ -181,8 +181,13 @@ make html SPHINXOPTS="-W --keep-going"   # warnings are errors
 xdg-open _build/html/index.html
 ```
 
-The API reference (`docs/reference/`) is generated at build time by
-sphinx-autoapi and is not committed.
+The API reference pages (`docs/reference/*.md`) are written by hand: each
+opens with the context of its objects and a summary table, then documents
+them with `autoclass` / `automodule` (inside `{eval-rst}` blocks). A new
+public class or function must be added to the page of its module (a module
+documented with `automodule` picks it up automatically). The
+`dualpath-table` directive (`docs/_ext/dualpath.py`) pairs each `snake_case`
+function with its `CamelCase` manual-backward `Function` by name.
 
 ## Pull Request Process
 

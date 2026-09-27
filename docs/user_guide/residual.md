@@ -30,6 +30,17 @@ network (with BatchNorm1d) and $Q$ a learned orthogonal matrix
 : $X_{\text{new}} = \exp\big(\log X + V\big)$, the variant that performs best
   on 3 of the 4 datasets of the paper.
 
+## Numerically singular inputs
+
+The affine-invariant step computes $\lVert V \rVert_X$ with a Cholesky
+factorization of $X$. After a batch normalization, $X$ can be numerically
+singular: the Bures–Wasserstein steps of GBWBN fold matrices that leave the
+injectivity domain of their exponential (see {doc}`batchnorm`), and very
+ill-conditioned batches reach the limit of float64 precision. The block
+therefore floors the eigenvalues of its input at $10^{-8}$ (the lower bound
+of `projx`), with the hand-differentiated ReEig. On well-conditioned inputs
+the floor is exactly the identity, values and gradients.
+
 ## Why the normalization matters
 
 $\lVert V \rVert_X$ grows like $1 / \lambda_{\min}(X)$. On real covariances,

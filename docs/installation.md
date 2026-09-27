@@ -27,7 +27,7 @@ The extras can also be installed separately:
 |---|---|
 | `test` | pytest, pytest-cov, SciPy (reference implementations used by the tests) |
 | `dev` | ruff (pinned, same version as CI), mypy, pre-commit |
-| `docs` | Sphinx, sphinx-autoapi, MyST, PyData theme |
+| `docs` | Sphinx, MyST, Furo theme |
 
 ## Check the installation
 
