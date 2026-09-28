@@ -91,9 +91,10 @@ Dependencies only go downwards: `model` uses `nn`, which uses `functions`.
 ## Where to go next
 
 - New to the library? Start with {doc}`installation`, then the {doc}`quickstart`.
-- To understand the design choices (geometries, batch normalization, gradient
-  paths, dtype), read the {doc}`user_guide/index`.
-- Looking for a function or a class? See the {doc}`reference`.
+- To see how the pieces fit together, read {doc}`user_guide/concepts`; the
+  other guides explain the design choices (layers and parametrizations,
+  geometries, batch normalization, residual blocks, gradient paths, dtype).
+- Looking for a function or a class? See the {doc}`reference/index`.
 
 ```{toctree}
 :hidden:
@@ -114,7 +115,7 @@ user_guide/index
 :hidden:
 :caption: Reference
 
-reference
+reference/index
 ```
 
 ```{toctree}
