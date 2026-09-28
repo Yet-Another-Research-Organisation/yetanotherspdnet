@@ -33,6 +33,23 @@ def symmetrize(data: torch.Tensor) -> torch.Tensor:
     return torch.real(0.5 * (data + data.transpose(-1, -2)))
 
 
+def skew_symmetrize(data: torch.Tensor) -> torch.Tensor:
+    """
+    Skew-symmetrize a tensor along its two last dimensions.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of square matrices
+
+    Returns
+    -------
+    skew_data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of skew-symmetrized matrices
+    """
+    return torch.real(0.5 * (data - data.transpose(-1, -2)))
+
+
 # -----------------------
 # Vectorization operators
 # -----------------------
@@ -549,6 +566,144 @@ def solve_sylvester_SPD(
     K = 1 / (eigvals.unsqueeze(-1) + eigvals.unsqueeze(-2))
     middle_term = K * (eigvecs.transpose(-1, -2) @ mat @ eigvecs)
     return eigvecs @ middle_term @ eigvecs.transpose(-1, -2)
+
+
+# ------------------------------------
+# Generalized eigenvalue decomposition
+# ------------------------------------
+def gevd(
+    point1: torch.Tensor, point2: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Computes the generalized eigenvalue decomposition of an SPD matrix point1 and a symmetric matrix point2
+
+    We have :math: `point1 = general_eigvecs^\top general_eigvecs, point2 = general_eigvecs^\top general_eigvals general_eigvecs`.
+
+    Parameters
+    ----------
+    point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+        SPD matrix (or batch of same shape as Q)
+
+    point2 : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    Returns
+    -------
+    general_eigvals : torch.Tensor of shape (..., n_features)
+        Batch of generalized eigenvalues
+
+    general_eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Batch of generalized eigenvectors
+
+    general_eigvecs_inv : torch.Tensor of shape (..., n_features, n_features)
+        Inverses of general_eigvecs
+    """
+    L = torch.linalg.cholesky(point1)
+    L_inv = torch.inverse(L)
+    general_eigvals, U = torch.linalg.eigh(L_inv @ point2 @ L_inv.transpose(-2, -1))
+    return general_eigvals, (L @ U).transpose(-2, -1), L_inv.transpose(-2, -1) @ U
+
+
+def gevd_operation(
+    general_eigvals: torch.Tensor, general_eigvecs: torch.Tensor, operation: Callable
+) -> torch.Tensor:
+    """
+    Applies a function on the generalized eigenvalues of the generalized eigenvalue decomposition
+    of a symmetric matrix point2 and a SPD matrix point1.
+
+    We have :math: `point1 = general_eigvecs^\top general_eigvecs, point2 = general_eigvecs^\top general_eigvals general_eigvecs`.
+
+    It returns :math: `general_eigvecs^\top f(general_eigvals) general_eigvecs`.
+
+    Parameters
+    ----------
+    general_eigvals : torch.Tensor of shape (..., n_features)
+        Batch of generalized eigenvalues
+
+    general_eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Batch of generalized eigenvectors
+
+    operation : Callable
+        Function to apply on generalized eigenvalues
+
+    Returns
+    -------
+    result : torch.Tensor of shape (..., n_features, n_features)
+        Batch of resulting symmetric matrices with operation applied to generalized eigenvalues
+    """
+    general_eigvals, general_eigvecs = (
+        torch.real(general_eigvals),
+        torch.real(general_eigvecs),
+    )  # to correct eventual numerical errors...
+    _Lambda = operation(general_eigvals)
+    result = (
+        general_eigvecs.transpose(-1, -2) * _Lambda.unsqueeze(-2)
+    ) @ general_eigvecs
+    return result
+
+
+def gevd_operation_grad(
+    grad_output: torch.Tensor,
+    general_eigvals: torch.Tensor,
+    general_eigvecs: torch.Tensor,
+    general_eigvecs_inv: torch.Tensor,
+    operation: Callable,
+    operation_derivative: Callable,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Computes the backpropagation of the gradient for a function applied on the
+    generalized eigenvalues of the generalized eigenvalue decomposition of a
+    symmetric matrix point2 and a SPD matrix point1.
+
+    We have :math: `point1 = general_eigvecs^\top general_eigvecs, point2 = general_eigvecs^\top general_eigvals general_eigvecs`.
+
+    Parameters
+    ----------
+    grad_output : torch.Tensor of shape (..., n_features, n_features)
+        Gradient of the loss with respect to the output of the operation on the batch of generalized eigenvalues
+
+    general_eigvals : torch.Tensor of shape (..., n_features)
+        Batch of generalized eigenvalues
+
+    general_eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Batch of generalized eigenvectors
+
+    general_eigvecs_inv : torch.Tensor of shape (..., n_features, n_features)
+        Inverses of general_eigvecs
+
+    operation : Callable
+        Function to apply on generalized eigenvalues
+
+    operation_derivative : Callable
+        Derivative of the function to apply on generalized eigenvalues
+
+    Returns
+    -------
+    grad_point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+        Gradient w.r.t. SPD matrix (or batch) point1
+
+    grad_point2 : torch.Tensor of shape (..., n_features, n_features)
+        Gradient w.r.t. batch of symmetric matrices point2
+    """
+    grad_out_cong = (
+        general_eigvecs @ symmetrize(grad_output) @ general_eigvecs.transpose(-1, -2)
+    )
+    aux_mat_point2 = _aux_eigh_operation_grad(
+        general_eigvals, operation, operation_derivative
+    )
+    middle_term_point2 = aux_mat_point2 * grad_out_cong
+    grad_point2 = (
+        general_eigvecs_inv @ middle_term_point2 @ general_eigvecs_inv.transpose(-1, -2)
+    )
+    _Lambda = operation(general_eigvals)
+    middle_term_point1 = symmetrize(
+        grad_out_cong * _Lambda.unsqueeze(-2)
+        - middle_term_point2 * general_eigvals.unsqueeze(-2)
+    )
+    grad_point1 = (
+        general_eigvecs_inv @ middle_term_point1 @ general_eigvecs_inv.transpose(-1, -2)
+    )
+    return grad_point1, grad_point2
 
 
 # ------------------
