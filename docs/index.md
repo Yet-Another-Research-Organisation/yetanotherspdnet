@@ -1,100 +1,113 @@
 # Yet Another SPDNet
 
-**Yet Another SPDNet** is a PyTorch library for deep learning on
-**Symmetric Positive Definite (SPD) matrices**. It provides SPD matrix
-functions with stable hand-written gradients, several Riemannian geometries on
-the SPD manifold, the SPDNet layers, Riemannian batch normalization, and
-complete models (SPDNet, Riemannian residual networks).
+**Deep learning on Symmetric Positive Definite matrices, in PyTorch.**
+Covariance matrices are SPD: they live on a curved manifold, not in a vector
+space. This library keeps them there through the network, with SPD matrix
+functions whose gradients stay exact on ill-conditioned data, six Riemannian
+geometries, Riemannian batch normalization, residual networks and robust
+covariance estimators.
+
+```{figure} _static/diagrams/spdnet_pipeline.svg
+:width: 100%
+
+An SPDNet on HDM05 skeleton covariances: the matrices stay SPD through BiMap,
+ReEig and the batch normalization, and only the last layers map them to a
+vector space for a Euclidean classifier.
+```
 
 ## Why SPD matrices?
 
-Covariance matrices are SPD: symmetric, with strictly positive eigenvalues.
-They are the natural descriptor of many signals: EEG/MEG channels, radar and
-SAR pixels, hyperspectral patches, skeleton joints over time, CNN feature maps.
-SPD matrices do not form a vector space (a difference of two covariances is
-generally not a covariance), but a curved **Riemannian manifold**.
-Flattening them into vectors and feeding a standard network ignores that
-geometry.
+Covariance matrices are the natural descriptor of EEG/MEG channels, radar and
+SAR pixels, hyperspectral patches, skeleton joints over time and CNN feature
+maps. A difference of two covariances is generally not a covariance, and
+flattening them into vectors ignores the geometry that makes them comparable.
+SPDNet (Huang & Van Gool, AAAI 2017) instead transforms them with layers that
+map SPD matrices to SPD matrices, and only takes a matrix logarithm right
+before the classifier.
 
-SPDNet (Huang & Van Gool, AAAI 2017) instead keeps the data on the manifold
-through the network:
+## Start here
 
-$$
-X \;\xrightarrow{\text{BiMap}}\; W^\top X W
-\;\xrightarrow{\text{ReEig}}\; U \max(\Lambda, \epsilon) U^\top
-\;\xrightarrow{\ \cdots\ }\;
-\xrightarrow{\text{LogEig}}\; \log X
-\;\xrightarrow{\text{Vec + Linear}}\; \text{logits}
-$$
+1. {doc}`installation`: one dependency, PyTorch.
+2. {doc}`quickstart`: matrix functions, means, layers, a model trained in ten
+   lines.
+3. {doc}`user_guide/concepts`: the three levels of the package, the shapes
+   flowing through a network, the conventions (float64, two gradient paths,
+   parametrizations).
+4. The guide of the part you need, below.
 
-BiMap reduces the dimension with an orthonormal $W$, ReEig is the SPD
-analogue of ReLU, and LogEig maps to the flat space of symmetric matrices
-right before a Euclidean classifier.
+## Find your way
 
-## What the library provides
+| I want to… | Read |
+|---|---|
+| train a classifier on covariance matrices | {doc}`user_guide/models`, {doc}`reference/models` |
+| understand BiMap, ReEig, LogEig and their parametrizations | {doc}`user_guide/layers` |
+| choose a geometry (affine-invariant, log-Euclidean, GAH, Bures–Wasserstein, …) | {doc}`user_guide/geometries` |
+| add a batch normalization, or reproduce GBWBN | {doc}`user_guide/batchnorm` |
+| use residual blocks (RResNet) | {doc}`user_guide/residual` |
+| estimate robust covariances inside a network (M-estimators) | {doc}`reference/m_estimators`, {doc}`reference/layers` |
+| understand why training is stable (Daleckii–Krein, implicit differentiation, …) | {doc}`user_guide/numerics` |
+| look up a function or a class | {doc}`reference/index` |
 
-::::{grid} 1 2 2 2
-:gutter: 2
+## What makes it different
 
-:::{grid-item-card} SPD linear algebra
-`functions.spd_linalg`: matrix log/exp/sqrt/powers, congruences, whitening,
-vectorization. Each operation has an autograd path and a manual
-(Daleckii–Krein) backward.
-:::
+**Exact gradients where autograd fails.** Every eigendecomposition-based
+operation has a hand-written backward (Daleckii–Krein), finite and exact when
+eigenvalues are equal, as after a ReEig or at an identity initialization.
+The autograd version is kept alongside, selectable per layer
+({doc}`user_guide/numerics`).
 
-:::{grid-item-card} Riemannian geometries
-`functions.spd_geometries`: geodesics, means, dispersions and exp/log maps for
-the affine-invariant, log-Euclidean, Kullback–Leibler, symmetrized KL (GAH) and
-Bures–Wasserstein geometries.
-:::
+**Six geometries, one interface.** Affine-invariant, log-Euclidean,
+arithmetic and harmonic (Kullback–Leibler), GAH and its learned variant, and
+Bures–Wasserstein, each with its mean, dispersion, geodesic and, where
+needed, exponential and logarithmic maps ({doc}`user_guide/geometries`).
 
-:::{grid-item-card} Layers
-`nn`: BiMap, ReEig, LogEig, Vec/Vech, SPD batch normalization in any of
-the geometries above, spectral residual blocks. Orthogonality and positivity
-are enforced by parametrizations.
-:::
+**Riemannian batch normalization** in any of these geometries, with running
+statistics that follow the geometry, and GBWBN implemented as in its paper
+({doc}`user_guide/batchnorm`).
 
-:::{grid-item-card} Models
-`SPDnet`, `RResNet` and `GBWBNRResNet`, ready to train, with every option
-(geometry, batch normalization, gradient path) available as a constructor
-argument.
-:::
-::::
+**Residual networks** whose step stays finite on real, ill-conditioned
+covariances ({doc}`user_guide/residual`).
 
-## How the package is organised
+**Robust covariance pooling**: Tyler and Student-t M-estimators
+differentiated at their fixed point, as network layers
+({doc}`reference/m_estimators`).
 
-```text
-yetanotherspdnet/
-├── functions/                 pure tensor functions (no parameters)
-│   ├── spd_linalg.py          eigen-based matrix functions, congruences, vec/vech
-│   ├── m_estimators.py        sample covariance, robust M-estimators (Tyler, Student-t)
-│   ├── scalar_functions.py    scalar maps applied to eigenvalues
-│   ├── stiefel.py             projections/retractions on the Stiefel manifold
-│   └── spd_geometries/        one module per geometry
-│       ├── affine_invariant.py
-│       ├── log_euclidean.py
-│       ├── kullback_leibler.py
-│       ├── kullback_leibler_symmetrized.py
-│       └── bures_wasserstein.py
-├── nn/                        torch.nn.Module layers built on functions/
-│   ├── base.py                BiMap, ReEig, ReEigBias, LogEig, Vec, Vech
-│   ├── estimation.py          SampleCovariance, MEstimation (samples -> SPD)
-│   ├── batchnorm.py           Riemannian batch normalization
-│   ├── rresnet_layers.py      spectral vector field, residual block
-│   └── parametrizations.py    SPD / Stiefel / positive-scalar parametrizations
-├── model.py                   SPDnet, RResNet, GBWBNRResNet
-└── random/                    random SPD and Stiefel generators
-```
+## The package
+
+```{figure} _static/diagrams/package_levels.svg
+:width: 90%
 
 Dependencies only go downwards: `model` uses `nn`, which uses `functions`.
+The neighbouring repositories provide the data and the training loop.
+```
 
-## Where to go next
+| Level | Modules | Reference |
+|---|---|---|
+| `model` | `SPDnet`, `RResNet`, `GBWBNRResNet` | {doc}`reference/models` |
+| `nn` | `BiMap`, `ReEig`, `ReEigBias`, `LogEig`, `Vec`, `Vech`, `SampleCovariance`, `MEstimation` | {doc}`reference/layers` |
+| | `BatchNormSPDMean`, `BatchNormSPDMeanScalarVariance` | {doc}`reference/batchnorm` |
+| | `ResidualBlock`, `SpectralVectorField` | {doc}`reference/residual` |
+| | SPD, Stiefel and scalar parametrizations | {doc}`reference/parametrizations` |
+| `functions` | `spd_linalg`: matrix functions, congruences, vectorizations | {doc}`reference/spd_linalg` |
+| | `spd_geometries.*`: the six geometries | {doc}`reference/geometries` |
+| | `m_estimators`: sample covariance, Tyler, Student-t | {doc}`reference/m_estimators` |
+| | `scalar_functions`, `stiefel`, `random` | {doc}`reference/utilities` |
 
-- New to the library? Start with {doc}`installation`, then the {doc}`quickstart`.
-- To see how the pieces fit together, read {doc}`user_guide/concepts`; the
-  other guides explain the design choices (layers and parametrizations,
-  geometries, batch normalization, residual blocks, gradient paths, dtype).
-- Looking for a function or a class? See the {doc}`reference/index`.
+## Related repositories
+
+- [spdnet-datasets](https://github.com/Yet-Another-Research-Organisation/spdnet-datasets):
+  loaders for HyperLeaf, HDM05, FUSAR-Ship, radar and hyperspectral datasets,
+  synthetic SPD data.
+- [spdnet-training](https://github.com/Yet-Another-Research-Organisation/spdnet-training):
+  PyTorch Lightning module, Hydra command line, Optuna search, CNN backbones
+  with covariance pooling.
+- [spdnet-benchmark-demo](https://github.com/Yet-Another-Research-Organisation/spdnet-benchmark-demo):
+  a rerunnable benchmark of the models and batch normalizations.
+
+## Authors and license
+
+Ammar Mian, Florent Bouchard, Guillaume Ginolhac, Matthieu Gallet. Released
+under the MIT License.
 
 ```{toctree}
 :hidden:
@@ -124,8 +137,3 @@ reference/index
 
 contributing
 ```
-
-## Authors and license
-
-Ammar Mian, Florent Bouchard, Guillaume Ginolhac, Matthieu Gallet. Released
-under the MIT License.

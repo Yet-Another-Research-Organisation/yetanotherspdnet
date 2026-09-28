@@ -127,3 +127,13 @@ rresnet = RResNet(
 gbwbn = GBWBNRResNet(input_dim=8, hidden_dim=4, output_dim=3)
 print(rresnet(X).shape, gbwbn(X).shape)  # torch.Size([32, 3]) torch.Size([32, 3])
 ```
+
+## Where next
+
+| To go further on… | Read |
+|---|---|
+| what happens inside `SPDnet`, and the shape at each layer | {doc}`user_guide/concepts` |
+| the constructor arguments, grouped by role, and published configurations | {doc}`user_guide/models` |
+| BiMap's `parametrization_mode="dynamic"` (needs `model.register_optimizer_hook(optimizer)`) | {doc}`user_guide/layers` |
+| the batch normalization options (geometry, running statistics, GBWBN) | {doc}`user_guide/batchnorm` |
+| why the gradients stay finite on ill-conditioned data | {doc}`user_guide/numerics` |

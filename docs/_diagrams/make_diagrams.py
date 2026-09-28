@@ -389,6 +389,204 @@ def implicit_diff() -> None:
     _save(fig, "implicit_diff")
 
 
+def _box(ax, x, y, w, h, text, color, fontsize=8.5, fill_alpha=0.08):
+    from matplotlib.patches import FancyBboxPatch
+
+    ax.add_patch(
+        FancyBboxPatch(
+            (x, y),
+            w,
+            h,
+            boxstyle="round,pad=0.02,rounding_size=0.08",
+            fc=color,
+            ec=color,
+            alpha=fill_alpha,
+            lw=0,
+        )
+    )
+    ax.add_patch(
+        FancyBboxPatch(
+            (x, y),
+            w,
+            h,
+            boxstyle="round,pad=0.02,rounding_size=0.08",
+            fc="none",
+            ec=color,
+            lw=1.3,
+        )
+    )
+    ax.text(
+        x + w / 2,
+        y + h / 2,
+        text,
+        ha="center",
+        va="center",
+        fontsize=fontsize,
+        color=INK if color == INK else color,
+    )
+
+
+def spdnet_pipeline() -> None:
+    """SPDNet on HDM05: layers and shapes, manifold part vs Euclidean head."""
+    fig, ax = plt.subplots(figsize=(9.6, 2.5))
+    ax.axis("off")
+    ax.set_xlim(0, 12.2)
+    ax.set_ylim(0, 3)
+    steps = [
+        ("X", "(B, 93, 93)", INK),
+        ("BiMap", "(B, 84, 84)", BLUE),
+        ("ReEig", "(B, 84, 84)", BLUE),
+        ("BatchNorm", "(B, 84, 84)", ORANGE),
+        ("BiMap\nReEig\nBatchNorm", "(B, 63, 63)", BLUE),
+        ("LogEig", "(B, 63, 63)", GREEN),
+        ("Vec", "(B, 3969)", GREEN),
+        ("Linear", "(B, 117)", GREEN),
+    ]
+    width, gap = 1.25, 0.28
+    for i, (name, shape, color) in enumerate(steps):
+        x = 0.15 + i * (width + gap)
+        _box(
+            ax, x, 1.25, width, 0.9, name, color, fontsize=7.5 if "\n" in name else 8.5
+        )
+        ax.text(
+            x + width / 2,
+            0.95,
+            shape,
+            ha="center",
+            fontsize=7.5,
+            color=INK,
+            family="monospace",
+        )
+        if i:
+            _arrow(ax, (x - gap + 0.02, 1.7), (x - 0.02, 1.7), color=INK)
+    x_log = 0.15 + 5 * (width + gap)
+    ax.plot([0.15, x_log - 0.14], [2.5, 2.5], color=BLUE, lw=1.2)
+    ax.text(
+        (0.15 + x_log) / 2,
+        2.62,
+        "on the SPD manifold: every output is SPD",
+        ha="center",
+        color=BLUE,
+        fontsize=8.5,
+    )
+    ax.plot([x_log, 12.05], [2.5, 2.5], color=GREEN, lw=1.2)
+    ax.text(
+        (x_log + 12.05) / 2,
+        2.62,
+        "flat space: Euclidean head",
+        ha="center",
+        color=GREEN,
+        fontsize=8.5,
+    )
+    ax.text(
+        6.1,
+        0.25,
+        "SPDnet(input_dim=93, hidden_layers_size=[84, 63], output_dim=117, "
+        "batchnorm=True)",
+        ha="center",
+        fontsize=8,
+        color=INK,
+        family="monospace",
+    )
+    _save(fig, "spdnet_pipeline")
+
+
+def package_levels() -> None:
+    """The three levels of the package and the neighbouring repositories."""
+    fig, ax = plt.subplots(figsize=(9.0, 3.4))
+    ax.axis("off")
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 4.2)
+    levels = [
+        (
+            3.0,
+            "model",
+            "SPDnet · RResNet · GBWBNRResNet",
+            "classifiers, one constructor",
+            ORANGE,
+        ),
+        (
+            1.7,
+            "nn",
+            "BiMap · ReEig · LogEig · BatchNorm · ResidualBlock ·\n"
+            "SampleCovariance · MEstimation · parametrizations",
+            "modules with parameters",
+            BLUE,
+        ),
+        (
+            0.3,
+            "functions",
+            "spd_linalg · spd_geometries/* · m_estimators · stiefel",
+            "pure tensor functions, two gradient paths",
+            GREEN,
+        ),
+    ]
+    for y, name, content, role, color in levels:
+        _box(ax, 2.2, y, 5.6, 1.0, "", color)
+        ax.text(2.4, y + 0.72, name, fontsize=10, color=color, weight="bold")
+        ax.text(
+            5.0,
+            y + 0.5,
+            content,
+            ha="center",
+            va="center",
+            fontsize=7.8,
+            color=INK,
+            family="monospace",
+        )
+        ax.text(
+            7.65, y + 0.72, role, ha="right", fontsize=7.5, color=color, style="italic"
+        )
+    for y0, y1 in ((3.0, 2.7), (1.7, 1.3)):
+        _arrow(ax, (5.0, y0 - 0.02), (5.0, y1 + 0.02), color=INK)
+    _box(
+        ax,
+        0.05,
+        1.7,
+        1.75,
+        1.0,
+        "spdnet-datasets\n(loaders, SPD data)",
+        INK,
+        fontsize=7.5,
+        fill_alpha=0.04,
+    )
+    _arrow(ax, (1.85, 2.2), (2.15, 2.2), color=INK)
+    _box(
+        ax,
+        8.2,
+        2.35,
+        1.75,
+        1.0,
+        "spdnet-training\n(Lightning, Hydra,\nbackbones)",
+        INK,
+        fontsize=7.5,
+        fill_alpha=0.04,
+    )
+    _box(
+        ax,
+        8.2,
+        0.9,
+        1.75,
+        1.0,
+        "benchmark demo,\npaper repositories",
+        INK,
+        fontsize=7.5,
+        fill_alpha=0.04,
+    )
+    _arrow(ax, (8.15, 2.85), (7.85, 2.85), color=INK)
+    _arrow(ax, (8.15, 1.4), (7.85, 1.4), color=INK)
+    ax.text(
+        5.0,
+        4.05,
+        "yetanotherspdnet",
+        ha="center",
+        fontsize=11,
+        color=INK,
+        weight="bold",
+    )
+    _save(fig, "package_levels")
+
+
 def _eig_fun(m, f):
     w, u = np.linalg.eigh(m)
     return (u * f(w)) @ u.T
@@ -414,4 +612,6 @@ if __name__ == "__main__":
     retractions()
     bw_fold()
     implicit_diff()
+    spdnet_pipeline()
+    package_levels()
     print("written to", OUT)
