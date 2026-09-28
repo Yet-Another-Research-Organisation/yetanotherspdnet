@@ -29,8 +29,22 @@ from .kullback_leibler import (
 def geometric_euclidean_harmonic_curve(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
-    """
-    Curve corresponding to the geometric mean of the Euclidean geodesic and the harmonic curve
+    r"""
+    Curve corresponding to the geometric mean of the Euclidean geodesic and
+    the harmonic curve (the GAH — Geometric-Arithmetic-Harmonic — curve).
+
+    .. math::
+
+        \gamma(t) = G\big(E(t),\ H(t)\big), \qquad
+        E(t) = (1-t)P_1 + tP_2, \qquad
+        H(t) = \big((1-t)P_1^{-1} + tP_2^{-1}\big)^{-1}
+
+    where :math:`E` is the Euclidean geodesic
+    (:func:`~yetanotherspdnet.functions.spd_geometries.kullback_leibler.euclidean_geodesic`),
+    :math:`H` is the harmonic curve
+    (:func:`~yetanotherspdnet.functions.spd_geometries.kullback_leibler.harmonic_curve`),
+    and :math:`G` is the affine-invariant geometric mean of two points
+    (:func:`~yetanotherspdnet.functions.spd_geometries.affine_invariant.affine_invariant_mean_2points`).
 
     Parameters
     ----------
@@ -94,8 +108,19 @@ def GeometricEuclideanHarmonicCurve(
 def geometric_arithmetic_harmonic_mean(
     data: torch.Tensor,
 ) -> torch.Tensor:
-    """
-    Geometric mean of the arithmetic and harmonic means of a batch of SPD matrices
+    r"""
+    Geometric mean of the arithmetic and harmonic means of a batch of SPD
+    matrices (GAH mean).
+
+    .. math::
+
+        \bar{P}_{GAH} = G\big(\bar{P}_{arith},\ \bar{P}_{harm}\big)
+
+    with :math:`\bar{P}_{arith}` the arithmetic mean
+    (:func:`~yetanotherspdnet.functions.spd_geometries.kullback_leibler.arithmetic_mean`),
+    :math:`\bar{P}_{harm}` the harmonic mean
+    (:func:`~yetanotherspdnet.functions.spd_geometries.kullback_leibler.harmonic_mean`),
+    and :math:`G` the affine-invariant geometric mean of two points.
 
     Parameters
     ----------
@@ -146,8 +171,22 @@ def GeometricArithmeticHarmonicMean(
 def symmetrized_kullback_leibler_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> torch.Tensor:
-    """
-    Scalar standard deviation with respect to the symmetrized Kullback-Leibler divergence
+    r"""
+    Scalar standard deviation with respect to the symmetrized
+    Kullback-Leibler (Jeffreys) divergence.
+
+    .. math::
+
+        \sigma^2 = \frac{1}{N}\sum_{i=1}^{N}
+            \frac{\operatorname{tr}(G^{-1}P_i) + \operatorname{tr}(P_i^{-1}G)}{2}
+            - n
+
+    the average Jeffreys divergence between the batch's covariances and the
+    reference point :math:`G` — symmetrizing
+    :func:`~yetanotherspdnet.functions.spd_geometries.kullback_leibler.left_kullback_leibler_std_scalar`
+    and
+    :func:`~yetanotherspdnet.functions.spd_geometries.kullback_leibler.right_kullback_leibler_std_scalar`
+    (the :math:`\log\det` terms cancel out).
 
     Parameters
     ----------
@@ -259,11 +298,21 @@ class SymmetrizedKullbackLeiblerStdScalar(Function):
 def adaptive_geometric_arithmetic_harmonic_geodesic(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
-    """
-    Adaptive geodesic between harmonic (point1) and arithmetic (point2) means:
-    point1^{1/2} ( point1^{-1/2} point2 point1^{-1/2} )^t point1^{1/2}
+    r"""
+    Adaptive (AdaptiveGAH) geodesic between harmonic (point1) and arithmetic
+    (point2) means, with a learnable position :math:`t` on the path.
 
-    This is mathematically identical to the affine-invariant geodesic.
+    .. math::
+
+        \gamma(t) = P_1^{1/2}
+            \big(P_1^{-1/2} P_2 P_1^{-1/2}\big)^{t}
+            P_1^{1/2}
+
+    This is mathematically identical to :func:`~yetanotherspdnet.functions.spd_geometries.affine_invariant.affine_invariant_geodesic`
+    — the point of this alias is that here :math:`t` is treated as a
+    learnable parameter (interpolating between the harmonic mean at
+    :math:`t=0` and the arithmetic mean at :math:`t=1`) rather than a fixed
+    schedule value.
 
     Parameters
     ----------
@@ -433,9 +482,19 @@ class AdaptiveGeometricArithmeticHarmonicGeodesic(Function):
 def adaptive_geometric_arithmetic_harmonic_mean(
     data: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
-    """
-    Adaptive geometric mean of the arithmetic and harmonic means of a batch of SPD matrices
-    with learnable parameter t.
+    r"""
+    Adaptive geometric mean (AdaptiveGAH) of the arithmetic and harmonic
+    means of a batch of SPD matrices, with a learnable parameter :math:`t`.
+
+    .. math::
+
+        \bar{P}_{t} = \gamma_{AI}\big(\bar{P}_{harm}, \bar{P}_{arith}, t\big)
+
+    where :math:`\gamma_{AI}` is the affine-invariant geodesic
+    (:func:`adaptive_geometric_arithmetic_harmonic_geodesic`). Unlike
+    :func:`geometric_arithmetic_harmonic_mean` (fixed at :math:`t=0.5`),
+    :math:`t` here can be learned, letting the model pick where between the
+    harmonic and arithmetic means the effective "center" of BatchNorm sits.
 
     Parameters
     ----------

@@ -515,3 +515,12 @@ experiments/
 # src/dataloader/*
 # src/evaluation/*
 # src/utils/*
+.assets/*
+
+# Local tool state (Serena MCP) and training checkpoints
+.serena/
+checkpoints/
+
+# Sphinx generated API reference (sphinx-autoapi)
+docs/autoapi/
+docs/reference/

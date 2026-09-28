@@ -1164,9 +1164,10 @@ class TestSoftPlusSymmetric:
         )
         D = torch.diag(diag_vals)
         D_SoftPlus = spd_linalg.ScaledSoftPlusSymmetric.apply(D)
-        softplus_fun = lambda x: torch.log(
-            torch.tensor(1.0) + torch.pow(torch.tensor(2.0), x)
-        ) / torch.log(torch.tensor(2.0))
+        softplus_fun = lambda x: (
+            torch.log(torch.tensor(1.0) + torch.pow(torch.tensor(2.0), x))
+            / torch.log(torch.tensor(2.0))
+        )
         expected = torch.diag(softplus_fun(diag_vals))
         assert_close(D_SoftPlus, expected)
 
@@ -1188,9 +1189,10 @@ class TestSoftPlusSymmetric:
         eigvals_X = torch.linalg.eigvalsh(X)
         X_SoftPlus = spd_linalg.ScaledSoftPlusSymmetric.apply(X)
         eigvals_X_SoftPlus = torch.linalg.eigvalsh(X_SoftPlus)
-        softplus_fun = lambda x: torch.log(
-            torch.tensor(1.0) + torch.pow(torch.tensor(2.0), x)
-        ) / torch.log(torch.tensor(2.0))
+        softplus_fun = lambda x: (
+            torch.log(torch.tensor(1.0) + torch.pow(torch.tensor(2.0), x))
+            / torch.log(torch.tensor(2.0))
+        )
         # Sort for comparison
         expected = (softplus_fun(eigvals_X)).sort()[0]
         actual = eigvals_X_SoftPlus.sort()[0]
@@ -1291,9 +1293,10 @@ class TestInvSoftPlusSPD:
         )
         D = torch.diag(diag_vals)
         D_ISP = spd_linalg.InvScaledSoftPlusSPD.apply(D)
-        inv_softplus_fun = lambda x: torch.log(
-            torch.pow(torch.tensor(2.0), x) - torch.tensor(1.0)
-        ) / torch.log(torch.tensor(2.0))
+        inv_softplus_fun = lambda x: (
+            torch.log(torch.pow(torch.tensor(2.0), x) - torch.tensor(1.0))
+            / torch.log(torch.tensor(2.0))
+        )
         expected = torch.diag(inv_softplus_fun(diag_vals))
         assert_close(D_ISP, expected)
 
@@ -1309,9 +1312,10 @@ class TestInvSoftPlusSPD:
         eigvals_X = torch.linalg.eigvalsh(X)
         X_ISP = spd_linalg.InvScaledSoftPlusSPD.apply(X)
         eigvals_X_ISP = torch.linalg.eigvalsh(X_ISP)
-        inv_softplus_fun = lambda x: torch.log(
-            torch.pow(torch.tensor(2.0), x) - torch.tensor(1.0)
-        ) / torch.log(torch.tensor(2.0))
+        inv_softplus_fun = lambda x: (
+            torch.log(torch.pow(torch.tensor(2.0), x) - torch.tensor(1.0))
+            / torch.log(torch.tensor(2.0))
+        )
         # Sort for comparison
         expected = (inv_softplus_fun(eigvals_X)).sort()[0]
         actual = eigvals_X_ISP.sort()[0]

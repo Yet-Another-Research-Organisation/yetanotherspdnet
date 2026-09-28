@@ -963,3 +963,143 @@ class TestAffineInvariantStdScalar:
         assert is_symmetric(G_manual.grad)
         assert is_symmetric(G_auto.grad)
         assert_close(G_manual.grad, G_auto.grad)
+
+
+class TestAffineInvariantExp:
+    """Tests for affine_invariant_exp / AffineInvariantExp and affine_invariant_log."""
+
+    @pytest.mark.parametrize("n", [3, 5, 8])
+    @pytest.mark.parametrize("n_samples", [1, 4])
+    def test_exp_output_spd(self, n, n_samples, device, dtype, generator):
+        """Exp map output is SPD."""
+        X = random_SPD(n, n_samples, device=device, dtype=dtype, generator=generator)
+        V = torch.randn_like(X) * 0.1
+        V = (V + V.transpose(-1, -2)) / 2  # symmetrize
+
+        Y = affine_invariant.affine_invariant_exp(X, V)
+        assert is_symmetric(Y)
+        assert is_spd(Y)
+
+    @pytest.mark.parametrize("n", [3, 5])
+    def test_exp_identity_tangent(self, n, device, dtype, generator):
+        """Exp with zero tangent returns base point."""
+        X = random_SPD(n, 4, device=device, dtype=dtype, generator=generator)
+        V = torch.zeros_like(X)
+        Y = affine_invariant.affine_invariant_exp(X, V)
+        assert_close(Y, X, atol=1e-10, rtol=1e-10)
+
+    @pytest.mark.parametrize("n", [3, 5])
+    def test_exp_log_roundtrip(self, n, device, dtype, generator):
+        """Log(Exp_X(V)) == V for small tangent vectors."""
+        X = random_SPD(n, 4, device=device, dtype=dtype, generator=generator)
+        V = torch.randn_like(X) * 0.05
+        V = (V + V.transpose(-1, -2)) / 2
+
+        Y = affine_invariant.affine_invariant_exp(X, V)
+        V_recovered = affine_invariant.affine_invariant_log(X, Y)
+        assert_close(V_recovered, V, atol=1e-8, rtol=1e-8)
+
+    @pytest.mark.parametrize("n", [3, 5])
+    def test_log_exp_roundtrip(self, n, device, dtype, generator):
+        """Exp_X(Log_X(Y)) == Y."""
+        X = random_SPD(n, 4, device=device, dtype=dtype, generator=generator)
+        Y = random_SPD(n, 4, device=device, dtype=dtype, generator=generator)
+
+        V = affine_invariant.affine_invariant_log(X, Y)
+        Y_recovered = affine_invariant.affine_invariant_exp(X, V)
+        assert_close(Y_recovered, Y, atol=1e-8, rtol=1e-8)
+
+    def test_autograd_vs_manual_forward(self, device, dtype, generator):
+        """Autograd and manual exp produce same result."""
+        X = random_SPD(5, 4, device=device, dtype=dtype, generator=generator)
+        V = torch.randn_like(X) * 0.1
+        V = (V + V.transpose(-1, -2)) / 2
+
+        Y_auto = affine_invariant.affine_invariant_exp(X, V)
+        Y_manual = affine_invariant.AffineInvariantExp.apply(X, V)
+        assert_close(Y_auto, Y_manual, atol=1e-12, rtol=1e-12)
+
+    def test_autograd_vs_manual_backward_tangent(self, device, dtype, generator):
+        """Autograd and manual backward produce same tangent gradients."""
+        X = random_SPD(5, 4, device=device, dtype=dtype, generator=generator)
+        V = torch.randn_like(X) * 0.05
+        V = (V + V.transpose(-1, -2)) / 2
+
+        # Autograd
+        V_auto = V.clone().requires_grad_(True)
+        Y_auto = affine_invariant.affine_invariant_exp(X, V_auto)
+        Y_auto.sum().backward()
+
+        # Manual
+        V_manual = V.clone().requires_grad_(True)
+        Y_manual = affine_invariant.AffineInvariantExp.apply(X, V_manual)
+        Y_manual.sum().backward()
+
+        assert V_auto.grad is not None
+        assert V_manual.grad is not None
+        assert torch.isfinite(V_auto.grad).all()
+        assert torch.isfinite(V_manual.grad).all()
+        assert_close(V_auto.grad, V_manual.grad, atol=1e-6, rtol=1e-6)
+
+    def test_autograd_vs_manual_backward_base(self, device, dtype, generator):
+        """Autograd and manual backward produce same base gradients."""
+        X = random_SPD(5, 4, device=device, dtype=dtype, generator=generator)
+        V = torch.randn_like(X) * 0.05
+        V = (V + V.transpose(-1, -2)) / 2
+
+        # Autograd
+        X_auto = X.clone().requires_grad_(True)
+        Y_auto = affine_invariant.affine_invariant_exp(X_auto, V)
+        Y_auto.sum().backward()
+
+        # Manual
+        X_manual = X.clone().requires_grad_(True)
+        Y_manual = affine_invariant.AffineInvariantExp.apply(X_manual, V)
+        Y_manual.sum().backward()
+
+        assert X_auto.grad is not None
+        assert X_manual.grad is not None
+        assert torch.isfinite(X_auto.grad).all()
+        assert torch.isfinite(X_manual.grad).all()
+        assert_close(X_auto.grad, X_manual.grad, atol=1e-4, rtol=1e-4)
+
+    @pytest.mark.parametrize("n", [3, 5])
+    def test_exp_gradcheck_tangent(self, n, device, dtype, generator):
+        """Numerical gradient check for tangent via symmetric parameterization."""
+        X = random_SPD(n, 2, device=device, dtype=dtype, generator=generator)
+        # Use upper-triangular coefficients to parameterize symmetric V
+        n_upper = n * (n + 1) // 2
+        coeffs = torch.randn(2, n_upper, device=device, dtype=dtype) * 0.01
+        coeffs.requires_grad_(True)
+
+        def fn(c):
+            # Reconstruct symmetric matrix from upper-triangular coefficients
+            idx = torch.triu_indices(n, n, device=c.device)
+            V = torch.zeros(2, n, n, device=c.device, dtype=c.dtype)
+            V[:, idx[0], idx[1]] = c
+            V = V + V.transpose(-1, -2)
+            # Diagonal was doubled, correct it
+            V[:, range(n), range(n)] /= 2.0
+            return affine_invariant.affine_invariant_exp(X, V)
+
+        assert torch.autograd.gradcheck(fn, (coeffs,), atol=1e-5, rtol=1e-5)
+
+
+class TestAffineInvariantProjx:
+    """Tests for affine_invariant_projx."""
+
+    def test_spd_passthrough(self, device, dtype, generator):
+        """SPD matrices are (nearly) unchanged by projx."""
+        X = random_SPD(5, 4, device=device, dtype=dtype, generator=generator)
+        Y = affine_invariant.affine_invariant_projx(X)
+        assert_close(Y, X, atol=1e-10, rtol=1e-10)
+
+    def test_nonsymmetric_becomes_spd(self, device, dtype, generator):
+        """Non-symmetric input gets symmetrized and made SPD."""
+        A = torch.randn(4, 5, 5, device=device, dtype=dtype)
+        B = A @ A.transpose(-1, -2) + 0.1 * torch.eye(5, device=device, dtype=dtype)
+        # Add slight asymmetry
+        B_asym = B + 0.01 * torch.randn_like(B)
+        Y = affine_invariant.affine_invariant_projx(B_asym)
+        assert is_symmetric(Y)
+        assert is_spd(Y)

@@ -1,3 +1,5 @@
+"""Projections and retractions on the Stiefel manifold (orthonormal matrices)."""
+
 import torch
 from torch.autograd import Function
 

@@ -16,12 +16,13 @@ SPDNet is a neural network architecture that operates directly on SPD matrices. 
 The library provides:
 
 - **Core SPD matrix operations**: matrix logarithm, square root, inverse square root, matrix power, congruence transforms, whitening
-- **Riemannian geometry**: affine-invariant, log-Euclidean, and symmetrized Kullback-Leibler geometries
-- **Neural network layers**: BiMap (projection), ReEig (eigenvalue rectification), LogEig (tangent space), BatchNorm for SPD matrices
+- **Riemannian geometry**: affine-invariant, log-Euclidean, Kullback-Leibler (arithmetic/harmonic), symmetrized Kullback-Leibler (GAH, adaptive GAH) and Bures-Wasserstein geometries
+- **Neural network layers**: BiMap (projection), ReEig (eigenvalue rectification), LogEig (tangent space), Riemannian BatchNorm (including GBWBN), spectral residual blocks
+- **Models**: `SPDnet`, `RResNet` (Riemannian residual network), `GBWBNRResNet`
 - **Learnable parametrizations**: SPD and Stiefel manifold constraints for weight matrices
 - **Manual gradients**: custom `torch.autograd.Function` implementations for numerical stability in float64
 
-All operations run in float64 on GPU by default for numerical stability (eigendecompositions).
+Layers and models default to float64 for numerical stability of eigendecompositions, and run on CPU or GPU (`device=`). Note that `random_SPD` defaults to float32: pass `dtype=torch.float64` explicitly.
 
 ## Installation
 
@@ -46,8 +47,12 @@ import torch
 from yetanotherspdnet.model import SPDnet
 from yetanotherspdnet.random.spd import random_SPD
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # Generate random SPD matrices (batch of 32, size 50x50)
-X = random_SPD(n_features=50, n_matrices=32, cond=100, device="cuda", dtype=torch.float64)
+X = random_SPD(
+    n_features=50, n_matrices=32, cond=100, device=device, dtype=torch.float64
+)
 
 # Create an SPDNet model
 model = SPDnet(
@@ -56,7 +61,7 @@ model = SPDnet(
     output_dim=10,
     softmax=True,
     batchnorm=True,
-    device="cuda",
+    device=device,
     dtype=torch.float64,
 )
 
@@ -81,13 +86,13 @@ from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import LogEuclideanMean
 
 # Matrix functions (return (result, eigvals, eigvecs) tuples)
-X_log = logm_SPD(X)[0]           # Matrix logarithm
-X_sqrt = sqrtm_SPD(X)[0]         # Matrix square root
-X_sqrt_inv = inv_sqrtm_SPD(X)[0] # Inverse square root
+X_log = logm_SPD(X)[0]  # Matrix logarithm
+X_sqrt = sqrtm_SPD(X)[0]  # Matrix square root
+X_sqrt_inv = inv_sqrtm_SPD(X)[0]  # Inverse square root
 
 # Riemannian means (manual gradient, GPU-efficient)
 mean_ai = AffineInvariantMean(X)  # Affine-invariant (Karcher) mean
-mean_le = LogEuclideanMean(X)     # Log-Euclidean mean
+mean_le = LogEuclideanMean(X)  # Log-Euclidean mean
 
 # Geodesic between two SPD matrices at parameter t in [0, 1]
 G = affine_invariant_geodesic(X[0], X[1], t=0.5)
@@ -98,10 +103,12 @@ G = affine_invariant_geodesic(X[0], X[1], t=0.5)
 ```python
 from yetanotherspdnet.nn import BiMap, ReEig, LogEig, BatchNormSPDMean
 
-bimap = BiMap(input_size=50, output_size=30, device="cuda", dtype=torch.float64)
+bimap = BiMap(n_in=50, n_out=30, device=device, dtype=torch.float64)
 reeig = ReEig(eps=1e-4)
 logeig = LogEig()
-bn = BatchNormSPDMean(n_features=30, device="cuda", dtype=torch.float64)
+bn = BatchNormSPDMean(n_features=30, device=device, dtype=torch.float64)
+
+Y = logeig(reeig(bn(bimap(X))))  # (32, 30, 30) symmetric matrices
 ```
 
 ## Documentation
@@ -178,20 +185,23 @@ yetanotherspdnet/
 │   ├── functions/
 │   │   ├── spd_linalg.py              # Core SPD linear algebra
 │   │   ├── scalar_functions.py        # Element-wise functions on eigenvalues
+│   │   ├── stiefel.py                 # Stiefel projections/retractions
 │   │   └── spd_geometries/
 │   │       ├── affine_invariant.py    # Affine-invariant geometry
 │   │       ├── log_euclidean.py       # Log-Euclidean geometry
 │   │       ├── kullback_leibler.py    # Base geometries (arithmetic, harmonic)
-│   │       └── kullback_leibler_symmetrized.py  # KL-sym + adaptive geodesic
+│   │       ├── kullback_leibler_symmetrized.py  # KL-sym + adaptive geodesic
+│   │       └── bures_wasserstein.py   # Bures-Wasserstein geometry (GBWBN)
 │   ├── nn/
 │   │   ├── base.py                    # BiMap, ReEig, LogEig, Vec, Vech layers
 │   │   ├── batchnorm.py               # SPD batch normalization
+│   │   ├── rresnet_layers.py          # Spectral vector field, residual block
 │   │   └── parametrizations.py        # SPD/Stiefel parametrizations
 │   ├── random/
 │   │   ├── spd.py                     # Random SPD matrix generation
 │   │   └── stiefel.py                 # Random Stiefel matrix generation
-│   └── model.py                       # SPDnet model definition
-├── tests/                             # Test suite (3789 tests)
+│   └── model.py                       # SPDnet, RResNet, GBWBNRResNet
+├── tests/                             # Test suite (pytest)
 ├── docs/                              # Sphinx documentation
 ├── pyproject.toml                     # Project configuration
 └── README.md
