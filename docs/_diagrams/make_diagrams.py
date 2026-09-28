@@ -34,6 +34,7 @@ plt.rcParams.update(
         "xtick.color": INK,
         "ytick.color": INK,
         "svg.fonttype": "none",
+        "svg.hashsalt": "yetanotherspdnet",  # stable element ids: no diff noise
         "axes.spines.top": False,
         "axes.spines.right": False,
     }
@@ -42,7 +43,12 @@ plt.rcParams.update(
 
 def _save(fig, name: str) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUT / f"{name}.svg", transparent=True, bbox_inches="tight")
+    fig.savefig(
+        OUT / f"{name}.svg",
+        transparent=True,
+        bbox_inches="tight",
+        metadata={"Date": None},  # no timestamp: regenerating is a no-op
+    )
     plt.close(fig)
 
 
