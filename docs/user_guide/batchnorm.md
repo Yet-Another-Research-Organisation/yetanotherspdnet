@@ -5,6 +5,13 @@ standard deviation, then applies a learned scale and shift. The SPD layers in
 `yetanotherspdnet.nn.batchnorm` do the same on the manifold, in the geometry
 chosen with `mean_type` (see {doc}`geometries`).
 
+```{figure} ../_static/diagrams/batchnorm_steps.svg
+:width: 100%
+
+2×2 SPD matrices drawn as ellipses: the batch is centred (its mean becomes
+$I$), rescaled along geodesics from $I$, then moved to the learned bias $G$.
+```
+
 ## The two layers
 
 `BatchNormSPDMean`

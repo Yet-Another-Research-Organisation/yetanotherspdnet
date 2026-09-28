@@ -56,6 +56,13 @@ Each step is then a small move around the current point, where the
 retraction is accurate: a Riemannian optimizer implemented with a standard
 Euclidean one.
 
+```{figure} ../_static/diagrams/parametrization.svg
+:width: 85%
+
+Static: one chart around the initial weight, increasingly distorted. Dynamic:
+the chart follows the weight.
+```
+
 ```{warning}
 Without `register_optimizer_hook`, the reference point never moves and the
 dynamic mode silently behaves like a static parametrization around the
@@ -99,7 +106,14 @@ U \operatorname{diag}\big(\max(\lambda_i, \epsilon)\big) U^\top .
 $$
 
 Besides the non-linearity, it keeps the output conditioning bounded after a
-dimension reduction. The threshold $\epsilon$ (`reeig_eps`) must match the
+dimension reduction.
+
+```{figure} ../_static/diagrams/reeig.svg
+:width: 55%
+
+ReEig and ReEigBias as maps of the eigenvalues.
+```
+ The threshold $\epsilon$ (`reeig_eps`) must match the
 scale of the data: eigenvalues below it are erased.
 
 `ReEigBias` adds a learned shift $b_i$ per eigenvalue (in ascending order) and

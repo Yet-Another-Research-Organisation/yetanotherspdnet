@@ -49,10 +49,12 @@ RResNet residual blocks: spectral vector field, affine-invariant (unit
 step) or log-Euclidean exponential map.
 :::
 
-:::{grid-item-card} Gradients and precision
+:::{grid-item-card} Numerical and optimization techniques
 :link: numerics
 :link-type: doc
-The `use_autograd` switch, hand-written backwards, and the float64 policy.
+Daleckii–Krein backwards, Sylvester equations, means as iterations, implicit
+differentiation, parametrizations, batch normalization and residual-step
+mechanics, precision — with their equations.
 :::
 ::::
 

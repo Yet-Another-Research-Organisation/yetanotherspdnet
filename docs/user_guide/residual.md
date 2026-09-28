@@ -30,6 +30,14 @@ network (with BatchNorm1d) and $Q$ a learned orthogonal matrix
 : $X_{\text{new}} = \exp\big(\log X + V\big)$, the variant that performs best
   on 3 of the 4 datasets of the paper.
 
+```{figure} ../_static/diagrams/retractions.svg
+:width: 95%
+
+Left: other residual steps $X_+ = L\,\varphi(a\hat W)\,L^\top$ (arithmetic,
+harmonic, GAH) agree with the affine-invariant exponential to first order and
+are valid for $|x| < 1$. Right: the unit affine-invariant step.
+```
+
 ## Numerically singular inputs
 
 The affine-invariant step computes $\lVert V \rVert_X$ with a Cholesky
