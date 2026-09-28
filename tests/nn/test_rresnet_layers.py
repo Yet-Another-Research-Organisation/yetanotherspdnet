@@ -433,3 +433,59 @@ class TestResidualBlockIllConditioned:
     def test_invalid_metric(self, device, dtype):
         with pytest.raises(AssertionError):
             ResidualBlock(4, metric="bures_wasserstein", device=device, dtype=dtype)
+
+
+# ========================================================================
+# Numerically singular inputs: a Bures-Wasserstein batch normalization folds
+# matrices outside the injectivity domain of its exponential (observed on
+# HDM05: minimal eigenvalue 1.8e-10 after the GBWBN bias step, ~1e-20 after
+# the theta = 1/2 post-transform), and the Cholesky of the step norm failed.
+# ========================================================================
+def _nearly_singular_spd(n, n_matrices, device, dtype, generator):
+    """SPD matrices with eigenvalues in [1e-2, 1e2] except three at 1e-20."""
+    from yetanotherspdnet.random.stiefel import random_stiefel
+
+    eigvecs = random_stiefel(
+        n, n, n_matrices=n_matrices, device=device, dtype=dtype, generator=generator
+    )
+    eigvals = torch.logspace(-2, 2, n, device=device, dtype=dtype).repeat(n_matrices, 1)
+    eigvals[:, :3] = 1e-20
+    return (eigvecs * eigvals.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)
+
+
+class TestResidualBlockSingularInput:
+    @pytest.mark.parametrize("metric", ["affine_invariant", "log_euclidean"])
+    @pytest.mark.parametrize("use_autograd", [False, True])
+    def test_finite_spd_and_gradients(
+        self, metric, use_autograd, device, dtype, generator
+    ):
+        X = _nearly_singular_spd(12, 6, device, dtype, generator)
+        with pytest.raises(torch.linalg.LinAlgError):
+            torch.linalg.cholesky(X)  # the failure mode being guarded against
+        X.requires_grad_(True)
+        block = ResidualBlock(
+            12,
+            metric=metric,
+            use_autograd=use_autograd,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        Y = block(X)
+        assert torch.isfinite(Y).all() and is_spd(Y.detach())
+        Y.square().sum().backward()
+        grads = [X.grad] + [p.grad for p in block.parameters() if p.grad is not None]
+        assert all(torch.isfinite(g).all() for g in grads)
+
+    @pytest.mark.parametrize("use_autograd", [False, True])
+    def test_floor_is_a_no_op_on_well_conditioned_inputs(
+        self, use_autograd, device, dtype, generator
+    ):
+        block = ResidualBlock(10, use_autograd=use_autograd, device=device, dtype=dtype)
+        X = _ill_conditioned_spd(10, 5, device, dtype, generator)  # >= 1e-4
+        X.requires_grad_(True)
+        Y = block.floor(X)
+        assert torch.allclose(Y, X, rtol=1e-10, atol=1e-12)
+        # and its Jacobian is the identity
+        (Y * X.detach()).sum().backward()
+        assert torch.allclose(X.grad, X.detach(), rtol=1e-8, atol=1e-10)

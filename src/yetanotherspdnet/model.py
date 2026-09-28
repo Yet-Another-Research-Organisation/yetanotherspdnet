@@ -100,9 +100,11 @@ class SPDnet(nn.Module):
             Choices are: "mean_only" and "mean_var_scalar"
 
         batchnorm_mean_type : str, optional
-            Choice of SPD mean in BatchNormSPDMean. Default is "affine_invariant".
+            Choice of SPD mean of the batch normalization.
+            Default is "geometric_arithmetic_harmonic".
             Choices are: "affine_invariant", "log_euclidean",
-            "arithmetic", "harmonic", "geometric_arithmetic_harmonic"
+            "arithmetic", "harmonic", "geometric_arithmetic_harmonic",
+            "adaptive_geometric_arithmetic_harmonic", "bures_wasserstein"
 
         batchnorm_mean_options : dict | None, optional
             Options for the SPD mean computation.

@@ -5,6 +5,13 @@ standard deviation, then applies a learned scale and shift. The SPD layers in
 `yetanotherspdnet.nn.batchnorm` do the same on the manifold, in the geometry
 chosen with `mean_type` (see {doc}`geometries`).
 
+```{figure} ../_static/diagrams/batchnorm_steps.svg
+:width: 100%
+
+2×2 SPD matrices drawn as ellipses: the batch is centred (its mean becomes
+$I$), rescaled along geodesics from $I$, then moved to the learned bias $G$.
+```
+
 ## The two layers
 
 `BatchNormSPDMean`
@@ -12,6 +19,10 @@ chosen with `mean_type` (see {doc}`geometries`).
   $\bar X$ moves to the identity, then transported to a learned SPD bias $G$
   (`Covbias`). In the affine-invariant geometry this is
   $X \mapsto G^{1/2}\,\bar X^{-1/2} X \bar X^{-1/2}\,G^{1/2}$.
+  With `mean_type="adaptive_geometric_arithmetic_harmonic"`, the batch mean
+  is the point $t$ of the affine-invariant geodesic from the harmonic to the
+  arithmetic mean, with $t = \operatorname{sigmoid}(\cdot)$ learned per
+  layer (attribute `t_gah`, $t = 1/2$ gives the GAH mean).
 
 `BatchNormSPDMeanScalarVariance`
 : **Centring, scalar dispersion and bias.** Between centring and bias, the

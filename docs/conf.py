@@ -21,15 +21,18 @@ except PackageNotFoundError:  # docs built without installing the package
 version = release
 
 # -- General configuration ---------------------------------------------------
+sys.path.insert(0, os.path.abspath("_ext"))
 extensions = [
+    "sphinx.ext.autodoc",
+    "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
     "sphinx.ext.mathjax",
     "myst_parser",
-    "autoapi.extension",
     "sphinx_copybutton",
     "sphinx_design",
+    "dualpath",  # _ext/dualpath.py: tables pairing autograd / manual-backward ops
 ]
 
 # MyST Parser configuration (Markdown support)
@@ -44,24 +47,18 @@ myst_enable_extensions = [
 ]
 myst_heading_anchors = 3
 
-# AutoAPI configuration (API reference generated from docstrings)
-autoapi_type = "python"
-autoapi_dirs = ["../src/yetanotherspdnet"]
-autoapi_root = "reference"
-autoapi_options = [
-    "members",
-    "show-inheritance",
-    "show-module-summary",
-    "imported-members",
-]
-# Most classes document their constructor arguments in __init__: show both the
-# class docstring (description + attributes) and the __init__ one (parameters).
-autoapi_python_class_content = "both"
-autoapi_member_order = "groupwise"
-autoapi_own_page_level = "module"
-autoapi_keep_files = False
-autoapi_add_toctree_entry = False
-suppress_warnings = ["autoapi.python_import_resolution"]
+# -- API reference (autodoc) -------------------------------------------------
+# The reference pages (docs/reference/*.md) are written by hand: each opens with
+# the context and a summary table, then documents the objects with autodoc.
+autoclass_content = "both"  # class docstring + __init__ parameters, once
+autodoc_member_order = "bysource"
+autodoc_typehints = "description"  # types next to each parameter, short signatures
+autodoc_typehints_description_target = "documented_params"
+autodoc_default_options = {"exclude-members": "__init__, __new__"}
+add_module_names = False  # "BiMap", not "yetanotherspdnet.nn.base.BiMap"
+python_display_short_literal_types = True
+python_maximum_signature_line_length = 88  # long signatures: one parameter per line
+autosummary_generate = False  # summary tables only, no stub pages
 
 # Napoleon settings (NumPy style docstrings)
 napoleon_google_docstring = False
@@ -71,9 +68,9 @@ napoleon_include_private_with_doc = False
 napoleon_use_admonition_for_examples = True
 napoleon_use_admonition_for_notes = True
 napoleon_use_admonition_for_references = True
-napoleon_use_ivar = True
+napoleon_use_ivar = True  # attributes as fields: no duplicate objects
 napoleon_use_param = True
-napoleon_use_rtype = True
+napoleon_use_rtype = False
 napoleon_preprocess_types = True
 
 # Intersphinx mapping (link to other projects' documentation)
@@ -92,17 +89,20 @@ templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 # -- Options for HTML output -------------------------------------------------
-html_theme = "pydata_sphinx_theme"
+html_theme = "furo"
 html_title = "Yet Another SPDNet"
-html_static_path = []
+html_static_path = ["_static"]
+html_css_files = ["custom.css"]
 html_theme_options = {
-    "github_url": "https://github.com/Yet-Another-Research-Organisation/yetanotherspdnet",
-    "navbar_align": "left",
-    "show_toc_level": 2,
-    "navigation_depth": 3,
-    "show_nav_level": 1,
-    "secondary_sidebar_items": ["page-toc", "sourcelink"],
-    "footer_start": ["copyright"],
-    "footer_end": ["sphinx-version", "theme-version"],
+    "source_repository": "https://github.com/Yet-Another-Research-Organisation/yetanotherspdnet",
+    "source_branch": "main",
+    "source_directory": "docs/",
+    "light_css_variables": {
+        "color-brand-primary": "#3a4a8c",
+        "color-brand-content": "#3a4a8c",
+    },
+    "dark_css_variables": {
+        "color-brand-primary": "#9fb0f0",
+        "color-brand-content": "#9fb0f0",
+    },
 }
-html_context = {"default_mode": "auto"}
