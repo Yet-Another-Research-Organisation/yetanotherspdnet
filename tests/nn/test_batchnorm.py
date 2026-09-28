@@ -1822,10 +1822,10 @@ class TestBatchNormBuresWasserstein:
         assert layer.mean_type == "bures_wasserstein"
         assert layer.bw_theta == bw_theta
         assert layer.bw_M.shape == (n_features, n_features)
-        assert layer.bw_G_hat.shape == (n_features, n_features)
+        assert layer.bw_G.shape == (n_features, n_features)
         eye = torch.eye(n_features, device=device, dtype=dtype)
         assert_close(layer.bw_M, eye)
-        assert_close(layer.bw_G_hat, eye)
+        assert_close(layer.bw_G, eye)
 
     @pytest.mark.parametrize("n_matrices", [5])
     @pytest.mark.parametrize("n_features, cond", [(10, 100)])
@@ -2038,7 +2038,7 @@ class TestSingleMatrixBatch:
 
 class TestBuresWassersteinGradients:
     """
-    GBWBN parameters bw_M and bw_G_hat start at the identity; their gradients
+    GBWBN parameters bw_M and bw_G start at the identity; their gradients
     must be finite and correct there (they were NaN through autograd eigh).
     """
 
@@ -2063,7 +2063,7 @@ class TestBuresWassersteinGradients:
                 if param.grad is not None:
                     assert torch.isfinite(param.grad).all(), name
             optimizer.step()
-        assert is_spd(layer.bw_M) and is_spd(layer.bw_G_hat)
+        assert is_spd(layer.bw_M) and is_spd(layer.bw_G)
 
     @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
     def test_parameters_gradcheck_at_init(self, bw_theta, device, dtype, generator):
@@ -2083,7 +2083,7 @@ class TestBuresWassersteinGradients:
         params = dict(layer.named_parameters())
         names = (
             "parametrizations.bw_M.original",
-            "parametrizations.bw_G_hat.original",
+            "parametrizations.bw_G.original",
         )
 
         def fun(m_original, g_original):
@@ -2094,3 +2094,138 @@ class TestBuresWassersteinGradients:
 
         inputs = tuple(params[n].detach().clone().requires_grad_() for n in names)
         assert torch.autograd.gradcheck(fun, inputs, atol=1e-6)
+
+
+def _spectral(matrix: torch.Tensor, fun) -> torch.Tensor:
+    eigvals, eigvecs = torch.linalg.eigh(matrix)
+    return (eigvecs * fun(eigvals).unsqueeze(-2)) @ eigvecs.mT
+
+
+def _gbwbn_reference(data, M, G, theta, shift, eps=1e-5):
+    """Algorithm 1 of the GBWBN paper, written independently of the library
+    in the style of the reference code (jjscc/GBWBN): pal1, scale1, pal2, ExpG.
+    Batch statistics: one fixed-point iteration from the arithmetic mean and
+    the Frechet variance of the theta-deformed metric."""
+    eye = torch.eye(data.shape[-1], dtype=data.dtype, device=data.device)
+    M_isqrt = _spectral(M, lambda s: s.rsqrt())
+    M_sqrt = _spectral(M, torch.sqrt)
+    X = M_isqrt @ _spectral(data, lambda s: s**theta) @ M_isqrt
+    G_hat = M_isqrt @ _spectral(G, lambda s: s**theta) @ M_isqrt
+    # mean: one fixed-point iteration
+    G0 = X.mean(0)
+    G0_sqrt, G0_isqrt = _spectral(G0, torch.sqrt), _spectral(G0, lambda s: s.rsqrt())
+    T = _spectral(G0_sqrt @ X @ G0_sqrt, torch.sqrt).mean(0)
+    B = G0_isqrt @ T @ T @ G0_isqrt
+    B_sqrt, B_isqrt = _spectral(B, torch.sqrt), _spectral(B, lambda s: s.rsqrt())
+    # variance of the deformed metric: d_BW^2(B, X_i) / theta^2
+    cross = _spectral(B_sqrt @ X @ B_sqrt, torch.sqrt)
+    tr = lambda A: torch.diagonal(A, dim1=-2, dim2=-1).sum(-1)  # noqa: E731
+    var = (tr(B) + tr(X) - 2 * tr(cross)).mean() / theta**2
+    # centering: Log_B, transport B -> I, Exp_I   (LogG, pal1)
+    C = B_sqrt @ cross @ B_isqrt
+    V = C + C.mT - 2 * B
+    b, U = torch.linalg.eigh(B)
+    V = U @ (torch.sqrt(2 / (b[:, None] + b[None, :])) * (U.mT @ V @ U)) @ U.mT
+    X = eye + V + V @ V / 4
+    # scaling at I   (scale1)
+    V = shift / torch.sqrt(var + eps) * (2 * _spectral(X, torch.sqrt) - 2 * eye)
+    X = eye + V + V @ V / 4
+    # bias: transport I -> G_hat, Exp_{G_hat}   (pal2, ExpG)
+    V = 2 * _spectral(X, torch.sqrt) - 2 * eye
+    a, P = torch.linalg.eigh(G_hat)
+    V = P @ (torch.sqrt((a[:, None] + a[None, :]) / 2) * (P.mT @ V @ P)) @ P.mT
+    Z = P @ ((P.mT @ V @ P) / (a[:, None] + a[None, :])) @ P.mT
+    X = G_hat + V + Z @ G_hat @ Z
+    return _spectral(M_sqrt @ X @ M_sqrt, lambda s: s ** (1 / theta))
+
+
+class TestGBWBNConformity:
+    """GBWBN against the paper's Algorithm 1 (Wang et al., 2025)."""
+
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.75, 0.5, 0.25])
+    @pytest.mark.parametrize("use_autograd", [False, True])
+    def test_matches_algorithm_1(self, bw_theta, use_autograd, generator):
+        n_features, dtype = 5, torch.float64
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type="bures_wasserstein",
+            bw_theta=bw_theta,
+            use_autograd=use_autograd,
+            dtype=dtype,
+        )
+        M = random_SPD(n_features, 1, cond=5, dtype=dtype, generator=generator)
+        G = random_SPD(n_features, 1, cond=5, dtype=dtype, generator=generator)
+        with torch.no_grad():
+            layer.bw_M = M
+            layer.bw_G = G
+            layer.stdScalarbias = torch.tensor(1.7, dtype=dtype)
+        data = random_SPD(n_features, 8, cond=20, dtype=dtype, generator=generator)
+        expected = _gbwbn_reference(data, M, G, bw_theta, shift=1.7)
+        assert_close(layer(data), expected, rtol=1e-8, atol=1e-10)
+
+    def test_default_theta_is_paper_best(self):
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            4, mean_type="bures_wasserstein"
+        )
+        assert layer.bw_theta == 0.5 and layer.bw_batch_stats_grad is True
+
+    @pytest.mark.parametrize("bw_batch_stats_grad", [True, False])
+    def test_batch_statistics_gradient_switch(self, bw_batch_stats_grad, generator):
+        """With bw_batch_stats_grad=False (reference code), the batch mean and
+        variance are constants: the output depends on each input only through
+        its own normalization, so the Jacobian of output i w.r.t. input j != i
+        vanishes."""
+        n_features, dtype = 4, torch.float64
+        layer = batchnorm.BatchNormSPDMeanScalarVariance(
+            n_features,
+            mean_type="bures_wasserstein",
+            bw_batch_stats_grad=bw_batch_stats_grad,
+            dtype=dtype,
+        )
+        data = random_SPD(n_features, 6, cond=10, dtype=dtype, generator=generator)
+        data.requires_grad_(True)
+        layer(data)[0].sum().backward()
+        cross = data.grad[1:].abs().max()
+        if bw_batch_stats_grad:
+            assert cross > 1e-6
+        else:
+            assert cross == 0
+
+    def test_same_output_for_both_gradient_modes(self, generator):
+        dtype = torch.float64
+        data = random_SPD(4, 6, cond=10, dtype=dtype, generator=generator)
+        outputs = [
+            batchnorm.BatchNormSPDMeanScalarVariance(
+                4, mean_type="bures_wasserstein", bw_batch_stats_grad=flag, dtype=dtype
+            )(data)
+            for flag in (True, False)
+        ]
+        assert_close(outputs[0], outputs[1])
+
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_models_forward_bw_options(self, bw_theta):
+        from yetanotherspdnet.model import GBWBNRResNet, RResNet, SPDnet
+
+        options = {"bw_theta": bw_theta, "bw_batch_stats_grad": False}
+        common = {
+            "batchnorm": True,
+            "batchnorm_type": "mean_var_scalar",
+            "batchnorm_mean_type": "bures_wasserstein",
+            "batchnorm_bw_options": options,
+        }
+        models = [
+            SPDnet(8, [6, 4], 3, **common),
+            GBWBNRResNet(8, 6, 3, **common),
+            RResNet(8, [6, 4], [1, 1], 3, **common),
+        ]
+        for model in models:
+            layers = [
+                m
+                for m in model.modules()
+                if isinstance(m, batchnorm.BatchNormSPDMeanScalarVariance)
+            ]
+            assert layers
+            assert all(
+                m.bw_theta == bw_theta and m.bw_batch_stats_grad is False
+                for m in layers
+            )

@@ -18,11 +18,28 @@ chosen with `mean_type` (see {doc}`geometries`).
   centred matrices are rescaled along geodesics from the identity by
   $s / \sigma$: $\sigma$ is the batch dispersion (a scalar, from
   `<geometry>_std_scalar`) and $s$ a learned positive scalar (`stdScalarbias`).
-  With `mean_type="bures_wasserstein"` this is **GBWBN**, which additionally
-  learns a pre-transform $X \mapsto M^{-1/2} X^\theta M^{-1/2}$ and its inverse.
+  With `mean_type="bures_wasserstein"` this is **GBWBN** (Wang et al., 2025),
+  which additionally learns a pre-transform $X \mapsto M^{-1/2} X^\theta M^{-1/2}$
+  and its inverse, and learns its bias $G$ on the input manifold, used as
+  $\hat G = M^{-1/2} G^\theta M^{-1/2}$ in the transformed space.
+
+GBWBN options (`bw_theta`, `bw_batch_stats_grad`):
+
+- `bw_theta` (default 0.5, the best value of the paper's ablation): power
+  deformation. The variance is that of the deformed metric,
+  $d_{BW}^2(X^\theta, Y^\theta) / \theta^2$. Since the BW metric is not scale
+  invariant, $\theta < 1$ also compresses the spectrum: with $\theta = 1$ on
+  ill-conditioned inputs, most transported tangent vectors $V$ fall outside the
+  injectivity domain $I + V/2 \succ 0$ of $\mathrm{Exp}_I$, and the centring is
+  only approximate.
+- `bw_batch_stats_grad` (default `True`, as in the paper): whether gradients
+  flow through the batch mean and variance. `False` treats them as constants,
+  as the reference implementation does.
+
+In the models, pass them as `batchnorm_bw_options={"bw_theta": 0.25}`.
 
 ```{note}
-The GBWBN parameters $M$ and $\hat G$ start at the identity, where all
+The GBWBN parameters $M$ and $G$ start at the identity, where all
 eigenvalues are equal. Gradients through `torch.linalg.eigh` are undefined
 there, so keep `use_autograd=False` (the default) for this layer: the manual
 backwards (Daleckii–Krein for $M^{\pm 1/2}$ and $M^\theta$, implicit

@@ -661,7 +661,8 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         parametrization_mode: str = "static",
         n_steps_ref_update: int = 100,
         use_autograd: bool = False,
-        bw_theta: float = 1.0,
+        bw_theta: float = 0.5,
+        bw_batch_stats_grad: bool = True,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
@@ -732,10 +733,20 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             Default is False
 
         bw_theta : float, optional
-            Power deformation parameter for Bures-Wasserstein geometry.
-            Only used when mean_type="bures_wasserstein".
-            theta=1.0 is standard BW, theta=0.5 often works best.
-            Default is 1.0
+            Power deformation :math:`\theta` of the generalized Bures-Wasserstein
+            metric (GBWBN, Wang et al. 2025): data are mapped by
+            :math:`X \mapsto M^{-1/2} X^\theta M^{-1/2}` and the variance is
+            measured with the deformed metric (divided by :math:`\theta^2`).
+            Only used when mean_type="bures_wasserstein". theta=1.0 is the
+            plain BW metric; 0.5 is the best value of the paper's ablation
+            (HDM05: 69.1% vs 62.0% for theta=1) and the reference code's default.
+            Default is 0.5
+
+        bw_batch_stats_grad : bool, optional
+            GBWBN only. If True (as in the paper), gradients flow through the
+            batch mean and variance; if False (as in the reference code), they
+            are computed without gradient, as constants.
+            Default is True
 
         device: torch.device, optional
             Device on which to store the parameters.
@@ -754,9 +765,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             Buffer: running SPD mean.
         running_std_scalar : torch.Tensor
             Buffer: running scalar standard deviation.
-        bw_M, bw_G_hat : torch.Tensor of shape (n_features, n_features)
+        bw_M, bw_G : torch.Tensor of shape (n_features, n_features)
             GBWBN only: learnable SPD pre-transform :math:`M` and bias
-            :math:`\hat G`.
+            :math:`G`, applied in the transformed space as
+            :math:`\hat G = M^{-1/2} G^\theta M^{-1/2}`.
         bw_theta : float
             GBWBN only: power of the pre-transform :math:`X \mapsto X^\theta`.
         """
@@ -806,6 +818,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         # Bures-Wasserstein specific parameters
         if self.mean_type == "bures_wasserstein":
             self.bw_theta = bw_theta
+            self.bw_batch_stats_grad = bw_batch_stats_grad
             # M: learnable SPD metric (n x n)
             self.bw_M = torch.nn.Parameter(
                 torch.eye(n_features, dtype=self.dtype, device=self.device)
@@ -813,12 +826,13 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             register_parametrization(
                 self, "bw_M", SPDParametrization(mapping=self.parametrization)
             )
-            # G_hat: learnable bias in BW space (n x n)
-            self.bw_G_hat = torch.nn.Parameter(
+            # G: learnable bias on the input manifold (n x n), mapped to the
+            # transformed space as M^{-1/2} G^theta M^{-1/2} like the data
+            self.bw_G = torch.nn.Parameter(
                 torch.eye(n_features, dtype=self.dtype, device=self.device)
             )
             register_parametrization(
-                self, "bw_G_hat", SPDParametrization(mapping=self.parametrization)
+                self, "bw_G", SPDParametrization(mapping=self.parametrization)
             )
 
     def _init_std(self) -> None:
@@ -948,10 +962,11 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         GBWBN forward pass (Generalized Bures-Wasserstein Batch Normalization).
 
         Pipeline: pre-transform -> BW center -> BW scale -> BW bias -> post-transform
+        (Algorithm 1 of Wang et al., "GBWBN", 2025). The variance is the one of
+        the theta-deformed metric, d_BW^2(X^theta, Y^theta) / theta^2.
         """
         theta = self.bw_theta
         M = self.bw_M
-        G_hat = self.bw_G_hat
 
         # Pre-transform: X_hat = M^{-1/2} X^theta M^{-1/2}
         # bw_M is initialized at the identity: with use_autograd=False the
@@ -972,12 +987,17 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         M_isqrt = inv_sqrtm(M)
         data_pow = powm(data, theta) if theta != 1.0 else data
         data_hat = M_isqrt @ data_pow @ M_isqrt
+        G = self.bw_G
+        G_hat = M_isqrt @ (powm(G, theta) if theta != 1.0 else G) @ M_isqrt
 
         if _use_batch_statistics(self, data):
-            mean_batch = self.mean_fun(data_hat)
-            mean = self.get_norm_mean(mean_batch)
-            std_batch = self.std_fun(data_hat, mean)
-            std = self.get_norm_std(std_batch)
+            with torch.set_grad_enabled(
+                self.bw_batch_stats_grad and torch.is_grad_enabled()
+            ):
+                mean_batch = self.mean_fun(data_hat)
+                mean = self.get_norm_mean(mean_batch)
+                std_batch = self.std_fun(data_hat, mean) / theta
+                std = self.get_norm_std(std_batch)
             with torch.no_grad():
                 self.running_mean = self.adaptive_mean_fun(
                     self.running_mean.to(data.device), mean_batch, self.momentum
@@ -1013,7 +1033,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         """
         bw_info = ""
         if self.mean_type == "bures_wasserstein":
-            bw_info = f"  bw_theta={self.bw_theta},\n"
+            bw_info = (
+                f"  bw_theta={self.bw_theta},\n"
+                f"  bw_batch_stats_grad={self.bw_batch_stats_grad},\n"
+            )
         return (
             f"BatchNormSPDMeanScalarVariance(\n"
             f"  n_features={self.n_features},\n"
