@@ -67,6 +67,7 @@ argument.
 yetanotherspdnet/
 ├── functions/                 pure tensor functions (no parameters)
 │   ├── spd_linalg.py          eigen-based matrix functions, congruences, vec/vech
+│   ├── m_estimators.py        sample covariance, robust M-estimators (Tyler, Student-t)
 │   ├── scalar_functions.py    scalar maps applied to eigenvalues
 │   ├── stiefel.py             projections/retractions on the Stiefel manifold
 │   └── spd_geometries/        one module per geometry
@@ -76,7 +77,8 @@ yetanotherspdnet/
 │       ├── kullback_leibler_symmetrized.py
 │       └── bures_wasserstein.py
 ├── nn/                        torch.nn.Module layers built on functions/
-│   ├── base.py                BiMap, ReEig, LogEig, Vec, Vech
+│   ├── base.py                BiMap, ReEig, ReEigBias, LogEig, Vec, Vech
+│   ├── estimation.py          SampleCovariance, MEstimation (samples -> SPD)
 │   ├── batchnorm.py           Riemannian batch normalization
 │   ├── rresnet_layers.py      spectral vector field, residual block
 │   └── parametrizations.py    SPD / Stiefel / positive-scalar parametrizations

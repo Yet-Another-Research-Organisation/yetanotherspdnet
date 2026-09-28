@@ -1115,6 +1115,144 @@ class EighReLu(Function):
         )
 
 
+def _clamped_bias_operation(bias: torch.Tensor, eps: float) -> Callable:
+    """Eigenvalue map of ReEigBias: shift by ``bias`` then clamp to [eps, 1/eps]."""
+    return lambda x: torch.clamp(x + bias, min=eps, max=1 / eps)
+
+
+def _clamped_bias_operation_deriv(bias: torch.Tensor, eps: float) -> Callable:
+    """Derivative of :func:`_clamped_bias_operation` with respect to the eigenvalues."""
+    return lambda x: ((x + bias > eps) & (x + bias < 1 / eps)).type(x.dtype)
+
+
+def eigh_relu_bias(
+    data: torch.Tensor, bias: torch.Tensor, eps: float
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    r"""
+    Eigenvalue rectification with a learnable shift of the eigenvalues.
+
+    .. math::
+
+        \operatorname{ReEigBias}_{\epsilon, b}(P) = V \operatorname{diag}\big(
+            \operatorname{clamp}(\lambda_i + b_i,\ \epsilon,\ 1/\epsilon)
+        \big) V^\top
+
+    with :math:`\lambda_1 \le \dots \le \lambda_n` the eigenvalues in ascending
+    order (as returned by ``torch.linalg.eigh``) and :math:`b` a bias vector
+    indexed by eigenvalue rank. The upper clamp bounds the condition number of
+    the output by :math:`\epsilon^{-2}`.
+
+    Unlike :func:`eigh_relu`, this is not a spectral function when two
+    eigenvalues coincide while their biases differ: the output then depends on
+    the arbitrary eigenbasis of the repeated eigenvalue, and gradients with
+    respect to ``data`` are only defined for distinct eigenvalues.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    bias : torch.Tensor of shape (n_features,)
+        Shift added to the (ascending) eigenvalues
+
+    eps : float
+        Lower clamping value; the upper one is ``1 / eps``
+
+    Returns
+    -------
+    data_transformed : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues of matrices in data
+
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors of matrices in data
+    """
+    eigvals, eigvecs = torch.linalg.eigh(data)
+    operation = _clamped_bias_operation(bias, eps)
+    return eigh_operation(eigvals, eigvecs, operation), eigvals, eigvecs
+
+
+class EighReLuBias(Function):
+    """
+    Eigenvalue rectification with a learnable shift, with a hand-written backward
+    """
+
+    @staticmethod
+    def forward(
+        ctx, data: torch.Tensor, bias: torch.Tensor, eps: float
+    ) -> torch.Tensor:
+        """
+        Forward pass of :func:`eigh_relu_bias`
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        bias : torch.Tensor of shape (n_features,)
+            Shift added to the (ascending) eigenvalues
+
+        eps : float
+            Lower clamping value; the upper one is ``1 / eps``
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+        """
+        data_transformed, eigvals, eigvecs = eigh_relu_bias(data, bias, eps)
+        ctx.save_for_backward(eigvals, eigvecs, bias)
+        ctx.eps = eps
+        return data_transformed
+
+    @staticmethod
+    def backward(
+        ctx, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, None]:
+        """
+        Backward pass of :func:`eigh_relu_bias`
+
+        The gradient with respect to ``data`` is the Daleckii-Krein formula of
+        :func:`eigh_operation_grad`. Only the eigenvalues depend on the bias, so
+        its gradient is the diagonal of :math:`V^\top G V` masked by the
+        derivative of the clamp, summed over the batch dimensions.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the output batch
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input batch
+
+        grad_bias : torch.Tensor of shape (n_features,)
+            Gradient of the loss with respect to the bias
+        """
+        eps = ctx.eps
+        eigvals, eigvecs, bias = ctx.saved_tensors
+        operation = _clamped_bias_operation(bias, eps)
+        operation_deriv = _clamped_bias_operation_deriv(bias, eps)
+        grad_input = eigh_operation_grad(
+            grad_output, eigvals, eigvecs, operation, operation_deriv
+        )
+        rotated = eigvecs.transpose(-1, -2) @ symmetrize(grad_output) @ eigvecs
+        grad_eigvals = torch.diagonal(rotated, dim1=-2, dim2=-1) * operation_deriv(
+            eigvals
+        )
+        grad_bias = grad_eigvals.reshape(-1, grad_eigvals.shape[-1]).sum(dim=0)
+        return grad_input, grad_bias, None
+
+
 # -----------------------------------
 # Various congruences of SPD matrices
 # -----------------------------------

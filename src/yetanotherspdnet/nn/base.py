@@ -10,11 +10,13 @@ from yetanotherspdnet.nn.parametrizations import StiefelAdaptiveParametrization
 from ..functions.spd_linalg import (
     CongruenceRectangular,
     EighReLu,
+    EighReLuBias,
     LogmSPD,
     VecBatch,
     VechBatch,
     congruence_rectangular,
     eigh_relu,
+    eigh_relu_bias,
     logm_SPD,
     vec_batch,
 )
@@ -310,6 +312,108 @@ class ReEig(nn.Module):
             Representation of the layer
         """
         return f"ReEig(eps={self.eps}, use_autograd={self.use_autograd})"
+
+
+class ReEigBias(nn.Module):
+    r"""
+    Eigenvalue rectification with a learnable shift of each eigenvalue.
+
+    .. math::
+
+        X \mapsto U \operatorname{diag}\big(
+            \operatorname{clamp}(\lambda_i + b_i,\ \epsilon,\ 1/\epsilon)\big) U^\top
+
+    with eigenvalues in ascending order and :math:`b` learned (initialized at
+    zero, so the layer starts as a two-sided ReEig). The upper bound
+    :math:`1/\epsilon` caps the condition number of the output, which is
+    useful after estimators such as M-estimators that can produce large
+    eigenvalues.
+    """
+
+    def __init__(
+        self,
+        n_features: int,
+        eps: float = 1e-4,
+        use_autograd: bool = False,
+        device: torch.device = torch.device("cpu"),
+        dtype: torch.dtype = torch.float64,
+    ) -> None:
+        r"""
+        Build a ReEigBias layer.
+
+        Parameters
+        ----------
+        n_features : int
+            Dimension of the SPD matrices (size of the bias vector)
+
+        eps : float, optional
+            Lower clamping value of the shifted eigenvalues; the upper one is
+            ``1 / eps``. Default is 1e-4
+
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False
+
+        device : torch.device, optional
+            Device on which the layer is initialized.
+            Default is torch.device("cpu")
+
+        dtype : torch.dtype, optional
+            Data type of the layer. Default is torch.float64
+
+        Attributes
+        ----------
+        bias : torch.nn.Parameter of shape (n_features,)
+            Learnable shift of the eigenvalues, indexed by ascending rank.
+        eps : float
+            Lower clamping value (upper is ``1 / eps``).
+        use_autograd : bool
+            Autograd path (True) or hand-written backward (False, default).
+        """
+        super().__init__()
+        assert 0 < eps < 1, f"eps must be in (0, 1), got {eps}"
+        self.n_features = n_features
+        self.eps = eps
+        self.use_autograd = use_autograd
+        self.bias = nn.Parameter(torch.zeros(n_features, device=device, dtype=dtype))
+        self.reeig_bias_fun = (
+            (lambda data, bias, eps: eigh_relu_bias(data, bias, eps)[0])
+            if self.use_autograd
+            else EighReLuBias.apply
+        )
+
+    def forward(self, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the ReEigBias layer
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+        """
+        assert data.shape[-1] == self.n_features, (
+            f"expected matrices of size {self.n_features}, got {data.shape[-1]}"
+        )
+        return self.reeig_bias_fun(data, self.bias, self.eps)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return (
+            f"ReEigBias(n_features={self.n_features}, eps={self.eps}, "
+            f"use_autograd={self.use_autograd})"
+        )
 
 
 class LogEig(nn.Module):
