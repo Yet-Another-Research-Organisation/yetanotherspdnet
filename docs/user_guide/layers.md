@@ -74,10 +74,9 @@ initial weight. The models forward the call to every dynamic layer:
 import torch
 from yetanotherspdnet.nn import BiMap
 
-layer = BiMap(n_in=64, n_out=32, parametrization_mode="dynamic",
-              n_steps_ref_update=100)
+layer = BiMap(n_in=64, n_out=32, parametrization_mode="dynamic", n_steps_ref_update=100)
 optimizer = torch.optim.SGD(layer.parameters(), lr=1e-2)
-layer.register_optimizer_hook(optimizer)   # moves W_ref every 100 steps
+layer.register_optimizer_hook(optimizer)  # moves W_ref every 100 steps
 ```
 
 ### The same idea for SPD parameters

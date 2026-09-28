@@ -56,8 +56,12 @@ function differentiated by autograd (`logm_SPD`, `sqrtm_SPD`, …) and as a
 default; the models accept a dict per layer type:
 
 ```python
-SPDnet(input_dim=8, hidden_layers_size=[4], output_dim=3,
-       use_autograd={"bimap": True, "batchnorm": True})   # others stay manual
+SPDnet(
+    input_dim=8,
+    hidden_layers_size=[4],
+    output_dim=3,
+    use_autograd={"bimap": True, "batchnorm": True},
+)  # others stay manual
 ```
 
 Valid keys: `"bimap"`, `"reeig"`, `"logeig"`, `"batchnorm"`, `"vec"`, and

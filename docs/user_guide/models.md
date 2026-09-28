@@ -61,9 +61,12 @@ learning rate halved on plateau, early stopping:
 
 ```python
 SPDnet(
-    input_dim=204, hidden_layers_size=[184, 158], output_dim=4,
+    input_dim=204,
+    hidden_layers_size=[184, 158],
+    output_dim=4,
     reeig_eps=0.01,
-    batchnorm=True, batchnorm_mean_type="arithmetic",   # batch 48, lr 0.05
+    batchnorm=True,
+    batchnorm_mean_type="arithmetic",  # batch 48, lr 0.05
 )
 ```
 
@@ -71,9 +74,12 @@ Same paper, HDM05 (93×93 skeleton covariances scaled by 190, 117 classes):
 
 ```python
 SPDnet(
-    input_dim=93, hidden_layers_size=[84, 63], output_dim=117,
+    input_dim=93,
+    hidden_layers_size=[84, 63],
+    output_dim=117,
     reeig_eps=0.8,
-    batchnorm=True, batchnorm_mean_type="geometric_arithmetic_harmonic",  # batch 16, lr 0.25
+    batchnorm=True,
+    batchnorm_mean_type="geometric_arithmetic_harmonic",  # batch 16, lr 0.25
 )
 ```
 
@@ -81,8 +87,10 @@ GBWBN paper, HDM05 (raw matrices; Adam with AMSGrad, lr 2.5e-3, batch 30,
 200 epochs):
 
 ```python
-GBWBNRResNet(   # GBWBN (momentum 0.1) is on by default
-    input_dim=93, hidden_dim=30, output_dim=117,
+GBWBNRResNet(  # GBWBN (momentum 0.1) is on by default
+    input_dim=93,
+    hidden_dim=30,
+    output_dim=117,
     batchnorm_bw_options={"bw_theta": 0.5},
 )
 ```
