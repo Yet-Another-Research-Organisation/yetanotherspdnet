@@ -2229,3 +2229,35 @@ class TestGBWBNConformity:
                 m.bw_theta == bw_theta and m.bw_batch_stats_grad is False
                 for m in layers
             )
+
+
+class TestAdaptiveGAHInit:
+    """``mean_options={'t_init': t}`` sets the initial learnable t of the
+    adaptive GAH mean (sigmoid-parametrized); the default stays 0.5."""
+
+    @pytest.mark.parametrize("t_init", [None, 0.2, 0.9])
+    def test_t_init(self, t_init, device, dtype, generator):
+        options = None if t_init is None else {"t_init": t_init}
+        layer = batchnorm.BatchNormSPDMean(
+            5,
+            mean_type="adaptive_geometric_arithmetic_harmonic",
+            mean_options=options,
+            device=device,
+            dtype=dtype,
+        )
+        expected = 0.5 if t_init is None else t_init
+        assert_close(layer.t_gah, torch.tensor(expected, device=device, dtype=dtype))
+        data = random_SPD(5, 8, device=device, dtype=dtype, generator=generator)
+        layer(data).sum().backward()
+        original = layer.parametrizations.t_gah.original
+        assert original.grad is not None and torch.isfinite(original.grad)
+
+    def test_t_init_out_of_range(self, device, dtype):
+        with pytest.raises(ValueError, match="t_init"):
+            batchnorm.BatchNormSPDMean(
+                5,
+                mean_type="adaptive_geometric_arithmetic_harmonic",
+                mean_options={"t_init": 1.5},
+                device=device,
+                dtype=dtype,
+            )
