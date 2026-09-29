@@ -5,6 +5,7 @@ from torch.testing import assert_close
 from yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd import (
     affine_invariant_mean_gevd,
 )
+from yetanotherspdnet.functions.spd_geometries.log_euclidean import log_euclidean_mean
 import yetanotherspdnet.nn.batchnorm as batchnorm
 from utils import is_spd, is_symmetric
 from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
@@ -65,6 +66,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -82,6 +84,7 @@ class TestBatchNormSPDMean:
         n_features,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -99,6 +102,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=momentum,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=momentum,
@@ -143,6 +147,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -162,6 +167,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -181,6 +187,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=momentum,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=momentum,
@@ -217,27 +224,43 @@ class TestBatchNormSPDMean:
             # for affine-invariant mean, we can do this check only if good quality estimation, i.e.,
             # a sufficient number of iterations
             G_output = affine_invariant_mean(output, n_iterations=30)
-            assert_close(G_output, layer.Covbias @ layer.Covbias)
+            if norm_and_bias_mode == "whitening":
+                assert_close(G_output, layer.Covbias @ layer.Covbias)
+            elif norm_and_bias_mode == "parallel_transport":
+                assert_close(G_output, layer.Covbias)
         if mean_type == "affine_invariant_gevd" and mean_options is not None:
             # for affine-invariant mean, we can do this check only if good quality estimation, i.e.,
             # a sufficient number of iterations
             G_output = affine_invariant_mean_gevd(output, n_iterations=30)
-            assert_close(G_output, layer.Covbias @ layer.Covbias, atol=1e-3, rtol=1e-3)
+            if norm_and_bias_mode == "whitening":
+                assert_close(
+                    G_output, layer.Covbias @ layer.Covbias, atol=1e-3, rtol=1e-3
+                )
+            elif norm_and_bias_mode == "parallel_transport":
+                assert_close(G_output, layer.Covbias, atol=1e-3, rtol=1e-3)
         elif mean_type == "log_euclidean":
-            # This actually does not work. This is normal.
-            # It is due to the way normalization is done.
-            # G_output = log_euclidean_mean(output)
-            # assert_close(G_output, layer.Covbias @ layer.Covbias)
-            pass
+            # This work only when norm_and_bias_mode is "parallel_transport"
+            if norm_and_bias_mode == "parallel_transport":
+                G_output = log_euclidean_mean(output)
+                assert_close(G_output, layer.Covbias)
         elif mean_type == "arithmetic":
             G_output = arithmetic_mean(output)
-            assert_close(G_output, layer.Covbias @ layer.Covbias)
+            if norm_and_bias_mode == "whitening":
+                assert_close(G_output, layer.Covbias @ layer.Covbias)
+            elif norm_and_bias_mode == "parallel_transport":
+                assert_close(G_output, layer.Covbias)
         elif mean_type == "harmonic":
             G_output = harmonic_mean(output)
-            assert_close(G_output, layer.Covbias @ layer.Covbias)
+            if norm_and_bias_mode == "whitening":
+                assert_close(G_output, layer.Covbias @ layer.Covbias)
+            elif norm_and_bias_mode == "parallel_transport":
+                assert_close(G_output, layer.Covbias)
         elif mean_type == "geometric_arithmetic_harmonic":
             G_output = geometric_arithmetic_harmonic_mean(output)
-            assert_close(G_output, layer.Covbias @ layer.Covbias)
+            if norm_and_bias_mode == "whitening":
+                assert_close(G_output, layer.Covbias @ layer.Covbias)
+            elif norm_and_bias_mode == "parallel_transport":
+                assert_close(G_output, layer.Covbias)
 
     @pytest.mark.parametrize("n_matrices", [10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
@@ -257,6 +280,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -275,6 +299,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -300,6 +325,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -315,6 +341,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -348,6 +375,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -367,6 +395,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -384,6 +413,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -442,6 +472,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -461,6 +492,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -478,6 +510,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -528,6 +561,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -546,6 +580,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -562,6 +597,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -577,6 +613,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -632,6 +669,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -648,6 +686,7 @@ class TestBatchNormSPDMean:
         n_features,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -664,6 +703,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -698,6 +738,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -716,6 +757,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -732,6 +774,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -813,6 +856,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -830,6 +874,7 @@ class TestBatchNormSPDMean:
         n_features,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -846,6 +891,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -863,6 +909,7 @@ class TestBatchNormSPDMean:
         assert f"mean_type={mean_type}" in repr_str
         assert f"mean_options={mean_options}" in repr_str
         assert f"momentum={0.1}" in repr_str
+        assert f"norm_and_bias_mode={norm_and_bias_mode}" in repr_str
         assert f"norm_strategy={norm_strategy}" in repr_str
         assert f"minibatch_mode={minibatch_mode}" in repr_str
         assert f"minibatch_momentum={0.1}" in repr_str

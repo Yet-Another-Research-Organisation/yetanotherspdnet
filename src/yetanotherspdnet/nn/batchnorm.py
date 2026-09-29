@@ -40,9 +40,11 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized impo
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
     LogEuclideanGeodesic,
     LogEuclideanMean,
+    LogEuclideanParalleTransportSPD,
     LogEuclideanStdScalar,
     log_euclidean_geodesic,
     log_euclidean_mean,
+    log_euclidean_parallel_transport_SPD,
     log_euclidean_std_scalar,
 )
 
@@ -766,8 +768,22 @@ class BatchNormSPDMean(BatchNormSPDBase):
                     if self.use_autograd
                     else AffineInvariantParallelTransportGEVD
                 )
-            else:
-                raise NotImplementedError
+            elif self.mean_type == "log_euclidean":
+                self.parallel_transport = (
+                    log_euclidean_parallel_transport_SPD
+                    if self.use_autograd
+                    else LogEuclideanParalleTransportSPD
+                )
+            elif (
+                self.mean_type == "geometric_arithmetic_harmonic"
+                or self.mean_type == "arithmetic"
+                or self.mean_type == "harmonic"
+            ):
+                self.parallel_transport = (
+                    affine_invariant_parallel_transport_gevd
+                    if self.use_autograd
+                    else AffineInvariantParallelTransportGEVD
+                )
             self._norm_and_bias_fun = self._norm_and_bias_transport
 
     def _norm_and_bias_whitening(
