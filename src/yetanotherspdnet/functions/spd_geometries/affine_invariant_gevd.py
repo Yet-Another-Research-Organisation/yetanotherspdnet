@@ -383,7 +383,6 @@ def affine_invariant_mean_gevd(
     )  # initialize with identity to ensure correct manual backpropagation
     for it in range(n_iterations):
         log_data = affine_invariant_logarithm_gevd(data, mean)[0]
-        print(log_data.shape)
         log_mean = arithmetic_mean(log_data)
         stepsize = 0.95**it
         mean = affine_invariant_exponential_gevd(stepsize * log_mean, mean)[0]

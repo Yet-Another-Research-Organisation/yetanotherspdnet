@@ -7,6 +7,14 @@ import torch
 from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
 
+from yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd import (
+    AffineInvariantGeodesicGEVD,
+    AffineInvariantMeanGEVD,
+    AffineInvariantParallelTransportGEVD,
+    affine_invariant_geodesic_gevd,
+    affine_invariant_mean_gevd,
+    affine_invariant_parallel_transport_gevd,
+)
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     ArithmeticMean,
     EuclideanGeodesic,
@@ -41,9 +49,11 @@ from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
 from ..functions.spd_geometries.affine_invariant import (
     AffineInvariantGeodesic,
     AffineInvariantMean,
+    AffineInvariantParallelTransport,
     AffineInvariantStdScalar,
     affine_invariant_geodesic,
     affine_invariant_mean,
+    affine_invariant_parallel_transport,
     affine_invariant_std_scalar,
 )
 from ..functions.spd_linalg import (
@@ -89,7 +99,7 @@ class BatchNormSPDBase(ABC, nn.Module):
 
         mean_type : str, optional
             Choice of SPD mean. Default is "affine_invariant".
-            Choices are: "affine_invariant", "log_euclidean",
+            Choices are: "affine_invariant", "affine_invariant_gevd", "log_euclidean",
             "arithmetic", "harmonic", "geometric_arithmetic_harmonic"
 
         mean_options : dict | None, optional
@@ -158,12 +168,13 @@ class BatchNormSPDBase(ABC, nn.Module):
         self.mean_type = mean_type
         assert self.mean_type in [
             "affine_invariant",
+            "affine_invariant_gevd",
             "log_euclidean",
             "arithmetic",
             "harmonic",
             "geometric_arithmetic_harmonic",
         ], (
-            f"formula must be in ['affine_invariant', 'log_euclidean', "
+            f"formula must be in ['affine_invariant', 'affine_invariant_gevd', 'log_euclidean', "
             f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic'], "
             f"got {self.mean_type}"
         )
@@ -267,6 +278,24 @@ class BatchNormSPDBase(ABC, nn.Module):
                 self.mean_fun = (
                     affine_invariant_mean if self.use_autograd else AffineInvariantMean
                 )
+        elif self.mean_type == "affine_invariant_gevd":
+            if self.mean_options is not None and "n_iterations" in self.mean_options:
+                if self.use_autograd:
+                    self.mean_fun = partial(
+                        affine_invariant_mean_gevd,
+                        n_iterations=self.mean_options["n_iterations"],
+                    )
+                else:
+                    self.mean_fun = partial(
+                        AffineInvariantMeanGEVD,
+                        n_iterations=self.mean_options["n_iterations"],
+                    )
+            else:
+                self.mean_fun = (
+                    affine_invariant_mean_gevd
+                    if self.use_autograd
+                    else AffineInvariantMeanGEVD
+                )
         elif self.mean_type == "log_euclidean":
             self.mean_fun = (
                 log_euclidean_mean if self.use_autograd else LogEuclideanMean
@@ -290,6 +319,10 @@ class BatchNormSPDBase(ABC, nn.Module):
         """
         if self.mean_type == "affine_invariant":
             self.adaptive_mean_fun = affine_invariant_geodesic
+        elif self.mean_type == "affine_invariant_gevd":
+            self.adaptive_mean_fun = lambda x, y, t: affine_invariant_geodesic_gevd(
+                x, y, t
+            )[0]
         elif self.mean_type == "log_euclidean":
             self.adaptive_mean_fun = log_euclidean_geodesic
         elif self.mean_type == "arithmetic":
@@ -316,6 +349,12 @@ class BatchNormSPDBase(ABC, nn.Module):
                     affine_invariant_geodesic
                     if self.use_autograd
                     else AffineInvariantGeodesic.apply
+                )
+            elif self.mean_type == "affine_invariant_gevd":
+                self.regularize_mean_fun = (
+                    (lambda x, y, t: affine_invariant_geodesic_gevd(x, y, t)[0])
+                    if self.use_autograd
+                    else AffineInvariantGeodesicGEVD.apply
                 )
             elif self.mean_type == "log_euclidean":
                 self.regularize_mean_fun = (
@@ -572,6 +611,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
         mean_type: str = "affine_invariant",
         mean_options: dict | None = None,
         momentum: float = 0.01,
+        norm_and_bias_mode: str = "whitening",
         norm_strategy: str = "classical",
         minibatch_mode: str = "constant",
         minibatch_momentum: float = 0.01,
@@ -594,7 +634,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
 
         mean_type : str, optional
             Choice of SPD mean. Default is "affine_invariant".
-            Choices are: "affine_invariant", "log_euclidean",
+            Choices are: "affine_invariant", "affine_invariant_gevd", "log_euclidean",
             "arithmetic", "harmonic", "geometric_arithmetic_harmonic"
 
         mean_options : dict | None, optional
@@ -606,6 +646,11 @@ class BatchNormSPDMean(BatchNormSPDBase):
         momentum : float, optional
             Momentum for running mean update.
             Default is 0.01
+
+        norm_and_bias_mode : str, optional
+            How normalization and bias is applied. Default is "whitening"
+            Choices are: "whitening", "parallel_transport"
+        #TODO: Add "norm_only" mode
 
         norm_strategy : str, optional
             Strategy for normalization.
@@ -656,6 +701,13 @@ class BatchNormSPDMean(BatchNormSPDBase):
             Data type of the layer.
             Default is torch.float64
         """
+        self.norm_and_bias_mode = norm_and_bias_mode
+        assert self.norm_and_bias_mode in [
+            "whitening",
+            "parallel_transport",
+        ], (
+            f"formula must be in ['whitening', 'parallel_transport'], got {self.norm_and_bias_mode}"
+        )
         super().__init__(
             n_features,
             mean_type,
@@ -695,10 +747,89 @@ class BatchNormSPDMean(BatchNormSPDBase):
         """
         Initialize normalization and bias functions
         """
-        self.normalize_mean = whitening if self.use_autograd else Whitening.apply
-        self.add_bias_mean = (
-            congruence_SPD if self.use_autograd else CongruenceSPD.apply
-        )
+        if self.norm_and_bias_mode == "whitening":
+            self.normalize_mean = whitening if self.use_autograd else Whitening.apply
+            self.add_bias_mean = (
+                congruence_SPD if self.use_autograd else CongruenceSPD.apply
+            )
+            self._norm_and_bias_fun = self._norm_and_bias_whitening
+        elif self.norm_and_bias_mode == "parallel_transport":
+            if self.mean_type == "affine_invariant":
+                self.parallel_transport = (
+                    affine_invariant_parallel_transport
+                    if self.use_autograd
+                    else AffineInvariantParallelTransport
+                )
+            elif self.mean_type == "affine_invariant_gevd":
+                self.parallel_transport = (
+                    affine_invariant_parallel_transport_gevd
+                    if self.use_autograd
+                    else AffineInvariantParallelTransportGEVD
+                )
+            else:
+                raise NotImplementedError
+            self._norm_and_bias_fun = self._norm_and_bias_transport
+
+    def _norm_and_bias_whitening(
+        self, data: torch.Tensor, parameters: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Apply normalization and add bias
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        parameters : torch.Tensor of shape (n_features, n_features)
+            SPD mean used for normalization
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Transformed batch of SPD matrices
+        """
+        return self.add_bias_mean(self.normalize_mean(data, parameters), self.Covbias)
+
+    def _norm_and_bias_transport(
+        self, data: torch.Tensor, parameters: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Apply normalization and add bias
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        parameters : torch.Tensor of shape (n_features, n_features)
+            SPD mean used for normalization
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Transformed batch of SPD matrices
+        """
+        return self.parallel_transport(data, parameters, self.Covbias)
+
+    def _norm_and_bias(self, data: torch.Tensor, parameters) -> torch.Tensor:
+        """
+        Apply normalization and add bias
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        parameters : torch.Tensor of shape (n_features, n_features)
+            SPD mean used for normalization
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Transformed batch of SPD matrices
+        """
+        return self._norm_and_bias_fun(data, parameters)
 
     def _get_norm_parameters(
         self, data: torch.Tensor
@@ -750,27 +881,6 @@ class BatchNormSPDMean(BatchNormSPDBase):
         """
         return self.running_mean
 
-    def _norm_and_bias(
-        self, data: torch.Tensor, parameters: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Apply normalization and add bias
-
-        Parameters
-        ----------
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of SPD matrices
-
-        parameters : torch.Tensor of shape (n_features, n_features)
-            SPD mean used for normalization
-
-        Returns
-        -------
-        data_transformed : torch.Tensor of shape (..., n_features, n_features)
-            Transformed batch of SPD matrices
-        """
-        return self.add_bias_mean(self.normalize_mean(data, parameters), self.Covbias)
-
     def _post_optimizer_hook(
         self, optimizer: torch.optim.Optimizer, *args, **kwargs
     ) -> None:
@@ -811,6 +921,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
             f"  mean_type={self.mean_type},\n"
             f"  mean_options={self.mean_options},\n"
             f"  momentum={self.momentum},\n"
+            f"  norm_and_bias_mode={self.norm_and_bias_mode},\n"
             f"  norm_strategy={self.norm_strategy},\n"
             f"  minibatch_mode={self.minibatch_mode},\n"
             f"  minibatch_momentum={self.minibatch_momentum},\n"

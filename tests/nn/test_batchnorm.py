@@ -2,6 +2,9 @@ import pytest
 import torch
 from torch.testing import assert_close
 
+from yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd import (
+    affine_invariant_mean_gevd,
+)
 import yetanotherspdnet.nn.batchnorm as batchnorm
 from utils import is_spd, is_symmetric
 from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
@@ -51,6 +54,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -127,6 +132,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 30}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -211,6 +218,11 @@ class TestBatchNormSPDMean:
             # a sufficient number of iterations
             G_output = affine_invariant_mean(output, n_iterations=30)
             assert_close(G_output, layer.Covbias @ layer.Covbias)
+        if mean_type == "affine_invariant_gevd" and mean_options is not None:
+            # for affine-invariant mean, we can do this check only if good quality estimation, i.e.,
+            # a sufficient number of iterations
+            G_output = affine_invariant_mean_gevd(output, n_iterations=30)
+            assert_close(G_output, layer.Covbias @ layer.Covbias, atol=1e-3, rtol=1e-3)
         elif mean_type == "log_euclidean":
             # This actually does not work. This is normal.
             # It is due to the way normalization is done.
@@ -234,6 +246,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -323,6 +337,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -415,6 +431,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -499,6 +517,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -601,6 +621,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -665,6 +687,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -778,6 +802,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -851,6 +877,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
