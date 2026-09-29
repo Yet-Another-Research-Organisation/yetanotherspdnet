@@ -240,6 +240,65 @@ class LogEuclideanStdScalar(Function):
         return grad_input_data, grad_input_G
 
 
+# ------------------
+# Parallel transport
+# ------------------
+def log_euclidean_parallel_transport_SPD(
+    data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
+) -> torch.Tensor:
+    """
+    Parallel transport with respect to the log-Euclidean geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    current_reference : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    new_reference : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_transp : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices, moved from current_reference to new_reference
+    """
+    return expm_symmetric(
+        logm_SPD(data)[0] - logm_SPD(current_reference)[0] + logm_SPD(new_reference)[0]
+    )[0]
+
+
+def LogEuclideanParalleTransportSPD(
+    data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
+) -> torch.Tensor:
+    """
+    Parallel transport with respect to the log-Euclidean geometry
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    current_reference : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    new_reference : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_transp : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices, moved from current_reference to new_reference
+    """
+    return ExpmSymmetric.apply(
+        LogmSPD.apply(data)
+        - LogmSPD.apply(current_reference)
+        + LogmSPD.apply(new_reference)
+    )
+
+
 # -----------------------------------
 # Riemannian logarithm in coordinates
 # -----------------------------------
