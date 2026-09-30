@@ -159,12 +159,14 @@ class BatchNormSPDMean(nn.Module):
             Choice of SPD mean. Default is "affine_invariant".
             Choices are: "affine_invariant", "log_euclidean",
             "arithmetic", "harmonic", "geometric_arithmetic_harmonic",
-            "bures_wasserstein"
+            "adaptive_geometric_arithmetic_harmonic", "bures_wasserstein"
 
         mean_options : dict | None, optional
             Options for the SPD mean computation.
             For affine-invariant mean, one can typically set {'n_iterations': 5}.
-            Currently, for others, no options available.
+            For adaptive_geometric_arithmetic_harmonic, {'t_init': t} sets the
+            initial value of the learnable t in [0, 1] (0: harmonic,
+            1: arithmetic). Default t_init is 0.5 (the GAH mean).
             Default is None
 
         momentum : float, optional
@@ -353,8 +355,11 @@ class BatchNormSPDMean(nn.Module):
         elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
             # Register learnable parameter t for adaptive GAH mean
             # Use sigmoid parametrization to constrain t in [0, 1]
+            t_init = (self.mean_options or {}).get("t_init", 0.5)
+            if not 0.0 <= t_init <= 1.0:
+                raise ValueError(f"t_init must lie in [0, 1], got {t_init}")
             self.t_gah = torch.nn.Parameter(
-                torch.tensor(0.5, dtype=self.dtype, device=self.device)
+                torch.tensor(t_init, dtype=self.dtype, device=self.device)
             )
             register_parametrization(self, "t_gah", ScalarSigmoidParametrization())
             if self.use_autograd:
@@ -679,11 +684,13 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             Choice of SPD mean. Default is "affine_invariant".
             Choices are: "affine_invariant", "log_euclidean",
             "arithmetic", "harmonic", "geometric_arithmetic_harmonic",
-            "bures_wasserstein"
+            "adaptive_geometric_arithmetic_harmonic", "bures_wasserstein"
 
         mean_options : dict | None, optional
             Options for the SPD mean computation.
             For affine-invariant mean, one can typically set {'n_iterations': 5}.
+            For adaptive_geometric_arithmetic_harmonic, one can set
+            {'t_init': 0.5} (initial learnable t, 0: harmonic, 1: arithmetic).
             For bures_wasserstein, one can set {'n_iterations': 1}.
             Default is None
 
