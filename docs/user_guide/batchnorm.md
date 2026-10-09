@@ -16,9 +16,12 @@ $I$), rescaled along geodesics from $I$, then moved to the learned bias $G$.
 
 `BatchNormSPDMean`
 : **Centring and bias.** Each matrix is transported so that the batch mean
-  $\bar X$ moves to the identity, then transported to a learned SPD bias $G$
-  (`Covbias`). In the affine-invariant geometry this is
-  $X \mapsto G^{1/2}\,\bar X^{-1/2} X \bar X^{-1/2}\,G^{1/2}$.
+  $\bar X$ moves to the identity, then moved to a learned SPD bias
+  (`Covbias`, $G$). With the default `norm_and_bias_mode="whitening"` this is
+  $X \mapsto G\,\bar X^{-1/2} X \bar X^{-1/2}\,G$, so the batch mean lands
+  on $G^2$; with `norm_and_bias_mode="parallel_transport"` the batch is
+  parallel-transported from $\bar X$ to $G$ and the mean lands on $G$ (see
+  [Centring and bias](#centring-and-bias)).
   With `mean_type="adaptive_geometric_arithmetic_harmonic"`, the batch mean
   is the point $t$ of the affine-invariant geodesic from the harmonic to the
   arithmetic mean, with $t = \operatorname{sigmoid}(\cdot)$ learned per
@@ -75,6 +78,30 @@ and its dispersion is zero, so normalizing with them would map every input to
 the identity. Such batches (for instance a last incomplete batch of size 1)
 are therefore normalized like in evaluation mode. Use `drop_last=True` in
 your `DataLoader` to avoid them entirely.
+
+## Centring and bias
+
+`norm_and_bias_mode` chooses how `BatchNormSPDMean` moves the batch from its
+mean $\bar X$ to the bias:
+
+`"whitening"` (default)
+: Whitening by the mean, then congruence by `Covbias`:
+  $X \mapsto G\,\bar X^{-1/2} X \bar X^{-1/2}\,G$. The mean is sent to $G^2$.
+  Only $\bar X^{-1/2}$ needs an eigendecomposition.
+
+`"parallel_transport"`
+: Parallel transport from $\bar X$ to $G$ in the geometry of the mean: the
+  mean is sent to $G$ itself, and distances to the mean are preserved in that
+  geometry. Affine-invariant: $X \mapsto E X E^\top$ with
+  $E = G^{1/2}(G^{-1/2}\bar X G^{-1/2})^{-1/2}G^{-1/2}$; log-Euclidean:
+  $X \mapsto \exp(\log X - \log \bar X + \log G)$. The arithmetic,
+  harmonic and (adaptive) GAH means use the affine-invariant transport,
+  computed through a generalized eigendecomposition
+  (`spd_geometries.affine_invariant_gevd`). Not available for
+  `"bures_wasserstein"`, nor for `BatchNormSPDMeanScalarVariance`.
+
+The two modes parametrize the bias differently ($G^2$ versus $G$), so a
+trained `Covbias` is not interchangeable between them.
 
 ## Main options
 

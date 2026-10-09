@@ -13,6 +13,7 @@ gives their formulas.
 | `kullback_leibler` | left / right Kullback–Leibler | arithmetic / harmonic mean |
 | `kullback_leibler_symmetrized` | symmetrized Kullback–Leibler | GAH: AI midpoint of harmonic and arithmetic (adaptive: learned point $t$) |
 | `bures_wasserstein` | Bures–Wasserstein | fixed-point barycenter |
+| `affine_invariant_gevd` | affine-invariant, through generalized eigendecompositions | Karcher mean; used by the parallel-transport batch normalization |
 
 ## Affine-invariant
 
@@ -21,6 +22,22 @@ gives their formulas.
 
 ```{eval-rst}
 .. automodule:: yetanotherspdnet.functions.spd_geometries.affine_invariant
+   :members:
+   :member-order: bysource
+```
+
+## Affine-invariant (generalized eigendecomposition)
+
+Geodesic, exponential, logarithm, Karcher mean and parallel transport of the
+affine-invariant geometry computed from the generalized eigendecomposition
+of a pair $(A, B)$ instead of square roots of $B$. Used by
+`norm_and_bias_mode="parallel_transport"` of the batch normalization.
+
+```{dualpath-table} yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd
+```
+
+```{eval-rst}
+.. automodule:: yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd
    :members:
    :member-order: bysource
 ```
