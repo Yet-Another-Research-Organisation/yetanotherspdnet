@@ -1031,3 +1031,32 @@ class TestStiefelAdaptiveParametrization:
 
         layer.eval()
         assert layer.training is False
+
+
+class TestReferencePointOnlyMovesOnUpdate:
+    """
+    Regression: last_*_value was registered as reference_point.detach(), which
+    shares storage, so every training forward silently moved the reference
+    point (the output drifted from call to call without any optimizer step).
+    """
+
+    @pytest.mark.parametrize("kind", ["stiefel", "spd"])
+    def test_forward_is_idempotent_in_training(self, kind, device, dtype, generator):
+        n = 6
+        if kind == "stiefel":
+            layer = nn_parametrizations.StiefelAdaptiveParametrization(
+                n, n, device=device, dtype=dtype, generator=generator
+            )
+        else:
+            layer = nn_parametrizations.SPDAdaptiveParametrization(
+                n, device=device, dtype=dtype
+            )
+        tangent = torch.randn(n, n, device=device, dtype=dtype, generator=generator)
+        tangent = tangent + tangent.T
+        reference = layer.reference_point.clone()
+        layer.train()
+        first, second = layer(tangent), layer(tangent)
+        assert_close(first, second)
+        assert_close(layer.reference_point, reference)
+        layer.update_reference_point()
+        assert_close(layer.reference_point, first)

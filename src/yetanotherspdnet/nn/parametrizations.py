@@ -1,3 +1,5 @@
+"""SPD and Stiefel manifold parametrizations for constrained optimization."""
+
 import torch
 from torch import nn
 
@@ -31,6 +33,10 @@ from ..functions.stiefel import (
 
 
 class ScalarSoftPlusParametrization(nn.Module):
+    """
+    Parametrization constraining a scalar to be positive with a softplus.
+    """
+
     def forward(self, scalar: torch.Tensor) -> torch.Tensor:
         """
         Positive definite scalars parametrization using the SoftPlus function
@@ -66,7 +72,56 @@ class ScalarSoftPlusParametrization(nn.Module):
         return inv_scaled_softplus(scalar_pd)
 
 
+class ScalarSigmoidParametrization(nn.Module):
+    """
+    Parametrization to constrain a scalar to the interval [0, 1] using sigmoid.
+    """
+
+    def forward(self, scalar: torch.Tensor) -> torch.Tensor:
+        """
+        Mapping from real scalar to [0, 1] through sigmoid function
+
+        Parameters
+        ----------
+        scalar : torch.Tensor of shape ()
+            Real scalar (unconstrained)
+
+        Returns
+        -------
+        scalar_constrained : torch.Tensor of shape ()
+            Scalar in [0, 1]
+        """
+        return torch.sigmoid(scalar)
+
+    def right_inverse(self, scalar_constrained: torch.Tensor) -> torch.Tensor:
+        """
+        Mapping from [0, 1] to real scalars through inverse sigmoid (logit)
+
+        Parameters
+        ----------
+        scalar_constrained : torch.Tensor of shape ()
+            Scalar in [0, 1]
+
+        Returns
+        -------
+        scalar : torch.Tensor of shape ()
+            Real scalar (unconstrained)
+        """
+        # Clamp to avoid numerical issues at boundaries
+        eps = 1e-7
+        scalar_clamped = torch.clamp(scalar_constrained, eps, 1 - eps)
+        return torch.log(scalar_clamped / (1 - scalar_clamped))
+
+
 class SPDParametrization(nn.Module):
+    """
+    Parametrization mapping a symmetric matrix to an SPD matrix.
+
+    The eigenvalues of the unconstrained symmetric matrix go through a softplus
+    (``mapping="softplus"``) or an exponential (``mapping="exp"``). Used for
+    the SPD biases of batch normalization.
+    """
+
     def __init__(self, mapping: str = "softplus", use_autograd: bool = False) -> None:
         """
         SPD Parametrization
@@ -155,19 +210,17 @@ class SPDParametrization(nn.Module):
         """
         return f"SPDParametrization(mapping={self.mapping}, use_autograd={self.use_autograd})"
 
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
 
 class SPDAdaptiveParametrization(nn.Module):
+    """
+    SPD parametrization around a moving reference point.
+
+    The trainable tensor is a tangent vector at the current reference point.
+    Calling ``update_reference_point`` moves the reference to the current value,
+    which keeps the chart well conditioned during long trainings
+    (``parametrization_mode="dynamic"`` in the layers).
+    """
+
     def __init__(
         self,
         n_features: int,
@@ -250,7 +303,9 @@ class SPDAdaptiveParametrization(nn.Module):
             )
 
         # Last SPD value (for reference point update)
-        self.register_buffer("last_spd_value", self.reference_point.detach())
+        # clone: a plain .detach() would share storage with reference_point, so
+        # every training forward would silently move the reference point
+        self.register_buffer("last_spd_value", self.reference_point.detach().clone())
 
         # Deal with mapping
         if self.mapping == "softplus":
@@ -353,19 +408,16 @@ class SPDAdaptiveParametrization(nn.Module):
             f"device={self.device}, dtype={self.dtype})"
         )
 
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
 
 class StiefelAdaptiveParametrization(nn.Module):
+    """
+    Stiefel parametrization around a moving reference point.
+
+    The trainable tensor is a tangent vector at the current reference point,
+    mapped back to the Stiefel manifold by a QR or polar retraction. Used by
+    BiMap with ``parametrization_mode="dynamic"``.
+    """
+
     def __init__(
         self,
         n_in: int,
@@ -453,7 +505,11 @@ class StiefelAdaptiveParametrization(nn.Module):
             self.register_buffer("reference_point", self.initial_reference.clone())
 
         # Last Stiefel value (for reference point update)
-        self.register_buffer("last_stiefel_value", self.reference_point.detach())
+        # clone: a plain .detach() would share storage with reference_point, so
+        # every training forward would silently move the reference point
+        self.register_buffer(
+            "last_stiefel_value", self.reference_point.detach().clone()
+        )
 
         # Deal with retraction and tangent projection functions
         self.projectionTangent = (
@@ -539,14 +595,3 @@ class StiefelAdaptiveParametrization(nn.Module):
             f"use_autograd={self.use_autograd}), "
             f"device={self.device}, dtype={self.dtype}, generator={self.generator})"
         )
-
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()

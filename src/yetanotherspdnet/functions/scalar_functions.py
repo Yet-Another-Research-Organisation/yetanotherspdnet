@@ -1,9 +1,15 @@
+"""Scalar functions applied element-wise to eigenvalues: sqrt, inv_sqrt, softplus, and derivatives."""
+
+import math
+
 import torch
 
 
 def sqrt_derivative(x: torch.Tensor) -> torch.Tensor:
-    """
-    Derivative of the square root function
+    r"""
+    Derivative of the square root function.
+
+    .. math:: \frac{d}{dx}\sqrt{x} = \frac{1}{2\sqrt{x}}
 
     Parameters
     ----------
@@ -19,8 +25,10 @@ def sqrt_derivative(x: torch.Tensor) -> torch.Tensor:
 
 
 def inv_sqrt(x: torch.Tensor) -> torch.Tensor:
-    """
-    Inverse of the square root
+    r"""
+    Inverse of the square root.
+
+    .. math:: f(x) = \frac{1}{\sqrt{x}} = x^{-1/2}
 
     Parameters
     ----------
@@ -36,8 +44,10 @@ def inv_sqrt(x: torch.Tensor) -> torch.Tensor:
 
 
 def inv_sqrt_derivative(x: torch.Tensor) -> torch.Tensor:
-    """
-    Derivative of the inverse of the square root
+    r"""
+    Derivative of the inverse of the square root.
+
+    .. math:: \frac{d}{dx} x^{-1/2} = -\frac{1}{2} x^{-3/2}
 
     Parameters
     ----------
@@ -53,8 +63,10 @@ def inv_sqrt_derivative(x: torch.Tensor) -> torch.Tensor:
 
 
 def inv(x: torch.Tensor) -> torch.Tensor:
-    """
-    Inverse function
+    r"""
+    Inverse function.
+
+    .. math:: f(x) = \frac{1}{x}
 
     Parameters
     ----------
@@ -87,10 +99,16 @@ def inv_derivative(x: torch.Tensor) -> torch.Tensor:
 
 
 def scaled_softplus(x: torch.Tensor) -> torch.Tensor:
-    """
+    r"""
     Scaled SoftPlus function.
-    It is scaled so that: f(0) = 1, f(x) -> 0 as x -> -inf and
-    f'(x) -> 1 as x -> +inf
+
+    .. math:: f(x) = \log_2\big(1 + 2^{x}\big)
+
+    Base-2 (rather than the usual base-:math:`e`) SoftPlus, chosen so that
+    :math:`f(0) = 1`, :math:`f(x) \to 0` as :math:`x \to -\infty`, and
+    :math:`f'(x) \to 1` as :math:`x \to +\infty`. Used (via
+    :func:`~yetanotherspdnet.functions.spd_linalg.scaled_softplus_symmetric`)
+    to reparametrize eigenvalues so BiMap weights stay strictly positive.
 
     Parameters
     ----------
@@ -102,14 +120,16 @@ def scaled_softplus(x: torch.Tensor) -> torch.Tensor:
     x_softplus : torch.Tensor
         SoftPlus of x
     """
-    return torch.log2(
-        1.0 + torch.pow(torch.tensor(2.0, dtype=x.dtype, device=x.device), x)
-    )
+    return torch.log2(1.0 + torch.exp2(x))
 
 
 def scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
-    """
-    Derivative of the scaled SoftPlus function
+    r"""
+    Derivative of the scaled SoftPlus function.
+
+    .. math:: f'(x) = \sigma(x \ln 2)
+
+    where :math:`\sigma` is the logistic sigmoid.
 
     Parameters
     ----------
@@ -121,12 +141,16 @@ def scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
     x_softplus_deriv : torch.Tensor
         Derivative of SoftPlus of x
     """
-    return 1 / (1.0 + torch.pow(torch.tensor(2.0, device=x.device, dtype=x.dtype), -x))
+    return torch.sigmoid(x * math.log(2))
 
 
 def inv_scaled_softplus(x: torch.Tensor) -> torch.Tensor:
-    """
-    Inverse of the scaled SoftPlus function
+    r"""
+    Inverse of the scaled SoftPlus function.
+
+    .. math:: f^{-1}(x) = \log_2\big(2^{x} - 1\big)
+
+    Inverse of :func:`scaled_softplus`.
 
     Parameters
     ----------
@@ -138,14 +162,14 @@ def inv_scaled_softplus(x: torch.Tensor) -> torch.Tensor:
     x_inv_softplus : torch.Tensor
         Inverse of SoftPlus of x
     """
-    return torch.log2(
-        torch.pow(torch.tensor(2.0, device=x.device, dtype=x.dtype), x) - 1.0
-    )
+    return torch.log2(torch.exp2(x) - 1.0)
 
 
 def inv_scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
-    """
-    Derivative of the inverse of the scaled SoftPlus function
+    r"""
+    Derivative of the inverse of the scaled SoftPlus function.
+
+    .. math:: (f^{-1})'(x) = \frac{1}{1 - 2^{-x}}
 
     Parameters
     ----------
@@ -157,4 +181,4 @@ def inv_scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
     x_softplus_deriv : torch.Tensor
         Derivative of the inverse SoftPlus of x
     """
-    return 1 / (1.0 - torch.pow(torch.tensor(2.0, device=x.device, dtype=x.dtype), -x))
+    return 1 / (1.0 - torch.exp2(-x))

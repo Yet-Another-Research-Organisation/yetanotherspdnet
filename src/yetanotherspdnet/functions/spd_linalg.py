@@ -1,3 +1,5 @@
+"""Core SPD matrix linear algebra: eigendecomposition, matrix functions, congruence, and vectorization."""
+
 from collections.abc import Callable
 
 import torch
@@ -17,8 +19,10 @@ from yetanotherspdnet.functions.scalar_functions import (
 
 
 def symmetrize(data: torch.Tensor) -> torch.Tensor:
-    """
-    Symmetrize a tensor along the last two dimensions
+    r"""
+    Symmetrize a tensor along the last two dimensions.
+
+    .. math:: \operatorname{sym}(A) = \frac{1}{2}\big(A + A^\top\big)
 
     Parameters
     ----------
@@ -244,8 +248,18 @@ class VechBatch(Function):
 def eigh_operation(
     eigvals: torch.Tensor, eigvecs: torch.Tensor, operation: Callable
 ) -> torch.Tensor:
-    """
-    Applies a function on the eigenvalues of a batch of symmetric matrices
+    r"""
+    Applies a function on the eigenvalues of a batch of symmetric matrices.
+
+    .. math::
+
+        f(A) = V \operatorname{diag}\big(f(\lambda_1), \dots, f(\lambda_n)\big) V^\top
+
+    given the eigendecomposition :math:`A = V \operatorname{diag}(\lambda) V^\top`.
+    This is the core primitive behind every matrix function in this module
+    (:func:`sqrtm_SPD`, :func:`inv_sqrtm_SPD`, :func:`powm_SPD`,
+    :func:`logm_SPD`, :func:`expm_symmetric`, …): each just picks a
+    different scalar ``operation`` applied eigenvalue-wise.
 
     Parameters
     ----------
@@ -359,9 +373,18 @@ def eigh_operation_grad(
 def solve_sylvester_SPD(
     eigvals: torch.Tensor, eigvecs: torch.Tensor, mat: torch.Tensor
 ) -> torch.Tensor:
-    """
-    Solve Sylvester equations in the context of SPD matrices
-    relying on eigenvalue decomposition
+    r"""
+    Solve Sylvester equations in the context of SPD matrices relying on
+    eigenvalue decomposition.
+
+    Given :math:`A = V \operatorname{diag}(\lambda) V^\top` (via
+    ``eigvals``, ``eigvecs``), solves :math:`AX + XA = \text{mat}` for
+    :math:`X` in closed form:
+
+    .. math::
+
+        X = V\left[\frac{1}{\lambda_i + \lambda_j}
+            \,(V^\top \,\text{mat}\, V)_{ij}\right]_{ij} V^\top
 
     Parameters
     ----------
@@ -607,8 +630,12 @@ class InvmSPD(Function):
 # SPD matrix square root
 # ----------------------
 def sqrtm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Matrix square root of a batch of SPD matrices
+    r"""
+    Matrix square root of a batch of SPD matrices.
+
+    .. math:: P^{1/2} = V \operatorname{diag}(\sqrt{\lambda}) V^\top
+
+    via :func:`eigh_operation` with ``operation=torch.sqrt``.
 
     Parameters
     ----------
@@ -618,7 +645,7 @@ def sqrtm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Ten
     Returns
     -------
     sqrtm_data : torch.Tensor of shape (..., n_features, n_features)
-        Matrix logarithms of the input batch of SPD matrices
+        Matrix square roots of the input batch of SPD matrices
 
     eigvals : torch.Tensor of shape (..., n_features)
         Eigenvalues of matrices in data
@@ -688,9 +715,12 @@ class SqrtmSPD(Function):
 def inv_sqrtm_SPD(
     data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Matrix inverse square root of a batch of SPD matrices
-    (relies on eigenvalue decomposition)
+    r"""
+    Inverse matrix square root of a batch of SPD matrices.
+
+    .. math:: P^{-1/2} = V \operatorname{diag}(\lambda^{-1/2}) V^\top
+
+    via :func:`eigh_operation` with ``operation=inv_sqrt``.
 
     Parameters
     ----------
@@ -700,7 +730,7 @@ def inv_sqrtm_SPD(
     Returns
     -------
     inv_sqrtm_data : torch.Tensor of shape (..., n_features, n_features)
-        Matrix inverse square roots of the input batch of SPD matrices
+        Inverse matrix square roots of the input batch of SPD matrices
 
     eigvals : torch.Tensor of shape (..., n_features)
         Eigenvalues of matrices in data
@@ -867,8 +897,12 @@ class SqrtmAndInvSqrtmSPD(Function):
 def powm_SPD(
     data: torch.Tensor, exponent: float | torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Matrix power of a batch of SPD matrices
+    r"""
+    Matrix power of a batch of SPD matrices.
+
+    .. math:: P^{p} = V \operatorname{diag}(\lambda^{p}) V^\top
+
+    via :func:`eigh_operation` with ``operation=lambda x: x**exponent``.
 
     Parameters
     ----------
@@ -965,8 +999,15 @@ class PowmSPD(Function):
 # SPD matrix logarithm
 # --------------------
 def logm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Matrix logarithm of a batch of SPD matrices
+    r"""
+    Matrix logarithm of a batch of SPD matrices.
+
+    .. math:: \log(P) = V \operatorname{diag}(\log\lambda) V^\top
+
+    via :func:`eigh_operation` with ``operation=torch.log``. Maps the SPD
+    manifold to the vector space of symmetric matrices — the basis of the
+    Log-Euclidean geometry (see
+    :mod:`~yetanotherspdnet.functions.spd_geometries.log_euclidean`).
 
     Parameters
     ----------
@@ -1044,8 +1085,14 @@ class LogmSPD(Function):
 def expm_symmetric(
     data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Matrix exponential of a batch of symmetric matrices
+    r"""
+    Matrix exponential of a batch of symmetric matrices.
+
+    .. math:: \exp(S) = V \operatorname{diag}(\exp\lambda) V^\top
+
+    via :func:`eigh_operation` with ``operation=torch.exp``. The result is
+    always SPD (eigenvalues :math:`\exp\lambda > 0`); inverse of
+    :func:`logm_SPD`.
 
     Parameters
     ----------
@@ -1123,10 +1170,16 @@ class ExpmSymmetric(Function):
 def scaled_softplus_symmetric(
     data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
+    r"""
     Scaled matrix SoftPlus of a batch of symmetric matrices.
-    It is scaled so that: f(0) = 1, f(x) -> 0 as x -> -inf and
-    f'(x) -> 1 as x -> +inf
+
+    .. math:: f(S) = V \operatorname{diag}\big(\log_2(1 + 2^{\lambda})\big) V^\top
+
+    via :func:`eigh_operation` with
+    ``operation=`` :func:`~yetanotherspdnet.functions.scalar_functions.scaled_softplus`.
+    Maps any symmetric matrix to an SPD matrix (eigenvalues strictly
+    positive) — used to parametrize BiMap weights or BatchNorm scale so
+    they stay on the SPD manifold under unconstrained optimization.
 
     Parameters
     ----------
@@ -1207,8 +1260,12 @@ class ScaledSoftPlusSymmetric(Function):
 def inv_scaled_softplus_SPD(
     data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Inverse scaled SoftPlus of a batch of SPD matrices
+    r"""
+    Inverse scaled SoftPlus of a batch of SPD matrices.
+
+    .. math:: f^{-1}(P) = V \operatorname{diag}\big(\log_2(2^{\lambda} - 1)\big) V^\top
+
+    via :func:`eigh_operation`. Inverse of :func:`scaled_softplus_symmetric`.
 
     Parameters
     ----------
@@ -1291,8 +1348,18 @@ class InvScaledSoftPlusSPD(Function):
 def eigh_relu(
     data: torch.Tensor, eps: float
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    ReLu activation function on the eigenvalues of SPD matrices
+    r"""
+    ReLu activation function on the eigenvalues of SPD matrices.
+
+    .. math::
+
+        \operatorname{ReEig}_\epsilon(P) = V \operatorname{diag}\big(
+            \max(\lambda, \epsilon)\big) V^\top
+
+    via :func:`eigh_operation`. This is the ReEig layer's core operation
+    (:class:`~yetanotherspdnet.nn.base.ReEig`): clamps small/negative
+    eigenvalues to :math:`\epsilon > 0` to keep the result SPD, the
+    manifold analogue of ReLU rectification.
 
     Parameters
     ----------
@@ -1379,12 +1446,156 @@ class EighReLu(Function):
         )
 
 
+def _clamped_bias_operation(bias: torch.Tensor, eps: float) -> Callable:
+    """Eigenvalue map of ReEigBias: shift by ``bias`` then clamp to [eps, 1/eps]."""
+    return lambda x: torch.clamp(x + bias, min=eps, max=1 / eps)
+
+
+def _clamped_bias_operation_deriv(bias: torch.Tensor, eps: float) -> Callable:
+    """Derivative of :func:`_clamped_bias_operation` with respect to the eigenvalues."""
+    return lambda x: ((x + bias > eps) & (x + bias < 1 / eps)).type(x.dtype)
+
+
+def eigh_relu_bias(
+    data: torch.Tensor, bias: torch.Tensor, eps: float
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    r"""
+    Eigenvalue rectification with a learnable shift of the eigenvalues.
+
+    .. math::
+
+        \operatorname{ReEigBias}_{\epsilon, b}(P) = V \operatorname{diag}\big(
+            \operatorname{clamp}(\lambda_i + b_i,\ \epsilon,\ 1/\epsilon)
+        \big) V^\top
+
+    with :math:`\lambda_1 \le \dots \le \lambda_n` the eigenvalues in ascending
+    order (as returned by ``torch.linalg.eigh``) and :math:`b` a bias vector
+    indexed by eigenvalue rank. The upper clamp bounds the condition number of
+    the output by :math:`\epsilon^{-2}`.
+
+    Unlike :func:`eigh_relu`, this is not a spectral function when two
+    eigenvalues coincide while their biases differ: the output then depends on
+    the arbitrary eigenbasis of the repeated eigenvalue, and gradients with
+    respect to ``data`` are only defined for distinct eigenvalues.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    bias : torch.Tensor of shape (n_features,)
+        Shift added to the (ascending) eigenvalues
+
+    eps : float
+        Lower clamping value; the upper one is ``1 / eps``
+
+    Returns
+    -------
+    data_transformed : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues of matrices in data
+
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors of matrices in data
+    """
+    eigvals, eigvecs = torch.linalg.eigh(data)
+    operation = _clamped_bias_operation(bias, eps)
+    return eigh_operation(eigvals, eigvecs, operation), eigvals, eigvecs
+
+
+class EighReLuBias(Function):
+    """
+    Eigenvalue rectification with a learnable shift, with a hand-written backward
+    """
+
+    @staticmethod
+    def forward(
+        ctx, data: torch.Tensor, bias: torch.Tensor, eps: float
+    ) -> torch.Tensor:
+        """
+        Forward pass of :func:`eigh_relu_bias`
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        bias : torch.Tensor of shape (n_features,)
+            Shift added to the (ascending) eigenvalues
+
+        eps : float
+            Lower clamping value; the upper one is ``1 / eps``
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+        """
+        data_transformed, eigvals, eigvecs = eigh_relu_bias(data, bias, eps)
+        ctx.save_for_backward(eigvals, eigvecs, bias)
+        ctx.eps = eps
+        return data_transformed
+
+    @staticmethod
+    def backward(
+        ctx, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, None]:
+        """
+        Backward pass of :func:`eigh_relu_bias`
+
+        The gradient with respect to ``data`` is the Daleckii-Krein formula of
+        :func:`eigh_operation_grad`. Only the eigenvalues depend on the bias, so
+        its gradient is the diagonal of :math:`V^\top G V` masked by the
+        derivative of the clamp, summed over the batch dimensions.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the output batch
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input batch
+
+        grad_bias : torch.Tensor of shape (n_features,)
+            Gradient of the loss with respect to the bias
+        """
+        eps = ctx.eps
+        eigvals, eigvecs, bias = ctx.saved_tensors
+        operation = _clamped_bias_operation(bias, eps)
+        operation_deriv = _clamped_bias_operation_deriv(bias, eps)
+        grad_input = eigh_operation_grad(
+            grad_output, eigvals, eigvecs, operation, operation_deriv
+        )
+        rotated = eigvecs.transpose(-1, -2) @ symmetrize(grad_output) @ eigvecs
+        grad_eigvals = torch.diagonal(rotated, dim1=-2, dim2=-1) * operation_deriv(
+            eigvals
+        )
+        grad_bias = grad_eigvals.reshape(-1, grad_eigvals.shape[-1]).sum(dim=0)
+        return grad_input, grad_bias, None
+
+
 # -----------------------------------
 # Various congruences of SPD matrices
 # -----------------------------------
 def congruence_SPD(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
-    """
-    Congruence of a batch of SPD matrices with an SPD matrix
+    r"""
+    Congruence of a batch of SPD matrices with an SPD matrix.
+
+    .. math:: P' = A\, P\, A
+
+    (here :math:`A` is itself SPD, hence symmetric, so :math:`A^\top = A`
+    and there is no separate transpose). Congruence by an SPD matrix
+    preserves the SPD manifold.
 
     Parameters
     ----------
@@ -1551,8 +1762,14 @@ class CongruenceSPDSqrtm(Function):
 
 
 def whitening(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
-    """
-    Whitening of a batch of SPD matrices with an SPD matrix
+    r"""
+    Whitening of a batch of SPD matrices with an SPD matrix.
+
+    .. math:: P' = A^{-1/2}\, P\, A^{-1/2}
+
+    i.e. :func:`congruence_SPD` with :math:`A^{-1/2}` (see
+    :func:`inv_sqrtm_SPD`) — transforms data so that :math:`A` itself maps
+    to the identity, the SPD analogue of standardizing by the covariance.
 
     Parameters
     ----------
@@ -1640,8 +1857,16 @@ class Whitening(Function):
 
 
 def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
-    """
-    Forward pass of the congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
+    r"""
+    Forward pass of the congruence of a batch of SPD matrices with a
+    (full-rank) rectangular matrix.
+
+    .. math:: P' = W^\top P\, W, \qquad W \in \mathbb{R}^{n_{in} \times n_{out}}
+
+    with :math:`n_{in} \geq n_{out}`. This is the BiMap layer's core
+    operation (:class:`~yetanotherspdnet.nn.base.BiMap`): a dimension
+    reduction that keeps the result SPD as long as :math:`W` has full
+    column rank.
 
     Parameters
     ----------

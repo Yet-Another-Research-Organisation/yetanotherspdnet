@@ -1,3 +1,5 @@
+"""Core SPDNet layers: BiMap, ReEig, LogEig, Vec, Vech."""
+
 import torch
 from torch import nn
 from torch.nn.utils import parametrizations
@@ -8,11 +10,13 @@ from yetanotherspdnet.nn.parametrizations import StiefelAdaptiveParametrization
 from ..functions.spd_linalg import (
     CongruenceRectangular,
     EighReLu,
+    EighReLuBias,
     LogmSPD,
     VecBatch,
     VechBatch,
     congruence_rectangular,
     eigh_relu,
+    eigh_relu_bias,
     logm_SPD,
     vec_batch,
 )
@@ -20,6 +24,16 @@ from ..random.stiefel import _init_weights_stiefel
 
 
 class BiMap(nn.Module):
+    r"""
+    Bilinear mapping layer :math:`X \mapsto W^\top X W` reducing SPD dimension.
+
+    With :math:`W \in \mathbb{R}^{n_{in} \times n_{out}}` on the Stiefel manifold
+    (:math:`W^\top W = I`), a congruence maps SPD matrices to SPD matrices of
+    smaller size. Introduced in Huang & Van Gool, *A Riemannian Network for SPD
+    Matrix Learning*, AAAI 2017.
+
+    """
+
     def __init__(
         self,
         n_in: int,
@@ -34,9 +48,7 @@ class BiMap(nn.Module):
         generator: torch.Generator | None = None,
     ) -> None:
         """
-        BiMap layer for the SPDnet architecture according to the paper:
-            A Riemannian Network for SPD Matrix Learning, Huang et al
-            AAAI Conference on Artificial Intelligence, 2017
+        Build a BiMap layer.
 
         Parameters
         ----------
@@ -55,9 +67,9 @@ class BiMap(nn.Module):
             Default is "static".
             Choices are: "static" and "dynamic"
 
-         parametrization_options : dict, optional
-             Options for the parametrization function.
-             Default is None
+        parametrization_options : dict, optional
+            Options for the parametrization function.
+            Default is None
 
         n_steps_ref_update : int, optional
             If parametrization_mode is "dynamic",
@@ -77,6 +89,20 @@ class BiMap(nn.Module):
 
         generator : torch.Generator, optional
             Generator to ensure reproducibility. Default is None
+
+        Attributes
+        ----------
+        weight : torch.Tensor of shape (n_in, n_out)
+            Orthonormal weight. When ``parametrized`` it is a
+            ``torch.nn.utils.parametrize`` view whose trainable tensor is
+            ``parametrizations.weight.original``.
+        n_in, n_out : int
+            Input and output matrix dimensions (``n_out <= n_in``).
+        is_dynamic : bool
+            Whether the Stiefel parametrization re-centres its reference point every
+            ``n_steps_ref_update`` optimizer steps (``parametrization_mode="dynamic"``).
+        use_autograd : bool
+            Autograd path (True) or hand-written backward (False, default).
         """
         super().__init__()
         assert n_out <= n_in, "must have n_out <= n_in"
@@ -155,7 +181,7 @@ class BiMap(nn.Module):
         return self.bimap_fun(data, self.weight)
 
     def _post_optimizer_hook(
-        self, optimizer: torch.optim.Optimizer, *args, **kwargs
+        self, _optimizer: torch.optim.Optimizer, *_args, **_kwargs
     ) -> None:
         """
         Hook that runs after optimizer.step() to handle dynamic parametrization reference point.
@@ -211,19 +237,17 @@ class BiMap(nn.Module):
             f"device={self.device}, dtype={self.dtype}, generator={self.generator})"
         )
 
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
 
 class ReEig(nn.Module):
+    r"""
+    Eigenvalue rectification :math:`X \mapsto U \max(\Lambda, \epsilon I) U^\top`.
+
+    The SPD analogue of ReLU: eigenvalues below ``eps`` are clamped, which keeps
+    the output well conditioned. Non-linear on the manifold, it plays the role of
+    the activation in SPDNet.
+
+    """
+
     def __init__(
         self, eps: float = 1e-4, use_autograd: bool = False, dim: int | None = None
     ) -> None:
@@ -244,6 +268,12 @@ class ReEig(nn.Module):
         dim : int, optional
             Dimension of the SPD matrices. Default is None.
             Used for logging purposes.
+        Attributes
+        ----------
+        eps : float
+            Rectification threshold on the eigenvalues.
+        use_autograd : bool
+            Autograd path (True) or hand-written Daleckii-Krein backward (False).
         """
         super().__init__()
         self.eps = eps
@@ -283,19 +313,118 @@ class ReEig(nn.Module):
         """
         return f"ReEig(eps={self.eps}, use_autograd={self.use_autograd})"
 
-    def __str__(self) -> str:
+
+class ReEigBias(nn.Module):
+    r"""
+    Eigenvalue rectification with a learnable shift of each eigenvalue.
+
+    .. math::
+
+        X \mapsto U \operatorname{diag}\big(
+            \operatorname{clamp}(\lambda_i + b_i,\ \epsilon,\ 1/\epsilon)\big) U^\top
+
+    with eigenvalues in ascending order and :math:`b` learned (initialized at
+    zero, so the layer starts as a two-sided ReEig). The upper bound
+    :math:`1/\epsilon` caps the condition number of the output, which is
+    useful after estimators such as M-estimators that can produce large
+    eigenvalues.
+    """
+
+    def __init__(
+        self,
+        n_features: int,
+        eps: float = 1e-4,
+        use_autograd: bool = False,
+        device: torch.device = torch.device("cpu"),
+        dtype: torch.dtype = torch.float64,
+    ) -> None:
+        r"""
+        Build a ReEigBias layer.
+
+        Parameters
+        ----------
+        n_features : int
+            Dimension of the SPD matrices (size of the bias vector)
+
+        eps : float, optional
+            Lower clamping value of the shifted eigenvalues; the upper one is
+            ``1 / eps``. Default is 1e-4
+
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False
+
+        device : torch.device, optional
+            Device on which the layer is initialized.
+            Default is torch.device("cpu")
+
+        dtype : torch.dtype, optional
+            Data type of the layer. Default is torch.float64
+
+        Attributes
+        ----------
+        bias : torch.nn.Parameter of shape (n_features,)
+            Learnable shift of the eigenvalues, indexed by ascending rank.
+        eps : float
+            Lower clamping value (upper is ``1 / eps``).
+        use_autograd : bool
+            Autograd path (True) or hand-written backward (False, default).
         """
-        String representation of the layer
+        super().__init__()
+        assert 0 < eps < 1, f"eps must be in (0, 1), got {eps}"
+        self.n_features = n_features
+        self.eps = eps
+        self.use_autograd = use_autograd
+        self.bias = nn.Parameter(torch.zeros(n_features, device=device, dtype=dtype))
+        self.reeig_bias_fun = (
+            (lambda data, bias, eps: eigh_relu_bias(data, bias, eps)[0])
+            if self.use_autograd
+            else EighReLuBias.apply
+        )
+
+    def forward(self, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the ReEigBias layer
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+        """
+        assert data.shape[-1] == self.n_features, (
+            f"expected matrices of size {self.n_features}, got {data.shape[-1]}"
+        )
+        return self.reeig_bias_fun(data, self.bias, self.eps)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
 
         Returns
         -------
         str
-            String representation of the layer
+            Representation of the layer
         """
-        return self.__repr__()
+        return (
+            f"ReEigBias(n_features={self.n_features}, eps={self.eps}, "
+            f"use_autograd={self.use_autograd})"
+        )
 
 
 class LogEig(nn.Module):
+    r"""
+    Matrix logarithm :math:`X \mapsto U \log(\Lambda) U^\top`.
+
+    Maps SPD matrices to the (flat) space of symmetric matrices, usually right
+    before vectorization and a Euclidean classifier.
+
+    """
+
     def __init__(self, use_autograd: bool = False) -> None:
         """
         LogEig layer in a SPDnet layer according to the paper:
@@ -307,6 +436,10 @@ class LogEig(nn.Module):
         use_autograd : bool, optional
             Use torch autograd for the computation of the gradient rather than
             the analytical formula. Default is False.
+        Attributes
+        ----------
+        use_autograd : bool
+            Autograd path (True) or hand-written Daleckii-Krein backward (False).
         """
         super().__init__()
         self.use_autograd = use_autograd
@@ -341,19 +474,13 @@ class LogEig(nn.Module):
         """
         return f"LogEig(use_autograd={self.use_autograd})"
 
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
 
 class Vec(nn.Module):
+    r"""
+    Full vectorization of a batch of matrices: ``(..., n, n) -> (..., n * n)``.
+
+    """
+
     def __init__(self, use_autograd: bool = False):
         """
         Vectorization operator of a batch of matrices according to
@@ -364,6 +491,10 @@ class Vec(nn.Module):
         use_autograd : bool, optional
             Use torch autograd for the computation of the gradient rather than
             the analytical formula. Default is False.
+        Attributes
+        ----------
+        use_autograd : bool
+            Autograd path (True) or hand-written backward (False).
         """
         super().__init__()
         self.use_autograd = use_autograd
@@ -395,18 +526,15 @@ class Vec(nn.Module):
         """
         return f"Vec(use_autograd={self.use_autograd})"
 
-    def __str__(self) -> str:
-        """String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
 
 class Vech(nn.Module):
+    r"""
+    Half vectorization of symmetric matrices: ``(..., n, n) -> (..., n (n + 1) / 2)``.
+
+    Keeps only the upper-triangular part, which carries all the information of a
+    symmetric matrix.
+    """
+
     def __init__(self) -> None:
         """
         Vech operator of a batch of matrices according to the last two dimensions

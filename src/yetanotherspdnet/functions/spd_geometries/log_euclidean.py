@@ -1,3 +1,7 @@
+"""Log-Euclidean Riemannian geometry: geodesic, mean, and standard deviation."""
+
+import math
+
 import torch
 from torch.autograd import Function
 
@@ -24,9 +28,18 @@ from .kullback_leibler import (
 def log_euclidean_geodesic(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
-    """
-    Log-Euclidean geodesic:
-    expm((1-t)*logm(point1) + t*logm(point2))
+    r"""
+    Log-Euclidean geodesic between two SPD matrices.
+
+    .. math::
+
+        \gamma(t) = \exp\big((1-t)\,\log(P_1) + t\,\log(P_2)\big)
+
+    where :math:`\log` and :math:`\exp` are the matrix logarithm and
+    exponential (:func:`~yetanotherspdnet.functions.spd_linalg.logm_SPD`,
+    :func:`~yetanotherspdnet.functions.spd_linalg.expm_symmetric`). This is
+    simply the Euclidean geodesic in the tangent space obtained by taking
+    the matrix log, mapped back to the SPD manifold.
 
     Parameters
     ----------
@@ -82,8 +95,17 @@ def LogEuclideanGeodesic(
 # Log-Euclidean mean
 # ------------------
 def log_euclidean_mean(data: torch.Tensor) -> torch.Tensor:
-    """
-    Log-Euclidean mean of a batch of SPD matrices
+    r"""
+    Log-Euclidean mean of a batch of SPD matrices.
+
+    .. math::
+
+        \bar{P} = \exp\!\left(\frac{1}{N}\sum_{i=1}^{N} \log(P_i)\right)
+
+    i.e. the arithmetic mean of the matrix logarithms, mapped back to the
+    SPD manifold with the matrix exponential. Unlike the affine-invariant
+    or Bures-Wasserstein means, this has a closed form (no fixed-point
+    iteration needed).
 
     Parameters
     ----------
@@ -130,8 +152,18 @@ def LogEuclideanMean(data: torch.Tensor) -> torch.Tensor:
 def log_euclidean_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> torch.Tensor:
-    """
-    Scalar standard deviation with respect to the Log-Euclidean distance
+    r"""
+    Scalar standard deviation with respect to the Log-Euclidean distance.
+
+    .. math::
+
+        \sigma = \sqrt{\frac{1}{N}\sum_{i=1}^{N}
+            \lVert \log(P_i) - \log(G) \rVert_F^2}
+
+    where :math:`G` is the reference point (typically the Log-Euclidean
+    mean) and :math:`\lVert \cdot \rVert_F` is the Frobenius norm — the
+    Log-Euclidean distance is simply the Euclidean distance between matrix
+    logarithms.
 
     Parameters
     ----------
@@ -146,7 +178,7 @@ def log_euclidean_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
-    n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+    n_matrices = math.prod(data.shape[:-2])
     logm_data = logm_SPD(data)[0]
     logm_G = logm_SPD(reference_point)[0]
     return torch.sqrt(torch.sum((logm_data - logm_G) ** 2) / n_matrices)
@@ -178,7 +210,7 @@ class LogEuclideanStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = torch.prod(torch.tensor(data.shape[:-2]))
+        n_matrices = math.prod(data.shape[:-2])
         logm_data, eigvals_data, eigvecs_data = logm_SPD(data)
         logm_G, eigvals_G, eigvecs_G = logm_SPD(reference_point)
         std_scalar = torch.sqrt(torch.sum((logm_data - logm_G) ** 2) / n_matrices)

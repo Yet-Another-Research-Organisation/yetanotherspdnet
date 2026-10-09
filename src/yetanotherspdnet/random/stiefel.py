@@ -1,3 +1,5 @@
+"""Random points on the Stiefel manifold and Stiefel weight initialization."""
+
 import torch
 
 from ..functions.stiefel import stiefel_projection_qr
