@@ -809,7 +809,10 @@ class BatchNormSPDMean(BatchNormSPDBase):
             by the bias) and "parallel_transport" (parallel transport from the
             mean to the bias, in the geometry of mean_type; the arithmetic,
             harmonic and (adaptive) GAH means use the affine-invariant
-            transport; not available for "bures_wasserstein")
+            transport; not available for "bures_wasserstein"; with
+            use_autograd=True, not available for the affine-invariant and
+            log-Euclidean means, whose transport has NaN autograd gradients at
+            the identity initialization of the bias)
 
         norm_strategy : str, optional
             Strategy for normalization.
@@ -913,6 +916,18 @@ class BatchNormSPDMean(BatchNormSPDBase):
             )
             self._norm_and_bias_fun = self._norm_and_bias_whitening
         elif self.norm_and_bias_mode == "parallel_transport":
+            if self.use_autograd and self.mean_type in (
+                "affine_invariant",
+                "log_euclidean",
+            ):
+                raise ValueError(
+                    "norm_and_bias_mode='parallel_transport' with use_autograd=True "
+                    f"is not supported for mean_type={self.mean_type!r}: the "
+                    "transport takes square roots or logarithms of the bias, which "
+                    "starts at the identity, where autograd through "
+                    "torch.linalg.eigh gives NaN gradients (repeated eigenvalues). "
+                    "Use use_autograd=False (hand-written backward)."
+                )
             if self.mean_type == "affine_invariant":
                 self.parallel_transport = (
                     affine_invariant_parallel_transport

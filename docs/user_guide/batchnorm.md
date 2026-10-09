@@ -99,6 +99,10 @@ mean $\bar X$ to the bias:
   computed through a generalized eigendecomposition
   (`spd_geometries.affine_invariant_gevd`). Not available for
   `"bures_wasserstein"`, nor for `BatchNormSPDMeanScalarVariance`.
+  With `use_autograd=True` the affine-invariant and log-Euclidean transports
+  raise a `ValueError`: they take square roots or logarithms of the bias,
+  which starts at the identity, where autograd through `torch.linalg.eigh`
+  gives NaN gradients. The default hand-written backward has no such issue.
 
 The two modes parametrize the bias differently ($G^2$ versus $G$), so a
 trained `Covbias` is not interchangeable between them.

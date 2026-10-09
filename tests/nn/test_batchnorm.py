@@ -44,6 +44,18 @@ def generator(device, seed):
     return generator
 
 
+def _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd=True):
+    """Parallel transport + autograd is rejected for the AI and log-Euclidean
+    means (NaN autograd gradients at the identity bias), see
+    TestParallelTransportAutograd."""
+    if (
+        norm_and_bias_mode == "parallel_transport"
+        and use_autograd
+        and mean_type in ("affine_invariant", "log_euclidean")
+    ):
+        pytest.skip("parallel transport with autograd unsupported for this mean")
+
+
 class TestBatchNormSPDMean:
     """
     Test suite for BatchNormSPDMean module
@@ -96,6 +108,7 @@ class TestBatchNormSPDMean:
         """
         Test that initialization goes as expected
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         momentum = 0.1
         layer = batchnorm.BatchNormSPDMean(
             n_features,
@@ -181,6 +194,7 @@ class TestBatchNormSPDMean:
         Test that forward pass returns correct shape, etc.
         and that the output is actually normalized and biased as expected
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         momentum = 0.1
         layer = batchnorm.BatchNormSPDMean(
             n_features,
@@ -311,6 +325,7 @@ class TestBatchNormSPDMean:
         """
         Test that both autograd and manual gradient yield same output
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type)
         X = random_SPD(
             n_features,
             n_matrices,
@@ -408,6 +423,7 @@ class TestBatchNormSPDMean:
         """
         Test that backward pass works and updates gradients
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
@@ -505,6 +521,7 @@ class TestBatchNormSPDMean:
         """
         Test that parameters can be updated via optimization
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
@@ -592,6 +609,7 @@ class TestBatchNormSPDMean:
         """
         Test that both autograd and manual modes yield same gradient
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type)
         layer_manual = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
@@ -698,6 +716,7 @@ class TestBatchNormSPDMean:
         Test that dynamic parametrization is initialized as expected, i.e.,
         that initial tangent vector is zero
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
@@ -769,6 +788,7 @@ class TestBatchNormSPDMean:
         """
         Test that reference point is updated as expected
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
@@ -886,6 +906,7 @@ class TestBatchNormSPDMean:
         """
         Test string representations
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
@@ -2336,3 +2357,36 @@ class TestAdaptiveGAHInit:
                 device=device,
                 dtype=dtype,
             )
+
+
+class TestParallelTransportAutograd:
+    """Parallel transport with autograd is rejected where it cannot work; the
+    hand-written backward gives finite gradients at the identity bias."""
+
+    @pytest.mark.parametrize("mean_type", ["affine_invariant", "log_euclidean"])
+    def test_autograd_rejected(self, mean_type, device, dtype):
+        with pytest.raises(ValueError, match="parallel_transport"):
+            batchnorm.BatchNormSPDMean(
+                5,
+                mean_type=mean_type,
+                norm_and_bias_mode="parallel_transport",
+                use_autograd=True,
+                device=device,
+                dtype=dtype,
+            )
+
+    @pytest.mark.parametrize("mean_type", ["affine_invariant", "log_euclidean"])
+    def test_manual_backward_finite_at_identity_bias(
+        self, mean_type, device, dtype, generator
+    ):
+        layer = batchnorm.BatchNormSPDMean(
+            5,
+            mean_type=mean_type,
+            norm_and_bias_mode="parallel_transport",
+            device=device,
+            dtype=dtype,
+        )
+        data = random_SPD(5, 8, device=device, dtype=dtype, generator=generator)
+        layer(data).sum().backward()
+        grad = layer.parametrizations.Covbias.original.grad
+        assert grad is not None and torch.isfinite(grad).all()
