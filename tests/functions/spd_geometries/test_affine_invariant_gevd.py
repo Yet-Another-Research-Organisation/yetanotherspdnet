@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 import pytest
 import torch
 from torch.testing import assert_close
