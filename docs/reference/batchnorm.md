@@ -11,8 +11,14 @@ the training / evaluation behaviour and the GBWBN options.
 .. autosummary::
    :nosignatures:
 
+   BatchNormSPDBase
    BatchNormSPDMean
    BatchNormSPDMeanScalarVariance
+```
+
+```{eval-rst}
+.. autoclass:: yetanotherspdnet.nn.batchnorm.BatchNormSPDBase
+   :members: forward
 ```
 
 ```{eval-rst}

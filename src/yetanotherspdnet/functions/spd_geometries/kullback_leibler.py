@@ -5,7 +5,9 @@ import math
 import torch
 from torch.autograd import Function
 
-from ..spd_linalg import symmetrize
+from ..spd_linalg import (
+    symmetrize,
+)
 
 
 # ------------------

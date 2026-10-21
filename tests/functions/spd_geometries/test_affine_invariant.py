@@ -965,6 +965,870 @@ class TestAffineInvariantStdScalar:
         assert_close(G_manual.grad, G_auto.grad)
 
 
+# ------------------
+# Parallel transport
+# ------------------
+class TestAffineInvariantParallelTransportTransformation:
+    """
+    Test suite for parallel transport transformation matrix w.r.t. affine-invariant geometry
+    """
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward_shape(self, n_features, cond, device, dtype, generator):
+        """
+        Test that output structure is as expected
+        """
+        # generate reference SPD point and new reference SPD point
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        transf_mat_auto = (
+            affine_invariant.affine_invariant_parallel_transport_transformation(
+                reference_point, new_point
+            )
+        )
+        transf_mat_manual = (
+            affine_invariant.AffineInvariantParallelTransportTransformation(
+                reference_point, new_point
+            )
+        )
+
+        assert transf_mat_auto.shape == reference_point.shape
+        assert transf_mat_auto.device == reference_point.device
+        assert transf_mat_auto.dtype == reference_point.dtype
+        assert torch.linalg.matrix_rank(transf_mat_auto) == n_features
+
+        assert transf_mat_manual.shape == reference_point.shape
+        assert transf_mat_manual.device == reference_point.device
+        assert transf_mat_manual.dtype == reference_point.dtype
+        assert torch.linalg.matrix_rank(transf_mat_manual) == n_features
+
+        assert_close(transf_mat_auto, transf_mat_manual)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_same_reference_points(self, n_features, cond, device, dtype, generator):
+        """
+        Test that same reference points yield identity matrix
+        """
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_point = reference_point
+        Identity = torch.eye(n_features, device=device, dtype=dtype)
+
+        transf_mat_auto = (
+            affine_invariant.affine_invariant_parallel_transport_transformation(
+                reference_point, new_point
+            )
+        )
+        transf_mat_manual = (
+            affine_invariant.AffineInvariantParallelTransportTransformation(
+                reference_point, new_point
+            )
+        )
+
+        assert_close(transf_mat_auto, Identity)
+        assert_close(transf_mat_manual, Identity)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_from_identity(self, n_features, cond, device, dtype, generator):
+        """
+        Test that output is as expected when reference_point is Identity
+        """
+        reference_point = torch.eye(n_features, device=device, dtype=dtype)
+        new_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        transf_mat_auto = (
+            affine_invariant.affine_invariant_parallel_transport_transformation(
+                reference_point, new_point
+            )
+        )
+        transf_mat_manual = (
+            affine_invariant.AffineInvariantParallelTransportTransformation(
+                reference_point, new_point
+            )
+        )
+
+        # expected = torch.eye(n_features, device=device, dtype=dtype)
+        expected = spd_linalg.sqrtm_SPD(new_point)[0]
+
+        assert_close(transf_mat_auto, expected)
+        assert_close(transf_mat_manual, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_to_identity(self, n_features, cond, device, dtype, generator):
+        """
+        Test that output is as expected when new_point is Identity
+        """
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_point = torch.eye(n_features, device=device, dtype=dtype)
+
+        transf_mat_auto = (
+            affine_invariant.affine_invariant_parallel_transport_transformation(
+                reference_point, new_point
+            )
+        )
+        transf_mat_manual = (
+            affine_invariant.AffineInvariantParallelTransportTransformation(
+                reference_point, new_point
+            )
+        )
+
+        # expected = torch.eye(n_features, device=device, dtype=dtype)
+        expected = spd_linalg.inv_sqrtm_SPD(reference_point)[0]
+
+        assert_close(transf_mat_auto, expected)
+        assert_close(transf_mat_manual, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_diagonal_reference_points(
+        self, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for diagonal reference points
+        """
+        reference_point = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_point = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        transf_mat_auto = (
+            affine_invariant.affine_invariant_parallel_transport_transformation(
+                reference_point, new_point
+            )
+        )
+        transf_mat_manual = (
+            affine_invariant.AffineInvariantParallelTransportTransformation(
+                reference_point, new_point
+            )
+        )
+
+        # expected = torch.eye(n_features, device=device, dtype=dtype)
+        expected = torch.diag_embed(
+            torch.sqrt(torch.diag(new_point) / torch.diag(reference_point))
+        )
+
+        assert_close(transf_mat_auto, expected)
+        assert_close(transf_mat_manual, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_commuting_reference_points(
+        self, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for commuting reference points
+        """
+        diag_reference = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diag_new = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        eigvecs = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        reference_point = eigvecs @ diag_reference @ eigvecs.transpose(-2, -1)
+        new_point = eigvecs @ diag_new @ eigvecs.transpose(-2, -1)
+
+        transf_mat_auto = (
+            affine_invariant.affine_invariant_parallel_transport_transformation(
+                reference_point, new_point
+            )
+        )
+        transf_mat_manual = (
+            affine_invariant.AffineInvariantParallelTransportTransformation(
+                reference_point, new_point
+            )
+        )
+
+        expected = (
+            eigvecs
+            @ torch.diag_embed(
+                torch.sqrt(torch.diag(diag_new) / torch.diag(diag_reference))
+            )
+            @ eigvecs.transpose(-2, -1)
+        )
+
+        assert_close(transf_mat_auto, expected)
+        assert_close(transf_mat_manual, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_square(self, n_features, cond, device, dtype, generator):
+        """
+        Test that transformation_matrix @ transformation_matrix =  X^{-1} @ Y
+        """
+        # generate reference SPD point and new reference SPD point
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        transf_mat_auto = (
+            affine_invariant.affine_invariant_parallel_transport_transformation(
+                reference_point, new_point
+            )
+        )
+        transf_mat_manual = (
+            affine_invariant.AffineInvariantParallelTransportTransformation(
+                reference_point, new_point
+            )
+        )
+
+        transf_mat_square = torch.linalg.inv(reference_point) @ new_point
+
+        assert_close(
+            transf_mat_auto @ transf_mat_auto,
+            transf_mat_square,
+        )
+        assert_close(
+            transf_mat_manual @ transf_mat_manual,
+            transf_mat_square,
+        )
+
+    @pytest.mark.parametrize("n_features, cond", [(5, 1000)])
+    def test_transformation_inverse(self, n_features, cond, device, dtype, generator):
+        """
+        Test that transformation_matrix from P to Q is the inverse of
+        transformation_matrix from Q to P
+        """
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        transf_mat_auto_1 = (
+            affine_invariant.affine_invariant_parallel_transport_transformation(
+                reference_point, new_point
+            )
+        )
+        transf_mat_manual_1 = (
+            affine_invariant.AffineInvariantParallelTransportTransformation(
+                reference_point, new_point
+            )
+        )
+
+        transf_mat_auto_2 = (
+            affine_invariant.affine_invariant_parallel_transport_transformation(
+                new_point, reference_point
+            )
+        )
+        transf_mat_manual_2 = (
+            affine_invariant.AffineInvariantParallelTransportTransformation(
+                new_point, reference_point
+            )
+        )
+
+        assert_close(transf_mat_auto_1, torch.linalg.inv(transf_mat_auto_2))
+        assert_close(transf_mat_manual_1, torch.linalg.inv(transf_mat_manual_2))
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_features, cond, device, dtype, generator):
+        """
+        Test that automatic and manual gradients are the same
+        """
+        reference_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_point = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X_manual = reference_point.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = reference_point.clone().detach()
+        X_auto.requires_grad = True
+
+        Y_manual = new_point.clone().detach()
+        Y_manual.requires_grad = True
+        Y_auto = new_point.clone().detach()
+        Y_auto.requires_grad = True
+
+        transformation_auto = (
+            affine_invariant.affine_invariant_parallel_transport_transformation(
+                X_auto, Y_auto
+            )
+        )
+        transformation_manual = (
+            affine_invariant.AffineInvariantParallelTransportTransformation(
+                X_manual, Y_manual
+            )
+        )
+
+        loss_manual = torch.norm(transformation_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(transformation_auto)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+        assert Y_manual.grad is not None
+        assert Y_auto.grad is not None
+        assert torch.isfinite(Y_manual.grad).all()
+        assert torch.isfinite(Y_auto.grad).all()
+        assert is_symmetric(Y_manual.grad)
+        assert is_symmetric(Y_auto.grad)
+        assert_close(Y_manual.grad, Y_auto.grad)
+
+
+class TestAffineInvariantParallelTransport:
+    """
+    Test suite for parallel transport according to affine-invariant geometry
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward_shape(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that output structure is as expected
+        """
+        # generate reference SPD point and new reference SPD point
+        current_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # generate random symmetric matrices
+        data = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+
+        # transported matrices
+        data_transp_manual = affine_invariant.AffineInvariantParallelTransport(
+            data, current_reference, new_reference
+        )
+        data_transp_auto = affine_invariant.affine_invariant_parallel_transport(
+            data, current_reference, new_reference
+        )
+
+        assert data_transp_manual.shape == data.shape
+        assert data_transp_manual.device == data.device
+        assert data_transp_manual.dtype == data.dtype
+
+        assert data_transp_auto.shape == data.shape
+        assert data_transp_auto.device == data.device
+        assert data_transp_auto.dtype == data.dtype
+
+        assert_close(data_transp_auto, data_transp_manual)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_same_reference_points(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that not changing reference point leaves tangent vector unchanged
+        """
+        # generate reference SPD point
+        current_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # generate random symmetric matrices
+        data = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        # transport
+        data_transp_manual = affine_invariant.AffineInvariantParallelTransport(
+            data, current_reference, current_reference
+        )
+        data_transp_auto = affine_invariant.affine_invariant_parallel_transport(
+            data, current_reference, current_reference
+        )
+        # check that there is no changes
+        assert_close(data_transp_manual, data)
+        assert_close(data_transp_auto, data)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_from_identity(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected from identity matrices
+        """
+        # identity matrices
+        Identity = torch.eye(n_features, device=device, dtype=dtype)
+        # new reference point
+        new_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_ref_sqrtm = spd_linalg.sqrtm_SPD(new_reference)[0]
+        # generate random symmetric matrices
+        data = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        # transport
+        data_transp_manual = affine_invariant.AffineInvariantParallelTransport(
+            data, Identity, new_reference
+        )
+        data_transp_auto = affine_invariant.affine_invariant_parallel_transport(
+            data, Identity, new_reference
+        )
+        # expected
+        # In coordinates, expected is the same as coordinates_reference
+        expected = new_ref_sqrtm @ data @ new_ref_sqrtm
+
+        assert_close(data_transp_manual, expected)
+        assert_close(data_transp_auto, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_to_identity(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that it works as expected to identity matrices
+        """
+        # generate reference SPD point
+        current_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        current_ref_inv_sqrtm = spd_linalg.inv_sqrtm_SPD(current_reference)[0]
+        # identity matrix
+        Identity = torch.eye(n_features, device=device, dtype=dtype)
+        # generate random symmetric matrices
+        data = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        # transport
+        data_transp_manual = affine_invariant.AffineInvariantParallelTransport(
+            data, current_reference, Identity
+        )
+        data_transp_auto = affine_invariant.affine_invariant_parallel_transport(
+            data, current_reference, Identity
+        )
+        # expected
+        # In coordinates, expected is the same as coordinates_reference
+        expected = current_ref_inv_sqrtm @ data @ current_ref_inv_sqrtm
+
+        assert_close(data_transp_manual, expected)
+        assert_close(data_transp_auto, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_diagonal_reference_points(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for diagonal reference points
+        """
+        current_reference = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        current_ref_diag = torch.diagonal(current_reference, dim1=-1, dim2=-2)
+
+        new_reference = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_ref_diag = torch.diagonal(new_reference, dim1=-1, dim2=-2)
+        # generate random symmetric matrices
+        data = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        # transport
+        data_transp_manual = affine_invariant.AffineInvariantParallelTransport(
+            data, current_reference, new_reference
+        )
+        data_transp_auto = affine_invariant.affine_invariant_parallel_transport(
+            data, current_reference, new_reference
+        )
+        # expected
+        transformation = torch.diag_embed(torch.sqrt(new_ref_diag / current_ref_diag))
+        expected = transformation @ data @ transformation
+
+        assert_close(data_transp_manual, expected)
+        assert_close(data_transp_auto, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_commuting_reference_points(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for commuting reference points
+        """
+        diag_current = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        current_ref_diag = torch.diagonal(diag_current, dim1=-1, dim2=-2)
+        diag_new = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_ref_diag = torch.diagonal(diag_new, dim1=-1, dim2=-2)
+        eigvecs = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        current_reference = eigvecs @ diag_current @ eigvecs.transpose(-2, -1)
+        new_reference = eigvecs @ diag_new @ eigvecs.transpose(-2, -1)
+        # generate random symmetric matrices
+        data = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        # transport
+        data_transp_manual = affine_invariant.AffineInvariantParallelTransport(
+            data, current_reference, new_reference
+        )
+        data_transp_auto = affine_invariant.affine_invariant_parallel_transport(
+            data, current_reference, new_reference
+        )
+        # expected
+        transformation = (
+            eigvecs
+            @ torch.diag_embed(torch.sqrt(new_ref_diag / current_ref_diag))
+            @ eigvecs.transpose(-1, -2)
+        )
+        expected = transformation @ data @ transformation
+
+        assert_close(data_transp_manual, expected)
+        assert_close(data_transp_auto, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_invariance_properties(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that the norm is preserved and that transporting a vector back to
+        original tangent space yield original vector
+        """
+        # generate reference SPD point and new reference SPD point
+        current_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        current_ref_inv_sqrtm = spd_linalg.inv_sqrtm_SPD(current_reference)[0]
+        new_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_ref_inv_sqrtm = spd_linalg.inv_sqrtm_SPD(new_reference)[0]
+        # generate random symmetric matrices
+        data = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        # transported coordinates
+        data_transp_manual = affine_invariant.AffineInvariantParallelTransport(
+            data, current_reference, new_reference
+        )
+        data_transp_auto = affine_invariant.affine_invariant_parallel_transport(
+            data, current_reference, new_reference
+        )
+        # transport coordinates back to original reference_point
+        data_original_manual = affine_invariant.AffineInvariantParallelTransport(
+            data_transp_manual, new_reference, current_reference
+        )
+        data_original_auto = affine_invariant.affine_invariant_parallel_transport(
+            data_transp_auto, new_reference, current_reference
+        )
+        # check that it changed
+        assert not torch.allclose(data_transp_manual, data)
+        assert not torch.allclose(data_transp_auto, data)
+        # check norm invariance
+        assert_close(
+            torch.norm(new_ref_inv_sqrtm @ data_transp_manual @ new_ref_inv_sqrtm),
+            torch.norm(current_ref_inv_sqrtm @ data @ current_ref_inv_sqrtm),
+        )
+        assert_close(
+            torch.norm(new_ref_inv_sqrtm @ data_transp_manual @ new_ref_inv_sqrtm),
+            torch.norm(current_ref_inv_sqrtm @ data @ current_ref_inv_sqrtm),
+        )
+        # check going back yields original coordinates
+        assert_close(data_original_manual, data)
+        assert_close(data_original_auto, data)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that manual and automatic differentiation yield same results
+        """
+        # generate reference SPD point and new reference SPD point
+        current_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # generate random coordinates at reference_point
+        data = spd_linalg.symmetrize(
+            torch.squeeze(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+        X_manual = current_reference.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = current_reference.clone().detach()
+        X_auto.requires_grad = True
+
+        Y_manual = new_reference.clone().detach()
+        Y_manual.requires_grad = True
+        Y_auto = new_reference.clone().detach()
+        Y_auto.requires_grad = True
+
+        xi_manual = data.clone().detach()
+        xi_manual.requires_grad = True
+        xi_auto = data.clone().detach()
+        xi_auto.requires_grad = True
+
+        eta_manual = affine_invariant.AffineInvariantParallelTransport(
+            xi_manual, X_manual, Y_manual
+        )
+        eta_auto = affine_invariant.affine_invariant_parallel_transport(
+            xi_auto, X_auto, Y_auto
+        )
+
+        loss_manual = torch.norm(eta_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(eta_auto)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+        assert Y_manual.grad is not None
+        assert Y_auto.grad is not None
+        assert torch.isfinite(Y_manual.grad).all()
+        assert torch.isfinite(Y_auto.grad).all()
+        assert is_symmetric(Y_manual.grad)
+        assert is_symmetric(Y_auto.grad)
+        assert_close(Y_manual.grad, Y_auto.grad)
+
+        assert xi_manual.grad is not None
+        assert xi_auto.grad is not None
+        assert torch.isfinite(xi_manual.grad).all()
+        assert torch.isfinite(xi_auto.grad).all()
+        assert_close(xi_manual.grad, xi_auto.grad)
+
+
+# ---------------------------------------------------
+# Riemannian logarithm and exponential in coordinates
+# ---------------------------------------------------
 class TestAffineInvariantExp:
     """Tests for affine_invariant_exp / AffineInvariantExp and affine_invariant_log."""
 

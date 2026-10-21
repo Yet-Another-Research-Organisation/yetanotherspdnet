@@ -5,8 +5,8 @@ from torch.testing import assert_close
 
 import yetanotherspdnet.functions.spd_linalg as spd_linalg
 from utils import is_spd, is_symmetric
-from yetanotherspdnet.random.spd import random_SPD
-from yetanotherspdnet.random.stiefel import _init_weights_stiefel
+from yetanotherspdnet.random.spd import random_DPD, random_SPD
+from yetanotherspdnet.random.stiefel import _init_weights_stiefel, random_stiefel
 
 
 @pytest.fixture(scope="module")
@@ -418,13 +418,405 @@ class TestSylvesterSPD:
         assert_close(A @ X + X @ A, Q)
 
 
+class TestGEVD:
+    """
+    Test suite for generalized eigenvalue decomposition
+    """
+
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 50), (50, 50)])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_shape(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that the output of gevd function is as expected
+        """
+        P = random_SPD(
+            n_features,
+            n_matrices1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        Q = torch.squeeze(
+            spd_linalg.symmetrize(
+                torch.randn(
+                    (n_matrices2, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+
+        Lambda, A, B = spd_linalg.gevd(P, Q)
+
+        assert Lambda.ndim == Q.ndim - 1
+        if n_matrices2 > 1:
+            assert Lambda.shape[0] == n_matrices2
+        assert Lambda.shape[-1] == n_features
+        assert Lambda.device == Q.device
+        assert Lambda.dtype == Q.dtype
+
+        assert A.shape == Q.shape
+        assert A.device == Q.device
+        assert A.dtype == Q.dtype
+
+        assert B.shape == Q.shape
+        assert B.device == Q.device
+        assert B.dtype == Q.dtype
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features", [100])
+    def test_point1_identity(self, n_matrices, n_features, device, dtype, generator):
+        """
+        Test that gevd equivalent to eigh when point1 is the identity matrix
+        """
+        Identity = torch.diag_embed(
+            torch.squeeze(
+                torch.ones((n_matrices, n_features), device=device, dtype=dtype)
+            )
+        )
+
+        Q = torch.squeeze(
+            spd_linalg.symmetrize(
+                torch.randn(
+                    (n_matrices, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+
+        Lambda, A, B = spd_linalg.gevd(Identity, Q)
+        eigvals, eigvecs = torch.linalg.eigh(Q)
+
+        assert_close(A, B.transpose(-1, -2))  # assert A and B orthogonal
+        assert_close(Lambda, eigvals)
+        assert_close(A.transpose(-1, -2), eigvecs)
+        assert_close(B, eigvecs)
+
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 50), (50, 50)])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_diagonal_matrices(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for diagonal matrices
+        """
+        P = random_DPD(
+            n_features,
+            n_matrices1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        P_diag = torch.diagonal(P, dim1=-1, dim2=-2)
+
+        Q_diag = torch.squeeze(
+            torch.randn(
+                (n_matrices2, n_features),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        Q = torch.diag_embed(Q_diag)
+
+        Lambda, A, _ = spd_linalg.gevd(P, Q)
+
+        # Broadcast P_diag/Q_diag to a common batch shape before comparing
+        P_diag_b, Q_diag_b = torch.broadcast_tensors(P_diag, Q_diag)
+
+        expected_Lambda, permutation = torch.sort(Q_diag_b / P_diag_b, dim=-1)
+
+        expected_A_unsorted = torch.diag_embed(torch.sqrt(P_diag_b))
+
+        # Permute the ROWS of each batch matrix independently according to
+        # that matrix's own permutation (gather along the row dim, dim=-2)
+        idx = permutation.unsqueeze(-1).expand(*permutation.shape, n_features)
+        expected_A = torch.gather(expected_A_unsorted, dim=-2, index=idx)
+
+        # Generalized eigenvectors are only defined up to sign; align before comparing.
+        sign = torch.sign(torch.sum(A * expected_A, dim=-1, keepdim=True))
+        sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+        expected_A = sign * expected_A
+
+        assert_close(A, expected_A)
+        assert_close(Lambda, expected_Lambda)
+
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 50), (50, 50)])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_commuting_matrices(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for diagonal matrices
+        """
+        P_diag = random_DPD(
+            n_features,
+            n_matrices1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        diagvals_P = torch.diagonal(P_diag, dim1=-1, dim2=-2)
+
+        diagvals_Q = torch.squeeze(
+            torch.randn(
+                (n_matrices2, n_features),
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+        )
+        Q_diag = torch.diag_embed(diagvals_Q)
+
+        eigvecs = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        P = eigvecs @ P_diag @ eigvecs.transpose(-1, -2)
+        Q = eigvecs @ Q_diag @ eigvecs.transpose(-1, -2)
+
+        Lambda, A, _ = spd_linalg.gevd(P, Q)
+
+        # Broadcast P_diag/Q_diag to a common batch shape before comparing
+        diagvals_P_b, diagvals_Q_b = torch.broadcast_tensors(diagvals_P, diagvals_Q)
+
+        expected_Lambda, permutation = torch.sort(diagvals_Q_b / diagvals_P_b, dim=-1)
+
+        expected_A_unsorted = torch.diag_embed(torch.sqrt(diagvals_P_b))
+
+        # Permute the ROWS of each batch matrix independently according to
+        # that matrix's own permutation (gather along the row dim, dim=-2)
+        idx = permutation.unsqueeze(-1).expand(*permutation.shape, n_features)
+        expected_A_diag = torch.gather(expected_A_unsorted, dim=-2, index=idx)
+
+        # A_full = A_diag @ V^T, derived from P = V P_diag V^T = (A_diag V^T)^T (A_diag V^T)
+        expected_A = expected_A_diag @ eigvecs.transpose(-1, -2)
+
+        # Eigenvectors are only defined up to sign: align each row of expected_A
+        # to A's sign before comparing.
+        dot = torch.sum(A * expected_A, dim=-1, keepdim=True)  # (..., n_features, 1)
+        sign = torch.sign(dot)
+        sign = torch.where(
+            sign == 0, torch.ones_like(sign), sign
+        )  # guard against exact zeros
+        expected_A = sign * expected_A
+
+        assert_close(A, expected_A)
+        assert_close(Lambda, expected_Lambda)
+
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 50), (50, 50)])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_general_case(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected in the general case
+        """
+        P = random_SPD(
+            n_features,
+            n_matrices1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        Q = torch.squeeze(
+            spd_linalg.symmetrize(
+                torch.randn(
+                    (n_matrices2, n_features, n_features),
+                    device=device,
+                    dtype=dtype,
+                    generator=generator,
+                )
+            )
+        )
+
+        Lambda, A, B = spd_linalg.gevd(P, Q)
+
+        # reconstruct P and Q
+        P_reconstruct = A.transpose(-1, -2) @ A
+        Q_reconstruct = (A.transpose(-1, -2) * Lambda.unsqueeze(-2)) @ A
+
+        # Note: Q_inv not necessarily defined so might fail due to that...
+        P_inv = torch.linalg.inv(P)
+        Q_inv = torch.linalg.inv(Q)
+
+        # reconstruct P_inv and Q_inv
+        P_inv_reconstruct = B @ B.transpose(-1, -2)
+        Q_inv_reconstruct = (B * (1 / Lambda).unsqueeze(-2)) @ B.transpose(-1, -2)
+
+        if n_matrices1 == 1 and n_matrices2 > 1:
+            for i in range(n_matrices2):
+                assert_close(P_reconstruct[i], P)
+        else:
+            assert_close(P_reconstruct, P)
+        assert_close(Q_reconstruct, Q)
+
+        if n_matrices1 == 1 and n_matrices2 > 1:
+            for i in range(n_matrices2):
+                assert_close(P_inv_reconstruct[i], P_inv)
+        else:
+            assert_close(P_inv_reconstruct, P_inv)
+        assert_close(Q_inv_reconstruct, Q_inv)
+
+
+# ---------------------------------------------------------------------------------------
+# Remark:
+# -------
+# No testing of gevd_operation and gevd_operation_grad,
+# it is done indirectly when testing functions in spd_geometries/affine_invariant_gevd.py
+# ---------------------------------------------------------------------------------------
+
 # --------------------------------------------------------------------------
-# Remark
-# ------
+# Remark:
+# -------
 # In the following, on all operations that rely on eignevalue decomposition,
 # no use of torch.autograd.gradcheck performed because it is unstable in the
 # case of an eigenvalue decomposition.
 # --------------------------------------------------------------------------
+
+
+# ---------
+# Invm SPD
+# ---------
+class TestInvmSPD:
+    """
+    Test suite for matrix inverse in SPD case
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of invm_SPD function and forward of InvmSPD Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        Identity = torch.diag_embed(
+            torch.squeeze(
+                torch.ones((n_matrices, n_features), device=device, dtype=dtype)
+            )
+        )
+        X_invm, _, _ = spd_linalg.invm_SPD(X)
+        X_Invm = spd_linalg.InvmSPD.apply(X)
+        assert X_invm.shape == X.shape
+        assert X_invm.device == X.device
+        assert X_invm.dtype == X.dtype
+        assert is_spd(X_invm)
+        assert_close(X_invm @ X, Identity)
+        assert X_Invm.shape == X.shape
+        assert X_Invm.device == X.device
+        assert X_Invm.dtype == X.dtype
+        assert is_spd(X_Invm)
+        assert_close(X_Invm @ X, Identity)
+        assert_close(X_Invm, X_invm)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_torch_comparison(self, n_features, cond, device, dtype, generator):
+        """
+        Comparison of InvmSPD and torch.linalg.inv
+        """
+        X = random_SPD(
+            n_features, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+        X_Invm = spd_linalg.InvmSPD.apply(X)
+        X_invm_torch = torch.linalg.inv(X)
+        assert_close(X_Invm, X_invm_torch)
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_identity_matrix(self, n_features, device, dtype):
+        """
+        Test that the matrix inverse of the identity is the identity
+        """
+        identity_matrix = torch.eye(n_features, device=device, dtype=dtype)
+        I_Invm = spd_linalg.InvmSPD.apply(identity_matrix)
+        assert_close(I_Invm, identity_matrix)
+
+    @pytest.mark.parametrize("n_features", [100])
+    def test_diagonal_matrix(self, n_features, device, dtype, generator):
+        """
+        Test matrix inverse of diagonal matrix
+        """
+        diag_vals = (
+            torch.randn((n_features,), device=device, dtype=dtype, generator=generator)
+            ** 2
+        )
+        D = torch.diag(diag_vals)
+        D_Invm = spd_linalg.InvmSPD.apply(D)
+        expected = torch.diag(1 / diag_vals)
+        assert_close(D_Invm, expected)
+
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_eigenvalues(self, n_features, cond, device, dtype, generator):
+        """
+        Test that eigenvalues of the matrix inverse of X are the inverse of the eigenvalues of X
+        """
+        X = random_SPD(
+            n_features, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+        eigvals_X = torch.linalg.eigvalsh(X)
+        X_Invm = spd_linalg.InvmSPD.apply(X)
+        eigvals_X_Invm = torch.linalg.eigvalsh(X_Invm)
+        # Sort for comparison (probably not needed)
+        expected = (1 / eigvals_X).sort()[0]
+        actual = eigvals_X_Invm.sort()[0]
+        assert_close(actual, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of backward of InvmSPD Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        X_manual_invm = spd_linalg.InvmSPD.apply(X_manual)
+        X_auto_invm, _, _ = spd_linalg.invm_SPD(X_auto)
+
+        loss_manual = torch.norm(X_manual_invm)
+        loss_manual.backward()
+        loss_auto = torch.norm(X_auto_invm)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
 
 
 # ---------
@@ -661,6 +1053,78 @@ class TestInvSqrtmSPD:
         loss_manual = torch.norm(X_manual_inv_sqrtm)
         loss_manual.backward()
         loss_auto = torch.norm(X_auto_inv_sqrtm)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+
+class TestSqrtmAndInvSqrtmSPD:
+    """
+    Test suite for sqrtm_and_inv_sqtrm_SPD and SqrtmAndInvSqrtmSPD functions
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that it yeilds same results as sqrtm_SPD and inv_sqrtm_SPD functions
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        X_sqrtm_auto, X_inv_sqrtm_auto, _, _ = spd_linalg.sqrtm_and_inv_sqrtm_SPD(X)
+        X_sqrtm_manual, X_inv_sqrtm_manual = spd_linalg.SqrtmAndInvSqrtmSPD.apply(X)
+
+        X_sqrtm_ref = spd_linalg.sqrtm_SPD(X)[0]
+        X_inv_sqrtm_ref = spd_linalg.inv_sqrtm_SPD(X)[0]
+
+        assert_close(X_sqrtm_auto, X_sqrtm_ref)
+        assert_close(X_inv_sqrtm_auto, X_inv_sqrtm_ref)
+
+        assert_close(X_sqrtm_manual, X_sqrtm_ref)
+        assert_close(X_inv_sqrtm_manual, X_inv_sqrtm_ref)
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of backward of SqrtmAndInvSqrtmSPD Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        X_manual_sqrtm, X_manual_inv_sqrtm = spd_linalg.SqrtmAndInvSqrtmSPD.apply(
+            X_manual
+        )
+        X_auto_sqrtm, X_auto_inv_sqrtm, _, _ = spd_linalg.sqrtm_and_inv_sqrtm_SPD(
+            X_auto
+        )
+
+        loss_manual = torch.norm(X_manual_sqrtm) + torch.norm(X_manual_inv_sqrtm)
+        loss_manual.backward()
+        loss_auto = torch.norm(X_auto_sqrtm) + torch.norm(X_auto_inv_sqrtm)
         loss_auto.backward()
 
         assert X_manual.grad is not None
@@ -1628,6 +2092,104 @@ class TestCongruenceSPD:
         loss_manual = torch.norm(X_manual_cong)
         loss_manual.backward()
         loss_auto = torch.norm(X_auto_cong)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+        assert G_manual.grad is not None
+        assert G_auto.grad is not None
+        assert torch.isfinite(G_manual.grad).all()
+        assert torch.isfinite(G_auto.grad).all()
+        assert is_symmetric(G_manual.grad)
+        assert is_symmetric(G_auto.grad)
+        assert_close(G_manual.grad, G_auto.grad)
+
+
+class TestCongruenceSPDSqtrm:
+    """
+    Test suite for congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of whitening function and forward of Whitening Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G = random_SPD(
+            n_features, 1, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+
+        Y = spd_linalg.CongruenceSPDSqrtm.apply(X, G)
+        Z = spd_linalg.congruence_SPD_sqrtm(X, G)
+
+        X_class = spd_linalg.CongruenceSPDSqrtm.apply(
+            Y, torch.cholesky_inverse(torch.linalg.cholesky(G))
+        )
+        X_function = spd_linalg.congruence_SPD_sqrtm(
+            Z, torch.cholesky_inverse(torch.linalg.cholesky(G))
+        )
+
+        assert Y.shape == X.shape
+        assert Y.device == X.device
+        assert Y.dtype == X.dtype
+        assert Z.shape == X.shape
+        assert Z.device == X.device
+        assert Z.dtype == X.dtype
+        assert is_spd(Y)
+        assert is_spd(Z)
+        assert_close(Y, Z)
+        assert_close(X_class, X)
+        assert_close(X_function, X)
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of backward of Whitening Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G = random_SPD(
+            n_features, 1, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        G_manual = G.clone().detach()
+        G_manual.requires_grad = True
+        G_auto = G.clone().detach()
+        G_auto.requires_grad = True
+
+        X_manual_white = spd_linalg.CongruenceSPDSqrtm.apply(X_manual, G_manual)
+        X_auto_white = spd_linalg.congruence_SPD_sqrtm(X_auto, G_auto)
+
+        loss_manual = torch.norm(X_manual_white)
+        loss_manual.backward()
+        loss_auto = torch.norm(X_auto_white)
         loss_auto.backward()
 
         assert X_manual.grad is not None

@@ -8,6 +8,9 @@ from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
     affine_invariant_mean,
     affine_invariant_std_scalar,
 )
+from yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd import (
+    affine_invariant_mean_gevd,
+)
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     arithmetic_mean,
     harmonic_mean,
@@ -15,6 +18,7 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     geometric_arithmetic_harmonic_mean,
 )
+from yetanotherspdnet.functions.spd_geometries.log_euclidean import log_euclidean_mean
 from yetanotherspdnet.random.spd import random_SPD
 
 
@@ -40,6 +44,18 @@ def generator(device, seed):
     return generator
 
 
+def _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd=True):
+    """Parallel transport + autograd is rejected for the AI and log-Euclidean
+    means (NaN autograd gradients at the identity bias), see
+    TestParallelTransportAutograd."""
+    if (
+        norm_and_bias_mode == "parallel_transport"
+        and use_autograd
+        and mean_type in ("affine_invariant", "log_euclidean")
+    ):
+        pytest.skip("parallel transport with autograd unsupported for this mean")
+
+
 class TestBatchNormSPDMean:
     """
     Test suite for BatchNormSPDMean module
@@ -51,6 +67,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -60,6 +78,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -77,6 +96,7 @@ class TestBatchNormSPDMean:
         n_features,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -88,12 +108,14 @@ class TestBatchNormSPDMean:
         """
         Test that initialization goes as expected
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         momentum = 0.1
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
             mean_options,
             momentum=momentum,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=momentum,
@@ -127,6 +149,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 30}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -136,6 +160,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -155,6 +180,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -168,12 +194,14 @@ class TestBatchNormSPDMean:
         Test that forward pass returns correct shape, etc.
         and that the output is actually normalized and biased as expected
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         momentum = 0.1
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
             mean_options,
             momentum=momentum,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=momentum,
@@ -210,22 +238,43 @@ class TestBatchNormSPDMean:
             # for affine-invariant mean, we can do this check only if good quality estimation, i.e.,
             # a sufficient number of iterations
             G_output = affine_invariant_mean(output, n_iterations=30)
-            assert_close(G_output, layer.Covbias @ layer.Covbias)
+            if norm_and_bias_mode == "whitening":
+                assert_close(G_output, layer.Covbias @ layer.Covbias)
+            elif norm_and_bias_mode == "parallel_transport":
+                assert_close(G_output, layer.Covbias)
+        if mean_type == "affine_invariant_gevd" and mean_options is not None:
+            # for affine-invariant mean, we can do this check only if good quality estimation, i.e.,
+            # a sufficient number of iterations
+            G_output = affine_invariant_mean_gevd(output, n_iterations=30)
+            if norm_and_bias_mode == "whitening":
+                assert_close(
+                    G_output, layer.Covbias @ layer.Covbias, atol=1e-3, rtol=1e-3
+                )
+            elif norm_and_bias_mode == "parallel_transport":
+                assert_close(G_output, layer.Covbias, atol=1e-3, rtol=1e-3)
         elif mean_type == "log_euclidean":
-            # This actually does not work. This is normal.
-            # It is due to the way normalization is done.
-            # G_output = log_euclidean_mean(output)
-            # assert_close(G_output, layer.Covbias @ layer.Covbias)
-            pass
+            # This work only when norm_and_bias_mode is "parallel_transport"
+            if norm_and_bias_mode == "parallel_transport":
+                G_output = log_euclidean_mean(output)
+                assert_close(G_output, layer.Covbias)
         elif mean_type == "arithmetic":
             G_output = arithmetic_mean(output)
-            assert_close(G_output, layer.Covbias @ layer.Covbias)
+            if norm_and_bias_mode == "whitening":
+                assert_close(G_output, layer.Covbias @ layer.Covbias)
+            elif norm_and_bias_mode == "parallel_transport":
+                assert_close(G_output, layer.Covbias)
         elif mean_type == "harmonic":
             G_output = harmonic_mean(output)
-            assert_close(G_output, layer.Covbias @ layer.Covbias)
+            if norm_and_bias_mode == "whitening":
+                assert_close(G_output, layer.Covbias @ layer.Covbias)
+            elif norm_and_bias_mode == "parallel_transport":
+                assert_close(G_output, layer.Covbias)
         elif mean_type == "geometric_arithmetic_harmonic":
             G_output = geometric_arithmetic_harmonic_mean(output)
-            assert_close(G_output, layer.Covbias @ layer.Covbias)
+            if norm_and_bias_mode == "whitening":
+                assert_close(G_output, layer.Covbias @ layer.Covbias)
+            elif norm_and_bias_mode == "parallel_transport":
+                assert_close(G_output, layer.Covbias)
 
     @pytest.mark.parametrize("n_matrices", [10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
@@ -234,6 +283,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -243,6 +294,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -261,6 +313,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -272,6 +325,7 @@ class TestBatchNormSPDMean:
         """
         Test that both autograd and manual gradient yield same output
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type)
         X = random_SPD(
             n_features,
             n_matrices,
@@ -286,6 +340,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -301,6 +356,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -323,6 +379,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -332,6 +390,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -351,6 +410,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -363,11 +423,13 @@ class TestBatchNormSPDMean:
         """
         Test that backward pass works and updates gradients
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -415,6 +477,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -424,6 +488,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -443,6 +508,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -455,11 +521,13 @@ class TestBatchNormSPDMean:
         """
         Test that parameters can be updated via optimization
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -499,6 +567,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -508,6 +578,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -526,6 +597,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -537,11 +609,13 @@ class TestBatchNormSPDMean:
         """
         Test that both autograd and manual modes yield same gradient
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type)
         layer_manual = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -557,6 +631,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -601,6 +676,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -610,6 +687,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -626,6 +704,7 @@ class TestBatchNormSPDMean:
         n_features,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -637,11 +716,13 @@ class TestBatchNormSPDMean:
         Test that dynamic parametrization is initialized as expected, i.e.,
         that initial tangent vector is zero
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -665,6 +746,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -674,6 +757,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -692,6 +776,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -703,11 +788,13 @@ class TestBatchNormSPDMean:
         """
         Test that reference point is updated as expected
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -778,6 +865,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -787,6 +876,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -804,6 +894,7 @@ class TestBatchNormSPDMean:
         n_features,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
@@ -815,11 +906,13 @@ class TestBatchNormSPDMean:
         """
         Test string representations
         """
+        _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd)
         layer = batchnorm.BatchNormSPDMean(
             n_features,
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
@@ -837,6 +930,7 @@ class TestBatchNormSPDMean:
         assert f"mean_type={mean_type}" in repr_str
         assert f"mean_options={mean_options}" in repr_str
         assert f"momentum={0.1}" in repr_str
+        assert f"norm_and_bias_mode={norm_and_bias_mode}" in repr_str
         assert f"norm_strategy={norm_strategy}" in repr_str
         assert f"minibatch_mode={minibatch_mode}" in repr_str
         assert f"minibatch_momentum={0.1}" in repr_str
@@ -851,6 +945,8 @@ class TestBatchNormSPDMean:
         [
             ("affine_invariant", None),
             ("affine_invariant", {"n_iterations": 5}),
+            ("affine_invariant_gevd", None),
+            ("affine_invariant_gevd", {"n_iterations": 5}),
             ("log_euclidean", None),
             ("arithmetic", None),
             ("harmonic", None),
@@ -2261,3 +2357,36 @@ class TestAdaptiveGAHInit:
                 device=device,
                 dtype=dtype,
             )
+
+
+class TestParallelTransportAutograd:
+    """Parallel transport with autograd is rejected where it cannot work; the
+    hand-written backward gives finite gradients at the identity bias."""
+
+    @pytest.mark.parametrize("mean_type", ["affine_invariant", "log_euclidean"])
+    def test_autograd_rejected(self, mean_type, device, dtype):
+        with pytest.raises(ValueError, match="parallel_transport"):
+            batchnorm.BatchNormSPDMean(
+                5,
+                mean_type=mean_type,
+                norm_and_bias_mode="parallel_transport",
+                use_autograd=True,
+                device=device,
+                dtype=dtype,
+            )
+
+    @pytest.mark.parametrize("mean_type", ["affine_invariant", "log_euclidean"])
+    def test_manual_backward_finite_at_identity_bias(
+        self, mean_type, device, dtype, generator
+    ):
+        layer = batchnorm.BatchNormSPDMean(
+            5,
+            mean_type=mean_type,
+            norm_and_bias_mode="parallel_transport",
+            device=device,
+            dtype=dtype,
+        )
+        data = random_SPD(5, 8, device=device, dtype=dtype, generator=generator)
+        layer(data).sum().backward()
+        grad = layer.parametrizations.Covbias.original.grad
+        assert grad is not None and torch.isfinite(grad).all()

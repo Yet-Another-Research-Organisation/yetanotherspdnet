@@ -734,3 +734,370 @@ class TestLogEuclideanStdScalar:
         assert is_symmetric(G_manual.grad)
         assert is_symmetric(G_auto.grad)
         assert_close(G_manual.grad, G_auto.grad)
+
+
+class TestLogEuclideanParallelTransportSPD:
+    """
+    Test suite for parallel transport w.r.t. the log-Euclidean geometry
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward_shape(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that output structure is as expected
+        """
+        # generate reference SPD point and new reference SPD point
+        current_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # generate random SPD matrices
+        data = random_SPD(
+            n_features,
+            n_matrices=n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # transported matrices
+        data_transp_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+            data, current_reference, new_reference
+        )
+        data_transp_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
+            data, current_reference, new_reference
+        )
+
+        assert data_transp_manual.shape == data.shape
+        assert data_transp_manual.device == data.device
+        assert data_transp_manual.dtype == data.dtype
+        assert is_spd(data_transp_manual)
+
+        assert data_transp_auto.shape == data.shape
+        assert data_transp_auto.device == data.device
+        assert data_transp_auto.dtype == data.dtype
+        assert is_spd(data_transp_auto)
+
+        assert_close(data_transp_auto, data_transp_manual)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_same_reference_points(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that not changing reference point leaves tangent vector unchanged
+        """
+        # generate reference SPD point
+        current_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # generate random SPD matrices
+        data = random_SPD(
+            n_features,
+            n_matrices=n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # transport
+        data_transp_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+            data, current_reference, current_reference
+        )
+        data_transp_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
+            data, current_reference, current_reference
+        )
+        # check that there is no changes
+        assert_close(data_transp_manual, data)
+        assert_close(data_transp_auto, data)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_diagonal_reference_points(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for diagonal reference points
+        """
+        current_reference = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        current_ref_diag = torch.diagonal(current_reference, dim1=-1, dim2=-2)
+
+        new_reference = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_ref_diag = torch.diagonal(new_reference, dim1=-1, dim2=-2)
+        # generate random DPD matrices
+        data = random_DPD(
+            n_features,
+            n_matrices=n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # transport
+        data_transp_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+            data, current_reference, new_reference
+        )
+        data_transp_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
+            data, current_reference, new_reference
+        )
+        # expected
+        transformation = torch.diag_embed(torch.sqrt(new_ref_diag / current_ref_diag))
+        expected = transformation @ data @ transformation
+
+        assert_close(data_transp_manual, expected)
+        assert_close(data_transp_auto, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_commuting_reference_points(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that it works as expected for commuting reference points
+        """
+        diag_current = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        current_ref_diag = torch.diagonal(diag_current, dim1=-1, dim2=-2)
+        diag_new = random_DPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_ref_diag = torch.diagonal(diag_new, dim1=-1, dim2=-2)
+        eigvecs = random_stiefel(
+            n_features,
+            n_features,
+            n_matrices=1,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        current_reference = eigvecs @ diag_current @ eigvecs.transpose(-2, -1)
+        new_reference = eigvecs @ diag_new @ eigvecs.transpose(-2, -1)
+        # generate random commuting SPD matrices
+        data = (
+            eigvecs
+            @ random_DPD(
+                n_features,
+                n_matrices=n_matrices,
+                cond=cond,
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+            @ eigvecs.transpose(-2, -1)
+        )
+        # transport
+        data_transp_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+            data, current_reference, new_reference
+        )
+        data_transp_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
+            data, current_reference, new_reference
+        )
+        # expected
+        transformation = (
+            eigvecs
+            @ torch.diag_embed(torch.sqrt(new_ref_diag / current_ref_diag))
+            @ eigvecs.transpose(-1, -2)
+        )
+        expected = transformation @ data @ transformation
+
+        assert_close(data_transp_manual, expected)
+        assert_close(data_transp_auto, expected)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_invariance_properties(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
+        """
+        Test that the norm is preserved and that transporting matrices back to
+        original reference point yield original matrices
+        """
+        # generate reference SPD point and new reference SPD point
+        current_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # generate random SPD matrices
+        data = random_SPD(
+            n_features,
+            n_matrices=n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # transport
+        data_transp_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+            data, current_reference, new_reference
+        )
+        data_transp_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
+            data, current_reference, new_reference
+        )
+        # transport back to original reference_point
+        data_original_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+            data_transp_manual, new_reference, current_reference
+        )
+        data_original_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
+            data_transp_auto, new_reference, current_reference
+        )
+        # check that it changed
+        assert not torch.allclose(data_transp_manual, data)
+        assert not torch.allclose(data_transp_auto, data)
+
+        # check norm invariance: the log-Euclidean distance to the reference point
+        # (Frobenius norm of logm(X) - logm(reference)) is preserved
+        def log_distance(matrices, reference):
+            return torch.norm(
+                spd_linalg.logm_SPD(matrices)[0] - spd_linalg.logm_SPD(reference)[0]
+            )
+
+        assert_close(
+            log_distance(data_transp_auto, new_reference),
+            log_distance(data, current_reference),
+        )
+        assert_close(
+            log_distance(data_transp_manual, new_reference),
+            log_distance(data, current_reference),
+        )
+        # check going back yields the original matrices
+        assert_close(data_original_manual, data)
+        assert_close(data_original_auto, data)
+
+    @pytest.mark.parametrize("n_matrices", [1, 30])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test that manual and automatic differentiation yield same results
+        """
+        # generate reference SPD point and new reference SPD point
+        current_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        new_reference = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # generate random SPD matrices
+        data = random_SPD(
+            n_features,
+            n_matrices=n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X_manual = current_reference.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = current_reference.clone().detach()
+        X_auto.requires_grad = True
+
+        Y_manual = new_reference.clone().detach()
+        Y_manual.requires_grad = True
+        Y_auto = new_reference.clone().detach()
+        Y_auto.requires_grad = True
+
+        xi_manual = data.clone().detach()
+        xi_manual.requires_grad = True
+        xi_auto = data.clone().detach()
+        xi_auto.requires_grad = True
+
+        eta_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+            xi_manual, X_manual, Y_manual
+        )
+        eta_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
+            xi_auto, X_auto, Y_auto
+        )
+
+        loss_manual = torch.norm(eta_manual)
+        loss_manual.backward()
+        loss_auto = torch.norm(eta_auto)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+        assert Y_manual.grad is not None
+        assert Y_auto.grad is not None
+        assert torch.isfinite(Y_manual.grad).all()
+        assert torch.isfinite(Y_auto.grad).all()
+        assert is_symmetric(Y_manual.grad)
+        assert is_symmetric(Y_auto.grad)
+        assert_close(Y_manual.grad, Y_auto.grad)
+
+        assert xi_manual.grad is not None
+        assert xi_auto.grad is not None
+        assert torch.isfinite(xi_manual.grad).all()
+        assert torch.isfinite(xi_auto.grad).all()
+        assert_close(xi_manual.grad, xi_auto.grad)

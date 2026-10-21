@@ -39,6 +39,7 @@ class SPDnet(nn.Module):
         batchnorm_mean_type: str = "geometric_arithmetic_harmonic",
         batchnorm_mean_options: dict | None = None,
         batchnorm_momentum: float = 0.01,
+        batchnorm_norm_and_bias_mode: str = "whitening",
         batchnorm_norm_strategy: str = "classical",
         batchnorm_minibatch_mode: str = "constant",
         batchnorm_minibatch_momentum: float = 0.01,
@@ -116,6 +117,10 @@ class SPDnet(nn.Module):
         batchnorm_momentum : float, optional
             Momentum for running mean update.
             Default is 0.01
+
+        batchnorm_norm_and_bias_mode : str, optional
+            How normalization and bias is applied. Default is "whitening"
+            Choices are: "whitening", "parallel_transport"
 
         batchnorm_norm_strategy : str, optional
             Strategy for normalization.
@@ -214,6 +219,7 @@ class SPDnet(nn.Module):
         self.batchnorm_mean_type = batchnorm_mean_type
         self.batchnorm_mean_options = batchnorm_mean_options
         self.batchnorm_momentum = batchnorm_momentum
+        self.batchnorm_norm_and_bias_mode = batchnorm_norm_and_bias_mode
         self.batchnorm_norm_strategy = batchnorm_norm_strategy
         self.batchnorm_minibatch_mode = batchnorm_minibatch_mode
         self.batchnorm_minibatch_momentum = batchnorm_minibatch_momentum
@@ -289,6 +295,7 @@ class SPDnet(nn.Module):
                         mean_type=self.batchnorm_mean_type,
                         mean_options=self.batchnorm_mean_options,
                         momentum=self.batchnorm_momentum,
+                        norm_and_bias_mode=self.batchnorm_norm_and_bias_mode,
                         norm_strategy=self.batchnorm_norm_strategy,
                         minibatch_mode=self.batchnorm_minibatch_mode,
                         minibatch_momentum=self.batchnorm_minibatch_momentum,
@@ -352,6 +359,7 @@ class SPDnet(nn.Module):
                             mean_type=self.batchnorm_mean_type,
                             mean_options=self.batchnorm_mean_options,
                             momentum=self.batchnorm_momentum,
+                            norm_and_bias_mode=self.batchnorm_norm_and_bias_mode,
                             norm_strategy=self.batchnorm_norm_strategy,
                             minibatch_mode=self.batchnorm_minibatch_mode,
                             minibatch_momentum=self.batchnorm_minibatch_momentum,
@@ -477,6 +485,7 @@ class SPDnet(nn.Module):
             f"  batchnorm_mean_type='{self.batchnorm_mean_type}',\n"
             f"  batchnorm_mean_options={self.batchnorm_mean_options},\n"
             f"  batchnorm_momentum={self.batchnorm_momentum},\n"
+            f"  batchnorm_norm_and_bias_mode={self.batchnorm_norm_and_bias_mode},\n"
             f"  batchnorm_norm_strategy={self.batchnorm_norm_strategy},\n"
             f"  batchnorm_minibatch_mode={self.batchnorm_minibatch_mode},\n"
             f"  batchnorm_minibatch_momentum={self.batchnorm_minibatch_momentum},\n"
