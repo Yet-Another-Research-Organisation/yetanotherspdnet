@@ -49,10 +49,12 @@ from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
 )
 
 from ..functions.spd_geometries.affine_invariant import (
+    AffineInvariantCoordinatesTransport,
     AffineInvariantGeodesic,
     AffineInvariantMean,
     AffineInvariantParallelTransport,
     AffineInvariantStdScalar,
+    affine_invariant_coordinates_transport,
     affine_invariant_geodesic,
     affine_invariant_mean,
     affine_invariant_parallel_transport,
@@ -80,6 +82,7 @@ class BatchNormSPDBase(ABC, nn.Module):
         mean_type: str = "affine_invariant",
         mean_options: dict | None = None,
         momentum: float = 0.01,
+        norm_and_bias_mode: str = "whitening",
         norm_strategy: str = "classical",
         minibatch_mode: str = "constant",
         minibatch_momentum: float = 0.01,
@@ -113,6 +116,10 @@ class BatchNormSPDBase(ABC, nn.Module):
         momentum : float, optional
             Momentum for running mean update.
             Default is 0.01
+
+        norm_and_bias_mode : str, optional
+            How normalization and bias is applied. Default is "whitening"
+            Choices are: "whitening", "parallel_transport", "norm_only"
 
         norm_strategy : str, optional
             Strategy for normalization.
@@ -182,6 +189,14 @@ class BatchNormSPDBase(ABC, nn.Module):
         )
         self.mean_options = mean_options
         self.momentum = momentum
+        self.norm_and_bias_mode = norm_and_bias_mode
+        assert self.norm_and_bias_mode in [
+            "whitening",
+            "parallel_transport",
+            "norm_only",
+        ], (
+            f"formula must be in ['whitening', 'parallel_transport', 'norm_only'], got {self.norm_and_bias_mode}"
+        )
         self.norm_strategy = norm_strategy
         assert self.norm_strategy in [
             "classical",
@@ -225,8 +240,13 @@ class BatchNormSPDBase(ABC, nn.Module):
         # initialize normalization parameters and running parameters
         self._init_norm_parameters()
 
-        # initialize bias parameters
-        self._init_bias_parameters()
+        if self.norm_and_bias_mode == "norm_only":
+            # no bias parameters, so no init of them
+            # no bias, also ensure not entering _post_optimizer_hook
+            self.is_dynamic = False
+        else:
+            # initialize bias parameters
+            self._init_bias_parameters()
 
         # initialize normalization and bias functions
         self._init_norm_and_bias()
@@ -581,6 +601,7 @@ class BatchNormSPDBase(ABC, nn.Module):
             f"  mean_type={self.mean_type},\n"
             f"  mean_options={self.mean_options},\n"
             f"  momentum={self.momentum},\n"
+            f"  norm_and_bias_mode={self.norm_and_bias_mode},\n"
             f"  norm_strategy={self.norm_strategy},\n"
             f"  minibatch_mode={self.minibatch_mode},\n"
             f"  minibatch_momentum={self.minibatch_momentum},\n"
@@ -651,8 +672,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
 
         norm_and_bias_mode : str, optional
             How normalization and bias is applied. Default is "whitening"
-            Choices are: "whitening", "parallel_transport"
-        #TODO: Add "norm_only" mode
+            Choices are: "whitening", "parallel_transport", "norm_only"
 
         norm_strategy : str, optional
             Strategy for normalization.
@@ -703,18 +723,12 @@ class BatchNormSPDMean(BatchNormSPDBase):
             Data type of the layer.
             Default is torch.float64
         """
-        self.norm_and_bias_mode = norm_and_bias_mode
-        assert self.norm_and_bias_mode in [
-            "whitening",
-            "parallel_transport",
-        ], (
-            f"formula must be in ['whitening', 'parallel_transport'], got {self.norm_and_bias_mode}"
-        )
         super().__init__(
             n_features,
             mean_type,
             mean_options,
             momentum,
+            norm_and_bias_mode,
             norm_strategy,
             minibatch_mode,
             minibatch_momentum,
@@ -749,27 +763,32 @@ class BatchNormSPDMean(BatchNormSPDBase):
         """
         Initialize normalization and bias functions
         """
-        if self.norm_and_bias_mode == "whitening":
-            self.normalize_mean = whitening if self.use_autograd else Whitening.apply
-            self.add_bias_mean = (
-                congruence_SPD if self.use_autograd else CongruenceSPD.apply
+        if self.norm_and_bias_mode == "norm_only":
+            self._norm_and_bias_fun = (
+                whitening if self.use_autograd else Whitening.apply
             )
-            self._norm_and_bias_fun = self._norm_and_bias_whitening
+        elif self.norm_and_bias_mode == "whitening":
+            self.transport_fun = (
+                affine_invariant_coordinates_transport
+                if self.use_autograd
+                else AffineInvariantCoordinatesTransport
+            )
+            self._norm_and_bias_fun = self._norm_and_bias_transport
         elif self.norm_and_bias_mode == "parallel_transport":
             if self.mean_type == "affine_invariant":
-                self.parallel_transport = (
+                self.transport_fun = (
                     affine_invariant_parallel_transport
                     if self.use_autograd
                     else AffineInvariantParallelTransport
                 )
             elif self.mean_type == "affine_invariant_gevd":
-                self.parallel_transport = (
+                self.transport_fun = (
                     affine_invariant_parallel_transport_gevd
                     if self.use_autograd
                     else AffineInvariantParallelTransportGEVD
                 )
             elif self.mean_type == "log_euclidean":
-                self.parallel_transport = (
+                self.transport_fun = (
                     log_euclidean_parallel_transport_SPD
                     if self.use_autograd
                     else LogEuclideanParalleTransportSPD
@@ -779,33 +798,12 @@ class BatchNormSPDMean(BatchNormSPDBase):
                 or self.mean_type == "arithmetic"
                 or self.mean_type == "harmonic"
             ):
-                self.parallel_transport = (
+                self.transport_fun = (
                     affine_invariant_parallel_transport_gevd
                     if self.use_autograd
                     else AffineInvariantParallelTransportGEVD
                 )
             self._norm_and_bias_fun = self._norm_and_bias_transport
-
-    def _norm_and_bias_whitening(
-        self, data: torch.Tensor, parameters: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Apply normalization and add bias
-
-        Parameters
-        ----------
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of SPD matrices
-
-        parameters : torch.Tensor of shape (n_features, n_features)
-            SPD mean used for normalization
-
-        Returns
-        -------
-        data_transformed : torch.Tensor of shape (..., n_features, n_features)
-            Transformed batch of SPD matrices
-        """
-        return self.add_bias_mean(self.normalize_mean(data, parameters), self.Covbias)
 
     def _norm_and_bias_transport(
         self, data: torch.Tensor, parameters: torch.Tensor
@@ -826,7 +824,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Transformed batch of SPD matrices
         """
-        return self.parallel_transport(data, parameters, self.Covbias)
+        return self.transport_fun(data, parameters, self.Covbias)
 
     def _norm_and_bias(self, data: torch.Tensor, parameters) -> torch.Tensor:
         """

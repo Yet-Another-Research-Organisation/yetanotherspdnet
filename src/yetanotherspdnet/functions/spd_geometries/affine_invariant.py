@@ -779,6 +779,71 @@ def AffineInvariantParallelTransport(
     return CongruenceRectangular.apply(data, transformation_matrix)
 
 
+# --------------------------------------
+# Affine-invariant coordinates transport
+# --------------------------------------
+def affine_invariant_coordinates_transport(
+    data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
+) -> torch.Tensor:
+    """
+    Affine-invariant coordinates transport of some symmetric (or SPD) matrices data from current_reference to new_reference.
+    It corresponds to a basis change from current_reference to new_reference, i.e.,
+    whiten with current_reference and color with new_reference.
+    This transport is isometric but does not correspond to parallel transport.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric (or SPD) matrices
+
+    current_reference : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    new_reference : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_transp : torch.Tensor of shape (..., n_features, n_features)
+        Batch of transported symmetric (or SPD) matrices
+    """
+    current_inv_sqrtm = inv_sqrtm_SPD(current_reference)[0]
+    new_sqrtm = sqrtm_SPD(new_reference)[0]
+    transformation_matrix = current_inv_sqrtm @ new_sqrtm
+    return congruence_rectangular(data, transformation_matrix)
+
+
+def AffineInvariantCoordinatesTransport(
+    data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
+) -> torch.Tensor:
+    """
+    Affine-invariant coordinates transport of some symmetric (or SPD) matrices data from current_reference to new_reference.
+    It corresponds to a basis change from current_reference to new_reference, i.e.,
+    whiten with current_reference and color with new_reference.
+    This transport is isometric but does not correspond to parallel transport.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric (or SPD) matrices
+
+    current_reference : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    new_reference : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_transp : torch.Tensor of shape (..., n_features, n_features)
+        Batch of transported symmetric (or SPD) matrices
+    """
+    current_inv_sqrtm = InvSqrtmSPD.apply(current_reference)
+    new_sqrtm = SqrtmSPD.apply(new_reference)
+    transformation_matrix = current_inv_sqrtm @ new_sqrtm
+    return CongruenceRectangular.apply(data, transformation_matrix)
+
+
 # -----------------------------------
 # Riemannian logarithm in coordinates
 # -----------------------------------
