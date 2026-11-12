@@ -807,10 +807,7 @@ def affine_invariant_coordinates_transport(
     data_transp : torch.Tensor of shape (..., n_features, n_features)
         Batch of transported symmetric (or SPD) matrices
     """
-    current_inv_sqrtm = inv_sqrtm_SPD(current_reference)[0]
-    new_sqrtm = sqrtm_SPD(new_reference)[0]
-    transformation_matrix = current_inv_sqrtm @ new_sqrtm
-    return congruence_rectangular(data, transformation_matrix)
+    return congruence_SPD_sqrtm(whitening(data, current_reference), new_reference)
 
 
 def AffineInvariantCoordinatesTransport(
@@ -838,10 +835,9 @@ def AffineInvariantCoordinatesTransport(
     data_transp : torch.Tensor of shape (..., n_features, n_features)
         Batch of transported symmetric (or SPD) matrices
     """
-    current_inv_sqrtm = InvSqrtmSPD.apply(current_reference)
-    new_sqrtm = SqrtmSPD.apply(new_reference)
-    transformation_matrix = current_inv_sqrtm @ new_sqrtm
-    return CongruenceRectangular.apply(data, transformation_matrix)
+    return CongruenceSPDSqrtm.apply(
+        Whitening.apply(data, current_reference), new_reference
+    )
 
 
 # -----------------------------------

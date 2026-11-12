@@ -66,7 +66,9 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
+    @pytest.mark.parametrize(
+        "norm_and_bias_mode", ["whitening", "parallel_transport", "norm_only"]
+    )
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -78,7 +80,6 @@ class TestBatchNormSPDMean:
     )
     @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
     @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
-    @pytest.mark.parametrize("use_autograd", [False, True])
     def test_initialization(
         self,
         n_features,
@@ -89,7 +90,6 @@ class TestBatchNormSPDMean:
         minibatch_mode,
         parametrization,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
     ):
@@ -108,7 +108,6 @@ class TestBatchNormSPDMean:
             minibatch_momentum=momentum,
             parametrization=parametrization,
             parametrization_mode=parametrization_mode,
-            use_autograd=use_autograd,
             device=device,
             dtype=dtype,
         )
@@ -119,15 +118,20 @@ class TestBatchNormSPDMean:
         assert layer.momentum == momentum
         assert layer.norm_strategy == norm_strategy
         assert layer.minibatch_momentum == momentum
-        assert layer.use_autograd == use_autograd
         assert layer.device.type == device.type
         assert layer.dtype == dtype
-        # check that we have one and only one parameter
-        assert len(list(layer.parameters())) == 1
-        assert is_spd(layer.Covbias)
-        assert_close(layer.Covbias, torch.eye(n_features, device=device, dtype=dtype))
+        if norm_and_bias_mode == "norm_only":
+            # check no parameters in that case
+            assert len(list(layer.parameters())) == 0
+        else:
+            # check that we have one and only one parameter
+            assert len(list(layer.parameters())) == 1
+            assert is_spd(layer.Covbias)
+            assert_close(
+                layer.Covbias, torch.eye(n_features, device=device, dtype=dtype)
+            )
 
-        # TODO: add check that the correct inner functions are selected
+        # TODO: add check that the correct inner functions are selected ?
 
     @pytest.mark.parametrize("n_matrices", [10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
@@ -147,7 +151,9 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
+    @pytest.mark.parametrize(
+        "norm_and_bias_mode", ["whitening", "parallel_transport", "norm_only"]
+    )
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -159,7 +165,6 @@ class TestBatchNormSPDMean:
     )
     @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
     @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_pass(
         self,
         n_matrices,
@@ -172,7 +177,6 @@ class TestBatchNormSPDMean:
         minibatch_mode,
         parametrization,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
         generator,
@@ -193,7 +197,6 @@ class TestBatchNormSPDMean:
             minibatch_momentum=momentum,
             parametrization=parametrization,
             parametrization_mode=parametrization_mode,
-            use_autograd=use_autograd,
             device=device,
             dtype=dtype,
         )
@@ -208,8 +211,11 @@ class TestBatchNormSPDMean:
 
         output = layer(X)
 
-        assert is_spd(layer.Covbias)
-        assert_close(layer.Covbias, torch.eye(n_features, device=device, dtype=dtype))
+        if norm_and_bias_mode != "norm_only":
+            assert is_spd(layer.Covbias)
+            assert_close(
+                layer.Covbias, torch.eye(n_features, device=device, dtype=dtype)
+            )
 
         assert output.shape == X.shape
         assert output.dtype == X.dtype
@@ -220,47 +226,42 @@ class TestBatchNormSPDMean:
         if norm_strategy == "minibatch":
             return  # if minibatch, no checking mean output
         # TODO: would be better to perform this test with layer.Covbias not equal to identity
-        if mean_type == "affine_invariant" and mean_options is not None:
-            # for affine-invariant mean, we can do this check only if good quality estimation, i.e.,
-            # a sufficient number of iterations
-            G_output = affine_invariant_mean(output, n_iterations=30)
-            if norm_and_bias_mode == "whitening":
-                assert_close(G_output, layer.Covbias @ layer.Covbias)
-            elif norm_and_bias_mode == "parallel_transport":
-                assert_close(G_output, layer.Covbias)
-        if mean_type == "affine_invariant_gevd" and mean_options is not None:
-            # for affine-invariant mean, we can do this check only if good quality estimation, i.e.,
-            # a sufficient number of iterations
-            G_output = affine_invariant_mean_gevd(output, n_iterations=30)
-            if norm_and_bias_mode == "whitening":
-                assert_close(
-                    G_output, layer.Covbias @ layer.Covbias, atol=1e-3, rtol=1e-3
-                )
-            elif norm_and_bias_mode == "parallel_transport":
-                assert_close(G_output, layer.Covbias, atol=1e-3, rtol=1e-3)
+        if mean_type == "affine_invariant":
+            if mean_options is not None:
+                # for affine-invariant mean, we can do this check only if good quality estimation, i.e.,
+                # a sufficient number of iterations
+                G_output = affine_invariant_mean(output, n_iterations=30)
+            else:
+                return
+        if mean_type == "affine_invariant_gevd":
+            if mean_options is not None:
+                # for affine-invariant mean, we can do this check only if good quality estimation, i.e.,
+                # a sufficient number of iterations
+                G_output = affine_invariant_mean_gevd(output, n_iterations=30)
+            else:
+                return
         elif mean_type == "log_euclidean":
             # This work only when norm_and_bias_mode is "parallel_transport"
             if norm_and_bias_mode == "parallel_transport":
                 G_output = log_euclidean_mean(output)
-                assert_close(G_output, layer.Covbias)
+            else:
+                return
         elif mean_type == "arithmetic":
             G_output = arithmetic_mean(output)
-            if norm_and_bias_mode == "whitening":
-                assert_close(G_output, layer.Covbias @ layer.Covbias)
-            elif norm_and_bias_mode == "parallel_transport":
-                assert_close(G_output, layer.Covbias)
         elif mean_type == "harmonic":
             G_output = harmonic_mean(output)
-            if norm_and_bias_mode == "whitening":
-                assert_close(G_output, layer.Covbias @ layer.Covbias)
-            elif norm_and_bias_mode == "parallel_transport":
-                assert_close(G_output, layer.Covbias)
         elif mean_type == "geometric_arithmetic_harmonic":
             G_output = geometric_arithmetic_harmonic_mean(output)
-            if norm_and_bias_mode == "whitening":
-                assert_close(G_output, layer.Covbias @ layer.Covbias)
-            elif norm_and_bias_mode == "parallel_transport":
-                assert_close(G_output, layer.Covbias)
+
+        if norm_and_bias_mode == "norm_only":
+            assert_close(
+                G_output,
+                torch.eye(n_features, dtype=dtype, device=device),
+                atol=1e-3,
+                rtol=1e-4,
+            )
+        else:
+            assert_close(G_output, layer.Covbias, atol=1e-3, rtol=1e-4)
 
     @pytest.mark.parametrize("n_matrices", [10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
@@ -292,102 +293,6 @@ class TestBatchNormSPDMean:
     )
     @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
     @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
-    def test_both_modes_give_same_result(
-        self,
-        n_matrices,
-        n_features,
-        cond,
-        mean_type,
-        mean_options,
-        norm_and_bias_mode,
-        norm_strategy,
-        minibatch_mode,
-        parametrization,
-        parametrization_mode,
-        device,
-        dtype,
-        generator,
-    ):
-        """
-        Test that both autograd and manual gradient yield same output
-        """
-        X = random_SPD(
-            n_features,
-            n_matrices,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-
-        layer_manual = batchnorm.BatchNormSPDMean(
-            n_features,
-            mean_type,
-            mean_options,
-            momentum=0.1,
-            norm_and_bias_mode=norm_and_bias_mode,
-            norm_strategy=norm_strategy,
-            minibatch_mode=minibatch_mode,
-            minibatch_momentum=0.1,
-            parametrization=parametrization,
-            parametrization_mode=parametrization_mode,
-            use_autograd=False,
-            device=device,
-            dtype=dtype,
-        )
-
-        layer_auto = batchnorm.BatchNormSPDMean(
-            n_features,
-            mean_type,
-            mean_options,
-            momentum=0.1,
-            norm_and_bias_mode=norm_and_bias_mode,
-            norm_strategy=norm_strategy,
-            minibatch_mode=minibatch_mode,
-            minibatch_momentum=0.1,
-            parametrization=parametrization,
-            parametrization_mode=parametrization_mode,
-            use_autograd=True,
-            device=device,
-            dtype=dtype,
-        )
-
-        output_manual = layer_manual(X)
-        output_auto = layer_auto(X)
-
-        assert_close(output_manual, output_auto)
-
-    @pytest.mark.parametrize("n_matrices", [10])
-    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    @pytest.mark.parametrize(
-        "mean_type, mean_options",
-        [
-            ("affine_invariant", None),
-            ("affine_invariant", {"n_iterations": 5}),
-            ("affine_invariant_gevd", None),
-            ("affine_invariant_gevd", {"n_iterations": 5}),
-            ("log_euclidean", None),
-            ("arithmetic", None),
-            ("harmonic", None),
-            (
-                "geometric_arithmetic_harmonic",
-                None,
-            ),
-        ],
-    )
-    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
-    @pytest.mark.parametrize(
-        "norm_strategy, minibatch_mode",
-        [
-            ("classical", ""),
-            ("minibatch", "constant"),
-            ("minibatch", "decay"),
-            ("minibatch", "growth"),
-        ],
-    )
-    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
-    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(
         self,
         n_matrices,
@@ -400,7 +305,6 @@ class TestBatchNormSPDMean:
         minibatch_mode,
         parametrization,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
         generator,
@@ -419,12 +323,9 @@ class TestBatchNormSPDMean:
             minibatch_momentum=0.1,
             parametrization=parametrization,
             parametrization_mode=parametrization_mode,
-            use_autograd=use_autograd,
             device=device,
             dtype=dtype,
         )
-        if norm_strategy == "minibatch":
-            print(layer.get_minibatch_momentum())
 
         X = random_SPD(
             n_features,
@@ -484,7 +385,6 @@ class TestBatchNormSPDMean:
     )
     @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
     @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_parameter_update(
         self,
         n_matrices,
@@ -497,7 +397,6 @@ class TestBatchNormSPDMean:
         minibatch_mode,
         parametrization,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
         generator,
@@ -516,7 +415,6 @@ class TestBatchNormSPDMean:
             minibatch_momentum=0.1,
             parametrization=parametrization,
             parametrization_mode=parametrization_mode,
-            use_autograd=use_autograd,
             device=device,
             dtype=dtype,
         )
@@ -542,115 +440,6 @@ class TestBatchNormSPDMean:
 
         # Check that Covbias changed
         assert not torch.allclose(layer.Covbias, initial_Covbias)
-
-    @pytest.mark.parametrize("n_matrices", [10])
-    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    @pytest.mark.parametrize(
-        "mean_type, mean_options",
-        [
-            ("affine_invariant", None),
-            ("affine_invariant", {"n_iterations": 5}),
-            ("affine_invariant_gevd", None),
-            ("affine_invariant_gevd", {"n_iterations": 5}),
-            ("log_euclidean", None),
-            ("arithmetic", None),
-            ("harmonic", None),
-            (
-                "geometric_arithmetic_harmonic",
-                None,
-            ),
-        ],
-    )
-    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
-    @pytest.mark.parametrize(
-        "norm_strategy, minibatch_mode",
-        [
-            ("classical", ""),
-            ("minibatch", "constant"),
-            ("minibatch", "decay"),
-            ("minibatch", "growth"),
-        ],
-    )
-    @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
-    @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
-    def test_both_modes_give_same_gradient(
-        self,
-        n_matrices,
-        n_features,
-        cond,
-        mean_type,
-        mean_options,
-        norm_and_bias_mode,
-        norm_strategy,
-        minibatch_mode,
-        parametrization,
-        parametrization_mode,
-        device,
-        dtype,
-        generator,
-    ):
-        """
-        Test that both autograd and manual modes yield same gradient
-        """
-        layer_manual = batchnorm.BatchNormSPDMean(
-            n_features,
-            mean_type,
-            mean_options,
-            momentum=0.1,
-            norm_and_bias_mode=norm_and_bias_mode,
-            norm_strategy=norm_strategy,
-            minibatch_mode=minibatch_mode,
-            minibatch_momentum=0.1,
-            parametrization=parametrization,
-            parametrization_mode=parametrization_mode,
-            use_autograd=False,
-            device=device,
-            dtype=dtype,
-        )
-
-        layer_auto = batchnorm.BatchNormSPDMean(
-            n_features,
-            mean_type,
-            mean_options,
-            momentum=0.1,
-            norm_and_bias_mode=norm_and_bias_mode,
-            norm_strategy=norm_strategy,
-            minibatch_mode=minibatch_mode,
-            minibatch_momentum=0.1,
-            parametrization=parametrization,
-            parametrization_mode=parametrization_mode,
-            use_autograd=True,
-            device=device,
-            dtype=dtype,
-        )
-        X1 = random_SPD(
-            n_features,
-            n_matrices,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        X2 = X1.clone()
-        X1.requires_grad = True
-        X2.requires_grad = True
-
-        # Forward + backward + update
-        output_manual = layer_manual(X1)
-        loss_manual = output_manual.sum()
-        loss_manual.backward()
-
-        output_auto = layer_auto(X2)
-        loss_auto = output_auto.sum()
-        loss_auto.backward()
-
-        # check input gradients
-        assert_close(X1.grad, X2.grad, rtol=1e-6, atol=1e-6)
-        # check Covbias gradient
-        # due to parametrization, gradient not directly on layer.weight
-        original_bias1 = layer_manual.parametrizations.Covbias.original
-        original_bias2 = layer_auto.parametrizations.Covbias.original
-        assert_close(original_bias1.grad, original_bias2.grad)
 
     @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize(
@@ -680,7 +469,6 @@ class TestBatchNormSPDMean:
         ],
     )
     @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_dynamic_parametrization_initialization(
         self,
         n_features,
@@ -690,7 +478,6 @@ class TestBatchNormSPDMean:
         norm_strategy,
         minibatch_mode,
         parametrization,
-        use_autograd,
         device,
         dtype,
     ):
@@ -709,7 +496,6 @@ class TestBatchNormSPDMean:
             minibatch_momentum=0.1,
             parametrization=parametrization,
             parametrization_mode="dynamic",
-            use_autograd=use_autograd,
             device=device,
             dtype=dtype,
         )
@@ -749,7 +535,6 @@ class TestBatchNormSPDMean:
         ],
     )
     @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_dynamic_parametrization_ref_update(
         self,
         n_matrices,
@@ -761,7 +546,6 @@ class TestBatchNormSPDMean:
         norm_strategy,
         minibatch_mode,
         parametrization,
-        use_autograd,
         device,
         dtype,
         generator,
@@ -781,7 +565,6 @@ class TestBatchNormSPDMean:
             parametrization=parametrization,
             parametrization_mode="dynamic",
             n_steps_ref_update=2,
-            use_autograd=use_autograd,
             device=device,
             dtype=dtype,
         )
@@ -856,7 +639,9 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
+    @pytest.mark.parametrize(
+        "norm_and_bias_mode", ["whitening", "parallel_transport", "norm_only"]
+    )
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -868,7 +653,6 @@ class TestBatchNormSPDMean:
     )
     @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
     @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_repr_and_str(
         self,
         n_features,
@@ -879,7 +663,6 @@ class TestBatchNormSPDMean:
         minibatch_mode,
         parametrization,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
     ):
@@ -897,7 +680,6 @@ class TestBatchNormSPDMean:
             minibatch_momentum=0.1,
             parametrization=parametrization,
             parametrization_mode=parametrization_mode,
-            use_autograd=use_autograd,
             device=device,
             dtype=dtype,
         )
@@ -915,7 +697,6 @@ class TestBatchNormSPDMean:
         assert f"minibatch_momentum={0.1}" in repr_str
         assert f"device={device}" in repr_str
         assert f"dtype={dtype}" in repr_str
-        assert f"use_autograd={use_autograd}" in repr_str
         assert repr_str == str_str
 
     @pytest.mark.parametrize("n_features", [100])
@@ -936,6 +717,9 @@ class TestBatchNormSPDMean:
         ],
     )
     @pytest.mark.parametrize(
+        "norm_and_bias_mode", ["whitening", "parallel_transport", "norm_only"]
+    )
+    @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
             ("classical", ""),
@@ -946,17 +730,16 @@ class TestBatchNormSPDMean:
     )
     @pytest.mark.parametrize("parametrization", ["softplus", "exp"])
     @pytest.mark.parametrize("parametrization_mode", ["static", "dynamic"])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_module_mode(
         self,
         n_features,
         mean_type,
         mean_options,
+        norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
         parametrization,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
     ):
@@ -968,12 +751,12 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=0.1,
             parametrization=parametrization,
             parametrization_mode=parametrization_mode,
-            use_autograd=use_autograd,
             device=device,
             dtype=dtype,
         )

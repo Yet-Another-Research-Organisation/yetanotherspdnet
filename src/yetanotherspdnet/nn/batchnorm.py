@@ -90,7 +90,6 @@ class BatchNormSPDBase(ABC, nn.Module):
         parametrization: str = "softplus",
         parametrization_mode: str = "static",
         n_steps_ref_update: int = 100,
-        use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
@@ -157,11 +156,6 @@ class BatchNormSPDBase(ABC, nn.Module):
             number of steps in between each reference point update.
             Default is 100
 
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula.
-            Default is False
-
         device: torch.device, optional
             Device on which to store the parameters.
             Default is torch.device("cpu")
@@ -223,7 +217,6 @@ class BatchNormSPDBase(ABC, nn.Module):
             f"parametrization_mode must be in ['static', 'dynamic'], got {self.parametrization_mode}"
         )
         self.n_steps_ref_update = n_steps_ref_update
-        self.use_autograd = use_autograd
         self.device = device
         self.dtype = dtype
 
@@ -286,54 +279,28 @@ class BatchNormSPDBase(ABC, nn.Module):
         """
         if self.mean_type == "affine_invariant":
             if self.mean_options is not None and "n_iterations" in self.mean_options:
-                if self.use_autograd:
-                    self.mean_fun = partial(
-                        affine_invariant_mean,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-                else:
-                    self.mean_fun = partial(
-                        AffineInvariantMean,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-            else:
-                self.mean_fun = (
-                    affine_invariant_mean if self.use_autograd else AffineInvariantMean
+                self.mean_fun = partial(
+                    AffineInvariantMean,
+                    n_iterations=self.mean_options["n_iterations"],
                 )
+            else:
+                self.mean_fun = AffineInvariantMean
         elif self.mean_type == "affine_invariant_gevd":
             if self.mean_options is not None and "n_iterations" in self.mean_options:
-                if self.use_autograd:
-                    self.mean_fun = partial(
-                        affine_invariant_mean_gevd,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-                else:
-                    self.mean_fun = partial(
-                        AffineInvariantMeanGEVD,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-            else:
-                self.mean_fun = (
-                    affine_invariant_mean_gevd
-                    if self.use_autograd
-                    else AffineInvariantMeanGEVD
+                self.mean_fun = partial(
+                    AffineInvariantMeanGEVD,
+                    n_iterations=self.mean_options["n_iterations"],
                 )
+            else:
+                self.mean_fun = AffineInvariantMeanGEVD
         elif self.mean_type == "log_euclidean":
-            self.mean_fun = (
-                log_euclidean_mean if self.use_autograd else LogEuclideanMean
-            )
+            self.mean_fun = LogEuclideanMean
         elif self.mean_type == "arithmetic":
-            self.mean_fun = (
-                arithmetic_mean if self.use_autograd else ArithmeticMean.apply
-            )
+            self.mean_fun = ArithmeticMean.apply
         elif self.mean_type == "harmonic":
-            self.mean_fun = harmonic_mean if self.use_autograd else HarmonicMean.apply
+            self.mean_fun = HarmonicMean.apply
         elif self.mean_type == "geometric_arithmetic_harmonic":
-            self.mean_fun = (
-                geometric_arithmetic_harmonic_mean
-                if self.use_autograd
-                else GeometricArithmeticHarmonicMean
-            )
+            self.mean_fun = GeometricArithmeticHarmonicMean
 
     def _init_adaptive_mean_fun(self) -> None:
         """
@@ -367,37 +334,17 @@ class BatchNormSPDBase(ABC, nn.Module):
                 torch.eye(self.n_features, dtype=self.dtype, device=self.device),
             )
             if self.mean_type == "affine_invariant":
-                self.regularize_mean_fun = (
-                    affine_invariant_geodesic
-                    if self.use_autograd
-                    else AffineInvariantGeodesic.apply
-                )
+                self.regularize_mean_fun = AffineInvariantGeodesic.apply
             elif self.mean_type == "affine_invariant_gevd":
-                self.regularize_mean_fun = (
-                    (lambda x, y, t: affine_invariant_geodesic_gevd(x, y, t)[0])
-                    if self.use_autograd
-                    else AffineInvariantGeodesicGEVD.apply
-                )
+                self.regularize_mean_fun = AffineInvariantGeodesicGEVD.apply
             elif self.mean_type == "log_euclidean":
-                self.regularize_mean_fun = (
-                    log_euclidean_geodesic
-                    if self.use_autograd
-                    else LogEuclideanGeodesic
-                )
+                self.regularize_mean_fun = LogEuclideanGeodesic
             elif self.mean_type == "arithmetic":
-                self.regularize_mean_fun = (
-                    euclidean_geodesic if self.use_autograd else EuclideanGeodesic.apply
-                )
+                self.regularize_mean_fun = EuclideanGeodesic.apply
             elif self.mean_type == "harmonic":
-                self.regularize_mean_fun = (
-                    harmonic_curve if self.use_autograd else HarmonicCurve.apply
-                )
+                self.regularize_mean_fun = HarmonicCurve.apply
             elif self.mean_type == "geometric_arithmetic_harmonic":
-                self.regularize_mean_fun = (
-                    geometric_euclidean_harmonic_curve
-                    if self.use_autograd
-                    else GeometricEuclideanHarmonicCurve
-                )
+                self.regularize_mean_fun = GeometricEuclideanHarmonicCurve
             self._init_minibatch_mode()
 
     def _init_minibatch_mode(self) -> None:
@@ -609,7 +556,6 @@ class BatchNormSPDBase(ABC, nn.Module):
             f"  parametrization={self.parametrization},\n"
             f"  parametrization_mode={self.parametrization_mode},\n"
             f"  n_steps_ref_update={self.n_steps_ref_update},\n"
-            f"  use_autograd={self.use_autograd},\n"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f")"
@@ -642,7 +588,6 @@ class BatchNormSPDMean(BatchNormSPDBase):
         parametrization: str = "softplus",
         parametrization_mode: str = "static",
         n_steps_ref_update: int = 100,
-        use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
@@ -710,11 +655,6 @@ class BatchNormSPDMean(BatchNormSPDBase):
             number of steps in between each reference point update.
             Default is 100
 
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula.
-            Default is False
-
         device: torch.device, optional
             Device on which to store the parameters.
             Default is torch.device("cpu")
@@ -736,7 +676,6 @@ class BatchNormSPDMean(BatchNormSPDBase):
             parametrization,
             parametrization_mode,
             n_steps_ref_update,
-            use_autograd,
             device,
             dtype,
         )
@@ -764,45 +703,23 @@ class BatchNormSPDMean(BatchNormSPDBase):
         Initialize normalization and bias functions
         """
         if self.norm_and_bias_mode == "norm_only":
-            self._norm_and_bias_fun = (
-                whitening if self.use_autograd else Whitening.apply
-            )
+            self._norm_and_bias_fun = Whitening.apply
         elif self.norm_and_bias_mode == "whitening":
-            self.transport_fun = (
-                affine_invariant_coordinates_transport
-                if self.use_autograd
-                else AffineInvariantCoordinatesTransport
-            )
+            self.transport_fun = AffineInvariantCoordinatesTransport
             self._norm_and_bias_fun = self._norm_and_bias_transport
         elif self.norm_and_bias_mode == "parallel_transport":
             if self.mean_type == "affine_invariant":
-                self.transport_fun = (
-                    affine_invariant_parallel_transport
-                    if self.use_autograd
-                    else AffineInvariantParallelTransport
-                )
+                self.transport_fun = AffineInvariantParallelTransport
             elif self.mean_type == "affine_invariant_gevd":
-                self.transport_fun = (
-                    affine_invariant_parallel_transport_gevd
-                    if self.use_autograd
-                    else AffineInvariantParallelTransportGEVD
-                )
+                self.transport_fun = AffineInvariantParallelTransportGEVD
             elif self.mean_type == "log_euclidean":
-                self.transport_fun = (
-                    log_euclidean_parallel_transport_SPD
-                    if self.use_autograd
-                    else LogEuclideanParalleTransportSPD
-                )
+                self.transport_fun = LogEuclideanParalleTransportSPD
             elif (
                 self.mean_type == "geometric_arithmetic_harmonic"
                 or self.mean_type == "arithmetic"
                 or self.mean_type == "harmonic"
             ):
-                self.transport_fun = (
-                    affine_invariant_parallel_transport_gevd
-                    if self.use_autograd
-                    else AffineInvariantParallelTransportGEVD
-                )
+                self.transport_fun = AffineInvariantParallelTransportGEVD
             self._norm_and_bias_fun = self._norm_and_bias_transport
 
     def _norm_and_bias_transport(
@@ -943,7 +860,6 @@ class BatchNormSPDMean(BatchNormSPDBase):
             f"  parametrization={self.parametrization},\n"
             f"  parametrization_mode={self.parametrization_mode},\n"
             f"  n_steps_ref_update={self.n_steps_ref_update},\n"
-            f"  use_autograd={self.use_autograd},\n"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f")"
@@ -964,7 +880,6 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         parametrization: str = "softplus",
         parametrization_mode: str = "static",
         n_steps_ref_update: int = 100,
-        use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
@@ -1028,11 +943,6 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             number of steps in between each reference point update.
             Default is 100
 
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula.
-            Default is False
-
         device: torch.device, optional
             Device on which to store the parameters.
             Default is torch.device("cpu")
@@ -1053,7 +963,6 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             parametrization=parametrization,
             parametrization_mode=parametrization_mode,
             n_steps_ref_update=n_steps_ref_update,
-            use_autograd=use_autograd,
             device=device,
             dtype=dtype,
         )
@@ -1093,46 +1002,22 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         # init parent class norm and bias functions
         super()._init_norm_and_bias()
         # normalize and add bias scalar variance function
-        self.norm_and_bias_var = (
-            (lambda data, exponent: powm_SPD(data, exponent)[0])
-            if self.use_autograd
-            else PowmSPD.apply
-        )
+        self.norm_and_bias_var = PowmSPD.apply
 
     def _init_std(self) -> None:
         """
         Auxiliray function to select std function
         """
         if self.mean_type == "affine_invariant":
-            self.std_fun = (
-                affine_invariant_std_scalar
-                if self.use_autograd
-                else AffineInvariantStdScalar.apply
-            )
+            self.std_fun = AffineInvariantStdScalar.apply
         elif self.mean_type == "log_euclidean":
-            self.std_fun = (
-                log_euclidean_std_scalar
-                if self.use_autograd
-                else LogEuclideanStdScalar.apply
-            )
+            self.std_fun = LogEuclideanStdScalar.apply
         elif self.mean_type == "arithmetic":
-            self.std_fun = (
-                left_kullback_leibler_std_scalar
-                if self.use_autograd
-                else LeftKullbackLeiblerStdScalar.apply
-            )
+            self.std_fun = LeftKullbackLeiblerStdScalar.apply
         elif self.mean_type == "harmonic":
-            self.std_fun = (
-                right_kullback_leibler_std_scalar
-                if self.use_autograd
-                else RightKullbackLeiblerStdScalar.apply
-            )
+            self.std_fun = RightKullbackLeiblerStdScalar.apply
         elif self.mean_type == "geometric_arithmetic_harmonic":
-            self.std_fun = (
-                symmetrized_kullback_leibler_std_scalar
-                if self.use_autograd
-                else SymmetrizedKullbackLeiblerStdScalar.apply
-            )
+            self.std_fun = SymmetrizedKullbackLeiblerStdScalar.apply
 
     def _init_norm_strategy_std(self) -> None:
         """
@@ -1272,7 +1157,6 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             f"  parametrization={self.parametrization},\n"
             f"  parametrization_mode={self.parametrization_mode},\n"
             f"  n_steps_ref_update={self.n_steps_ref_update},\n"
-            f"  use_autograd={self.use_autograd},\n"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f")"
@@ -1293,7 +1177,6 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
         parametrization: str = "softplus",
         parametrization_mode: str = "static",
         n_steps_ref_update: int = 100,
-        use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
@@ -1357,11 +1240,6 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
             number of steps in between each reference point update.
             Default is 100
 
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula.
-            Default is False
-
         device: torch.device, optional
             Device on which to store the parameters.
             Default is torch.device("cpu")
@@ -1382,7 +1260,6 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
             parametrization=parametrization,
             parametrization_mode=parametrization_mode,
             n_steps_ref_update=n_steps_ref_update,
-            use_autograd=use_autograd,
             device=device,
             dtype=dtype,
         )
