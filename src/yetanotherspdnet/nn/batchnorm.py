@@ -75,7 +75,99 @@ from .parametrizations import (
 )
 
 
+# -------------------------------------------------- #
+# Identity function to avoid lambdas, so that        #
+# the module can be pickled with torch.save(model)   #
+# -------------------------------------------------- #
+def _identity(x):
+    return x
+
+
+# ---------------------------- #
+# Minibatch momentum schedules #
+# ---------------------------- #
+def _minibatch_momentum_constant(momentum: float, maxstep: int, step: int) -> float:
+    """Constant minibatch momentum."""
+    return momentum
+
+
+def _minibatch_momentum_decay(momentum: float, maxstep: int, step: int) -> float:
+    """Decreasing minibatch momentum; `momentum` is the minimum reached."""
+    return 1 - momentum ** (max(maxstep - step, 0) / maxstep) + momentum
+
+
+def _minibatch_momentum_growth(momentum: float, maxstep: int, step: int) -> float:
+    """Increasing minibatch momentum; `momentum` is the initial value."""
+    if step == 0:
+        return momentum
+    return momentum + (1 - momentum) ** (maxstep / min(step, maxstep))
+
+
 class BatchNormSPDBase(ABC, nn.Module):
+    _NORM_AND_BIAS_MODES = ("whitening", "parallel_transport", "norm_only")
+    _NORM_STRATEGIES = ("classical", "minibatch")
+    _PARAMETRIZATIONS = ("softplus", "exp")
+    _PARAMETRIZATION_MODES = ("static", "dynamic")
+
+    _MINIBATCH_MOMENTUM_FUNS = {
+        "constant": _minibatch_momentum_constant,
+        "decay": _minibatch_momentum_decay,
+        "growth": _minibatch_momentum_growth,
+    }
+
+    # Batch mean computation
+    _MEAN_FUNS = {
+        "affine_invariant": AffineInvariantMean,
+        "affine_invariant_gevd": AffineInvariantMeanGEVD,
+        "log_euclidean": LogEuclideanMean,
+        "arithmetic": ArithmeticMean.apply,
+        "harmonic": HarmonicMean.apply,
+        "geometric_arithmetic_harmonic": GeometricArithmeticHarmonicMean,
+    }
+
+    # Geodesics / curve functions used for:
+    #    - Running mean adaptive update
+    #    - Regularization in minibatch strategy
+    _CURVE_FUNS = {
+        "affine_invariant": AffineInvariantGeodesic.apply,
+        "affine_invariant_gevd": AffineInvariantGeodesicGEVD.apply,
+        "log_euclidean": LogEuclideanGeodesic,
+        "arithmetic": EuclideanGeodesic.apply,
+        "harmonic": HarmonicCurve.apply,
+        "geometric_arithmetic_harmonic": GeometricEuclideanHarmonicCurve,
+    }
+
+    # To check that all mean tables actually handle the same means
+    _MEAN_LINKED_TABLES: tuple[str, ...] = (
+        "_MEAN_FUNS",
+        "_CURVE_FUNS",
+    )
+
+    # Table consistency check                                                 #
+    @classmethod
+    def _check_mean_tables(cls) -> None:
+        """Ensure every mean-linked table covers every known mean type."""
+        reference = set(cls._MEAN_FUNS)
+        for name in cls._MEAN_LINKED_TABLES:
+            missing = reference - set(getattr(cls, name))
+            if missing:
+                raise TypeError(
+                    f"{cls.__name__}.{name} is missing entries for "
+                    f"mean types {sorted(missing)}"
+                )
+
+    # also ensure check performed for subclasses at the right time
+    # after init because more mean tables will be added in subclasses
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        cls._check_mean_tables()
+
+    # to check categorical arguments are correct
+    @staticmethod
+    def _check_choice(name: str, value, choices) -> None:
+        if value not in choices:
+            raise ValueError(f"{name} must be in {list(choices)}, got {value!r}")
+
     def __init__(
         self,
         n_features: int,
@@ -166,56 +258,33 @@ class BatchNormSPDBase(ABC, nn.Module):
         """
         super().__init__()
 
+        # validate categorical arguments
+        self._check_choice("mean_type", mean_type, self._MEAN_FUNS)
+        self._check_choice(
+            "norm_and_bias_mode", norm_and_bias_mode, self._NORM_AND_BIAS_MODES
+        )
+        self._check_choice("norm_strategy", norm_strategy, self._NORM_STRATEGIES)
+        if norm_strategy == "minibatch":
+            self._check_choice(
+                "minibatch_mode", minibatch_mode, self._MINIBATCH_MOMENTUM_FUNS
+            )
+        self._check_choice("parametrization", parametrization, self._PARAMETRIZATIONS)
+        self._check_choice(
+            "parametrization_mode", parametrization_mode, self._PARAMETRIZATION_MODES
+        )
+
         # register all input variables
         self.n_features = n_features
         self.mean_type = mean_type
-        assert self.mean_type in [
-            "affine_invariant",
-            "affine_invariant_gevd",
-            "log_euclidean",
-            "arithmetic",
-            "harmonic",
-            "geometric_arithmetic_harmonic",
-        ], (
-            f"formula must be in ['affine_invariant', 'affine_invariant_gevd', 'log_euclidean', "
-            f"'arithmetic', 'harmonic', 'geometric_arithmetic_harmonic'], "
-            f"got {self.mean_type}"
-        )
         self.mean_options = mean_options
         self.momentum = momentum
         self.norm_and_bias_mode = norm_and_bias_mode
-        assert self.norm_and_bias_mode in [
-            "whitening",
-            "parallel_transport",
-            "norm_only",
-        ], (
-            f"formula must be in ['whitening', 'parallel_transport', 'norm_only'], got {self.norm_and_bias_mode}"
-        )
         self.norm_strategy = norm_strategy
-        assert self.norm_strategy in [
-            "classical",
-            "minibatch",
-        ], f"formula must be in ['classical', 'minibatch'], got {self.norm_strategy}"
         self.minibatch_mode = minibatch_mode
-        if norm_strategy == "minibatch":
-            assert self.minibatch_mode in [
-                "constant",
-                "decay",
-                "growth",
-            ], (
-                f"formula must be in ['constant', 'decay', 'growth'], got {self.minibatch_mode}"
-            )
         self.minibatch_momentum = minibatch_momentum
         self.minibatch_maxstep = minibatch_maxstep
         self.parametrization = parametrization
-        assert self.parametrization in [
-            "softplus",
-            "exp",
-        ], f"parametrization must be in ['softplus', 'exp'], got {self.parametrization}"
         self.parametrization_mode = parametrization_mode
-        assert self.parametrization_mode in ["static", "dynamic"], (
-            f"parametrization_mode must be in ['static', 'dynamic'], got {self.parametrization_mode}"
-        )
         self.n_steps_ref_update = n_steps_ref_update
         self.device = device
         self.dtype = dtype
@@ -249,8 +318,14 @@ class BatchNormSPDBase(ABC, nn.Module):
         Initialize functions to compute batch parameters, normalization parameters,
         and running parameters
         """
-        self._init_mean()
-        self._init_adaptive_mean_fun()
+        # select mean function
+        fun = self._MEAN_FUNS[self.mean_type]
+        options = self.mean_options or {}
+        self.mean_fun = partial(fun, **options) if options else fun
+
+        # select adaptive mean update function
+        self.adaptive_mean_fun = self._CURVE_FUNS[self.mean_type]
+
         self._init_norm_strategy_mean()
 
         # set running mean
@@ -259,137 +334,41 @@ class BatchNormSPDBase(ABC, nn.Module):
             torch.eye(self.n_features, dtype=self.dtype, device=self.device),
         )
 
-    @abstractmethod
-    def _init_bias_parameters(self) -> None:
-        """
-        Initialize bias parameters and their parametrization
-        """
-        pass
-
-    @abstractmethod
-    def _init_norm_and_bias(self) -> None:
-        """
-        Initialize normalization and bias functions
-        """
-        pass
-
-    def _init_mean(self) -> None:
-        """
-        Auxiliary function to select mean function
-        """
-        if self.mean_type == "affine_invariant":
-            if self.mean_options is not None and "n_iterations" in self.mean_options:
-                self.mean_fun = partial(
-                    AffineInvariantMean,
-                    n_iterations=self.mean_options["n_iterations"],
-                )
-            else:
-                self.mean_fun = AffineInvariantMean
-        elif self.mean_type == "affine_invariant_gevd":
-            if self.mean_options is not None and "n_iterations" in self.mean_options:
-                self.mean_fun = partial(
-                    AffineInvariantMeanGEVD,
-                    n_iterations=self.mean_options["n_iterations"],
-                )
-            else:
-                self.mean_fun = AffineInvariantMeanGEVD
-        elif self.mean_type == "log_euclidean":
-            self.mean_fun = LogEuclideanMean
-        elif self.mean_type == "arithmetic":
-            self.mean_fun = ArithmeticMean.apply
-        elif self.mean_type == "harmonic":
-            self.mean_fun = HarmonicMean.apply
-        elif self.mean_type == "geometric_arithmetic_harmonic":
-            self.mean_fun = GeometricArithmeticHarmonicMean
-
-    def _init_adaptive_mean_fun(self) -> None:
-        """
-        Auxiliary function to select adaptive mean update function
-        """
-        if self.mean_type == "affine_invariant":
-            self.adaptive_mean_fun = affine_invariant_geodesic
-        elif self.mean_type == "affine_invariant_gevd":
-            self.adaptive_mean_fun = lambda x, y, t: affine_invariant_geodesic_gevd(
-                x, y, t
-            )[0]
-        elif self.mean_type == "log_euclidean":
-            self.adaptive_mean_fun = log_euclidean_geodesic
-        elif self.mean_type == "arithmetic":
-            self.adaptive_mean_fun = euclidean_geodesic
-        elif self.mean_type == "harmonic":
-            self.adaptive_mean_fun = harmonic_curve
-        elif self.mean_type == "geometric_arithmetic_harmonic":
-            self.adaptive_mean_fun = geometric_euclidean_harmonic_curve
-
     def _init_norm_strategy_mean(self) -> None:
         """
         Auxiliary function to select normalization strategy
         """
         if self.norm_strategy == "classical":
-            self.get_norm_mean = lambda mean: mean
+            self.get_norm_mean = _identity
         elif self.norm_strategy == "minibatch":
             self.get_norm_mean = self._handle_minibatch_mean
             self.register_buffer(
                 "mean_regularizer",
                 torch.eye(self.n_features, dtype=self.dtype, device=self.device),
             )
-            if self.mean_type == "affine_invariant":
-                self.regularize_mean_fun = AffineInvariantGeodesic.apply
-            elif self.mean_type == "affine_invariant_gevd":
-                self.regularize_mean_fun = AffineInvariantGeodesicGEVD.apply
-            elif self.mean_type == "log_euclidean":
-                self.regularize_mean_fun = LogEuclideanGeodesic
-            elif self.mean_type == "arithmetic":
-                self.regularize_mean_fun = EuclideanGeodesic.apply
-            elif self.mean_type == "harmonic":
-                self.regularize_mean_fun = HarmonicCurve.apply
-            elif self.mean_type == "geometric_arithmetic_harmonic":
-                self.regularize_mean_fun = GeometricEuclideanHarmonicCurve
-            self._init_minibatch_mode()
+            self.regularize_mean_fun = self._CURVE_FUNS[self.mean_type]
+            self._minibatch_momentum_fun = self._MINIBATCH_MOMENTUM_FUNS[
+                self.minibatch_mode
+            ]
 
-    def _init_minibatch_mode(self) -> None:
+    @abstractmethod
+    def _init_bias_parameters(self) -> None:
         """
-        Auxiliary function to deal with initialization of minibatch mode
+        Initialize bias parameters and their parametrization
         """
-        if self.minibatch_mode == "constant":
-            self.get_minibatch_momentum = lambda: self.minibatch_momentum
-        elif self.minibatch_mode == "decay":
-            self.get_minibatch_momentum = self._minibatch_momentum_decay
-        elif self.minibatch_mode == "growth":
-            self.get_minibatch_momentum = self._minibatch_momentum_growth
 
-    def _minibatch_momentum_decay(self) -> float:
+    @abstractmethod
+    def _init_norm_and_bias(self) -> None:
         """
-        Function to compute the minibatch momentum with minibatch_mode == "decay"
+        Initialize normalization and bias functions
+        """
 
-        Returns
-        -------
-        minibatch_momentum : float
-            decreased minibatch momentum
+    def _get_minibatch_momentum(self) -> float:
         """
-        return (
-            1
-            - self.minibatch_momentum
-            ** (
-                max(self.minibatch_maxstep - self.training_step, 0)
-                / self.minibatch_maxstep
-            )
-            + self.minibatch_momentum
-        )
-
-    def _minibatch_momentum_growth(self) -> float:
+        Current minibatch momentum, according to minibatch_mode and training_step
         """
-        Function to compute the minibatch momentum for minibatch_mode == "growth"
-
-        Returns
-        -------
-        minibatch_momentum : float
-            increased minibatch momentum
-        """
-        if self.training_step == 0:
-            return self.minibatch_momentum
-        return self.minibatch_momentum + (1 - self.minibatch_momentum) ** (
-            self.minibatch_maxstep / min(self.training_step, self.minibatch_maxstep)
+        return self._minibatch_momentum_fun(
+            self.minibatch_momentum, self.minibatch_maxstep, self.training_step
         )
 
     def _handle_minibatch_mean(self, mean_batch: torch.Tensor) -> torch.Tensor:
@@ -407,7 +386,7 @@ class BatchNormSPDBase(ABC, nn.Module):
             SPD mean used for normalization
         """
         mean = self.regularize_mean_fun(
-            self.mean_regularizer, mean_batch, self.get_minibatch_momentum()
+            self.mean_regularizer, mean_batch, self._get_minibatch_momentum()
         )
         with torch.no_grad():
             self.mean_regularizer = mean.detach()
@@ -458,7 +437,6 @@ class BatchNormSPDBase(ABC, nn.Module):
             Parameters of the batch of data
             (different from parameters in minibatch mode)
         """
-        pass
 
     @abstractmethod
     def _update_running_parameters(self, parameters_batch) -> None:
@@ -470,7 +448,6 @@ class BatchNormSPDBase(ABC, nn.Module):
         parameters_batch
             Parameters of the batch of data
         """
-        pass
 
     @abstractmethod
     def _get_running_parameters(self) -> Any:
@@ -482,7 +459,6 @@ class BatchNormSPDBase(ABC, nn.Module):
         running_parameters
             Running parameters
         """
-        pass
 
     @abstractmethod
     def _norm_and_bias(self, data: torch.Tensor, parameters) -> torch.Tensor:
@@ -502,7 +478,6 @@ class BatchNormSPDBase(ABC, nn.Module):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Transformed batch of SPD matrices
         """
-        pass
 
     @abstractmethod
     def _post_optimizer_hook(
@@ -517,7 +492,6 @@ class BatchNormSPDBase(ABC, nn.Module):
         optimizer : torch.optim.Optimizer
             Torch optimizer used for training
         """
-        pass
 
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """
@@ -574,6 +548,19 @@ class BatchNormSPDBase(ABC, nn.Module):
 
 
 class BatchNormSPDMean(BatchNormSPDBase):
+    # Transport functions used in "parallel_transport" mode.
+    # It must cover all mean types
+    _TRANSPORT_FUNS = {
+        "affine_invariant": AffineInvariantParallelTransport,
+        "affine_invariant_gevd": AffineInvariantParallelTransportGEVD,
+        "log_euclidean": LogEuclideanParalleTransportSPD,
+        "arithmetic": AffineInvariantParallelTransportGEVD,
+        "harmonic": AffineInvariantParallelTransportGEVD,
+        "geometric_arithmetic_harmonic": AffineInvariantParallelTransportGEVD,
+    }
+    # It must be added to _MEAN_LINKED_TABLES to check that it's ok
+    _MEAN_LINKED_TABLES = BatchNormSPDBase._MEAN_LINKED_TABLES + ("_TRANSPORT_FUNS",)
+
     def __init__(
         self,
         n_features: int,
@@ -708,18 +695,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
             self.transport_fun = AffineInvariantCoordinatesTransport
             self._norm_and_bias_fun = self._norm_and_bias_transport
         elif self.norm_and_bias_mode == "parallel_transport":
-            if self.mean_type == "affine_invariant":
-                self.transport_fun = AffineInvariantParallelTransport
-            elif self.mean_type == "affine_invariant_gevd":
-                self.transport_fun = AffineInvariantParallelTransportGEVD
-            elif self.mean_type == "log_euclidean":
-                self.transport_fun = LogEuclideanParalleTransportSPD
-            elif (
-                self.mean_type == "geometric_arithmetic_harmonic"
-                or self.mean_type == "arithmetic"
-                or self.mean_type == "harmonic"
-            ):
-                self.transport_fun = AffineInvariantParallelTransportGEVD
+            self.transport_fun = self._TRANSPORT_FUNS[self.mean_type]
             self._norm_and_bias_fun = self._norm_and_bias_transport
 
     def _norm_and_bias_transport(

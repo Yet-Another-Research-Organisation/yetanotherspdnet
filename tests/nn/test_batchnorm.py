@@ -257,7 +257,7 @@ class TestBatchNormSPDMean:
             assert_close(
                 G_output,
                 torch.eye(n_features, dtype=dtype, device=device),
-                atol=1e-3,
+                atol=1e-3,  # necessary for gevd mean
                 rtol=1e-4,
             )
         else:
