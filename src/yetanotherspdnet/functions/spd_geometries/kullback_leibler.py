@@ -2,11 +2,11 @@ import torch
 from torch.autograd import Function
 
 from ..spd_linalg import (
-    CongruenceSPDSqrtm,
+    Coloring,
     InvmSPD,
     SymMatrixToCoordinates,
     Whitening,
-    congruence_SPD_sqrtm,
+    coloring,
     inv_sqrtm_SPD,
     invm_SPD,
     sym_matrix_to_coordinates,
@@ -662,7 +662,7 @@ def right_kullback_leibler_fisher_vector_affine_invariant_coordinates(
         Batch of coordinates in the tangent space of reference_point
     """
     data_invm = invm_SPD(data)[0]
-    data_transf = congruence_SPD_sqrtm(data_invm, reference_point)
+    data_transf = coloring(data_invm, reference_point)
     Identity = torch.diag_embed(
         torch.ones(data.shape[:-1], device=data.device, dtype=data.dtype)
     )
@@ -689,7 +689,7 @@ def RightKullbackLeiblerFisherVectorAffineInvariantCoordinates(
         Batch of coordinates in the tangent space of reference_point
     """
     data_invm = InvmSPD.apply(data)
-    data_transf = CongruenceSPDSqrtm.apply(data_invm, reference_point)
+    data_transf = Coloring.apply(data_invm, reference_point)
     Identity = torch.diag_embed(
         torch.ones(data.shape[:-1], device=data.device, dtype=data.dtype)
     )

@@ -21,7 +21,7 @@ Classes
    yetanotherspdnet.functions.spd_linalg.EighReLu
    yetanotherspdnet.functions.spd_linalg.CongruenceSPD
    yetanotherspdnet.functions.spd_linalg.Whitening
-   yetanotherspdnet.functions.spd_linalg.CongruenceRectangular
+   yetanotherspdnet.functions.spd_linalg.CongruenceFullRank
 
 
 Functions
@@ -47,7 +47,7 @@ Functions
    yetanotherspdnet.functions.spd_linalg.eigh_relu
    yetanotherspdnet.functions.spd_linalg.congruence_SPD
    yetanotherspdnet.functions.spd_linalg.whitening
-   yetanotherspdnet.functions.spd_linalg.congruence_rectangular
+   yetanotherspdnet.functions.spd_linalg.congruence_fullrank
 
 
 Module Contents
@@ -790,7 +790,7 @@ Module Contents
 
 
 
-.. py:function:: congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Tensor
+.. py:function:: congruence_fullrank(data: torch.Tensor, weight: torch.Tensor) -> torch.Tensor
 
    Forward pass of the congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
 
@@ -804,7 +804,7 @@ Module Contents
    :rtype: :py:class:`torch.Tensor` of :py:class:`shape (...`, :py:class:`n_out`, :py:class:`n_out)`
 
 
-.. py:class:: CongruenceRectangular(*args, **kwargs)
+.. py:class:: CongruenceFullRank(*args, **kwargs)
 
    Bases: :py:obj:`torch.autograd.Function`
 

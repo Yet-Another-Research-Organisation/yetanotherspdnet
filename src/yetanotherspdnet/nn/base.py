@@ -6,12 +6,12 @@ from torch.nn.utils.parametrize import register_parametrization
 from yetanotherspdnet.nn.parametrizations import StiefelAdaptiveParametrization
 
 from ..functions.spd_linalg import (
-    CongruenceRectangular,
+    CongruenceFullRank,
     EighReLu,
     LogmSPD,
     VecBatch,
     VechBatch,
-    congruence_rectangular,
+    congruence_fullrank,
     eigh_relu,
     logm_SPD,
     vec_batch,
@@ -133,7 +133,7 @@ class BiMap(nn.Module):
             )
         # BiMap function
         self.bimap_fun = (
-            congruence_rectangular if self.use_autograd else CongruenceRectangular.apply
+            congruence_fullrank if self.use_autograd else CongruenceFullRank.apply
         )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:

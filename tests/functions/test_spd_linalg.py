@@ -2293,104 +2293,6 @@ class TestCongruenceSPD:
         assert_close(G_manual.grad, G_auto.grad)
 
 
-class TestCongruenceSPDSqtrm:
-    """
-    Test suite for congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
-    """
-
-    @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_forward(self, n_matrices, n_features, cond, device, dtype, generator):
-        """
-        Test of whitening function and forward of Whitening Function class
-        """
-        X = random_SPD(
-            n_features,
-            n_matrices,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        G = random_SPD(
-            n_features, 1, cond=cond, device=device, dtype=dtype, generator=generator
-        )
-
-        Y = spd_linalg.CongruenceSPDSqrtm.apply(X, G)
-        Z = spd_linalg.congruence_SPD_sqrtm(X, G)
-
-        X_class = spd_linalg.CongruenceSPDSqrtm.apply(
-            Y, torch.cholesky_inverse(torch.linalg.cholesky(G))
-        )
-        X_function = spd_linalg.congruence_SPD_sqrtm(
-            Z, torch.cholesky_inverse(torch.linalg.cholesky(G))
-        )
-
-        assert Y.shape == X.shape
-        assert Y.device == X.device
-        assert Y.dtype == X.dtype
-        assert Z.shape == X.shape
-        assert Z.device == X.device
-        assert Z.dtype == X.dtype
-        assert is_spd(Y)
-        assert is_spd(Z)
-        assert_close(Y, Z)
-        assert_close(X_class, X)
-        assert_close(X_function, X)
-
-    @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
-        """
-        Test of backward of Whitening Function class
-        """
-        X = random_SPD(
-            n_features,
-            n_matrices,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        G = random_SPD(
-            n_features, 1, cond=cond, device=device, dtype=dtype, generator=generator
-        )
-
-        X_manual = X.clone().detach()
-        X_manual.requires_grad = True
-        X_auto = X.clone().detach()
-        X_auto.requires_grad = True
-
-        G_manual = G.clone().detach()
-        G_manual.requires_grad = True
-        G_auto = G.clone().detach()
-        G_auto.requires_grad = True
-
-        X_manual_white = spd_linalg.CongruenceSPDSqrtm.apply(X_manual, G_manual)
-        X_auto_white = spd_linalg.congruence_SPD_sqrtm(X_auto, G_auto)
-
-        loss_manual = torch.norm(X_manual_white)
-        loss_manual.backward()
-        loss_auto = torch.norm(X_auto_white)
-        loss_auto.backward()
-
-        assert X_manual.grad is not None
-        assert X_auto.grad is not None
-        assert torch.isfinite(X_manual.grad).all()
-        assert torch.isfinite(X_auto.grad).all()
-        assert is_symmetric(X_manual.grad)
-        assert is_symmetric(X_auto.grad)
-        assert_close(X_manual.grad, X_auto.grad)
-
-        assert G_manual.grad is not None
-        assert G_auto.grad is not None
-        assert torch.isfinite(G_manual.grad).all()
-        assert torch.isfinite(G_auto.grad).all()
-        assert is_symmetric(G_manual.grad)
-        assert is_symmetric(G_auto.grad)
-        assert_close(G_manual.grad, G_auto.grad)
-
-
 class TestWhitening:
     """
     Test suite for whitening of a batch of SPD matrices with a SPD matrix
@@ -2489,16 +2391,114 @@ class TestWhitening:
         assert_close(G_manual.grad, G_auto.grad)
 
 
-class TestCongruenceRectangular:
+class TestCongruenceSPDSqtrm:
     """
-    Test suite for congruence of a batch of SPD matrices with a rectangular matrix (dimensionality reduction)
+    Test suite for congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
+    """
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_forward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of whitening function and forward of Whitening Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G = random_SPD(
+            n_features, 1, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+
+        Y = spd_linalg.Coloring.apply(X, G)
+        Z = spd_linalg.coloring(X, G)
+
+        X_class = spd_linalg.Coloring.apply(
+            Y, torch.cholesky_inverse(torch.linalg.cholesky(G))
+        )
+        X_function = spd_linalg.coloring(
+            Z, torch.cholesky_inverse(torch.linalg.cholesky(G))
+        )
+
+        assert Y.shape == X.shape
+        assert Y.device == X.device
+        assert Y.dtype == X.dtype
+        assert Z.shape == X.shape
+        assert Z.device == X.device
+        assert Z.dtype == X.dtype
+        assert is_spd(Y)
+        assert is_spd(Z)
+        assert_close(Y, Z)
+        assert_close(X_class, X)
+        assert_close(X_function, X)
+
+    @pytest.mark.parametrize("n_matrices", [1, 50])
+    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
+    def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
+        """
+        Test of backward of Whitening Function class
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        G = random_SPD(
+            n_features, 1, cond=cond, device=device, dtype=dtype, generator=generator
+        )
+
+        X_manual = X.clone().detach()
+        X_manual.requires_grad = True
+        X_auto = X.clone().detach()
+        X_auto.requires_grad = True
+
+        G_manual = G.clone().detach()
+        G_manual.requires_grad = True
+        G_auto = G.clone().detach()
+        G_auto.requires_grad = True
+
+        X_manual_white = spd_linalg.Coloring.apply(X_manual, G_manual)
+        X_auto_white = spd_linalg.coloring(X_auto, G_auto)
+
+        loss_manual = torch.norm(X_manual_white)
+        loss_manual.backward()
+        loss_auto = torch.norm(X_auto_white)
+        loss_auto.backward()
+
+        assert X_manual.grad is not None
+        assert X_auto.grad is not None
+        assert torch.isfinite(X_manual.grad).all()
+        assert torch.isfinite(X_auto.grad).all()
+        assert is_symmetric(X_manual.grad)
+        assert is_symmetric(X_auto.grad)
+        assert_close(X_manual.grad, X_auto.grad)
+
+        assert G_manual.grad is not None
+        assert G_auto.grad is not None
+        assert torch.isfinite(G_manual.grad).all()
+        assert torch.isfinite(G_auto.grad).all()
+        assert is_symmetric(G_manual.grad)
+        assert is_symmetric(G_auto.grad)
+        assert_close(G_manual.grad, G_auto.grad)
+
+
+class TestCongruenceFullRank:
+    """
+    Test suite for congruence of a batch of SPD matrices with a full-rank matrix
     """
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_in, n_out, cond", [(100, 70, 1000)])
     def test_forward(self, n_matrices, n_in, n_out, cond, device, dtype, generator):
         """
-        Test of congruence_rectangular function and forward of CongruenceSPD Function class
+        Test of congruence_fullrank function and forward of CongruenceFullRank Function class
         """
         # Generate random SPD matrices
         X = random_SPD(
@@ -2508,8 +2508,8 @@ class TestCongruenceRectangular:
         W = torch.empty((n_in, n_out), device=device, dtype=dtype)
         _init_weights_stiefel(W, generator=generator)
 
-        Y = spd_linalg.CongruenceRectangular.apply(X, W)
-        Z = spd_linalg.CongruenceRectangular.apply(X, W)
+        Y = spd_linalg.CongruenceFullRank.apply(X, W)
+        Z = spd_linalg.congruence_fullrank(X, W)
 
         assert Y.dim() == X.dim()
         if n_matrices > 1:
@@ -2533,7 +2533,7 @@ class TestCongruenceRectangular:
     @pytest.mark.parametrize("n_in, n_out, cond", [(100, 70, 1000)])
     def test_backward(self, n_matrices, n_in, n_out, cond, device, dtype, generator):
         """
-        Test of backward of CongruenceRectangular Function class
+        Test of backward of CongruenceFullRank Function class
         """
         # Generate random SPD matrices
         X = random_SPD(
@@ -2553,8 +2553,8 @@ class TestCongruenceRectangular:
         W_auto = W.clone().detach()
         W_auto.requires_grad = True
 
-        X_manual_cong = spd_linalg.CongruenceRectangular.apply(X_manual, W_manual)
-        X_auto_cong = spd_linalg.congruence_rectangular(X_auto, W_auto)
+        X_manual_cong = spd_linalg.CongruenceFullRank.apply(X_manual, W_manual)
+        X_auto_cong = spd_linalg.congruence_fullrank(X_auto, W_auto)
 
         loss_manual = torch.norm(X_manual_cong)
         loss_manual.backward()

@@ -7,9 +7,9 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     arithmetic_mean,
 )
 from yetanotherspdnet.functions.spd_linalg import (
-    CongruenceRectangular,
+    CongruenceFullRank,
     _aux_eigh_operation_grad,
-    congruence_rectangular,
+    congruence_fullrank,
     gevd,
     gevd_operation,
     gevd_operation_grad,
@@ -571,7 +571,7 @@ def affine_invariant_parallel_transport_gevd(
     transformation_matrix = affine_invariant_parallel_transport_transformation_gevd(
         current_reference, new_reference
     )[0]
-    return congruence_rectangular(data, transformation_matrix)
+    return congruence_fullrank(data, transformation_matrix)
 
 
 def AffineInvariantParallelTransportGEVD(
@@ -599,4 +599,4 @@ def AffineInvariantParallelTransportGEVD(
     transformation_matrix = AffineInvariantParallelTransportTransformationGEVD.apply(
         current_reference, new_reference
     )
-    return CongruenceRectangular.apply(data, transformation_matrix)
+    return CongruenceFullRank.apply(data, transformation_matrix)

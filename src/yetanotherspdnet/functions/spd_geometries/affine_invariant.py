@@ -7,9 +7,9 @@ from yetanotherspdnet.functions.scalar_functions import (
 )
 
 from ..spd_linalg import (
-    CongruenceRectangular,
+    CongruenceFullRank,
     CongruenceSPD,
-    CongruenceSPDSqrtm,
+    Coloring,
     ExpmSymmetric,
     InvSqrtmSPD,
     LogmSPD,
@@ -20,8 +20,8 @@ from ..spd_linalg import (
     SymKronCoordinatesAction,
     SymMatrixToCoordinates,
     Whitening,
-    congruence_SPD_sqrtm,
-    congruence_rectangular,
+    coloring,
+    congruence_fullrank,
     eigh_operation,
     eigh_operation_grad,
     expm_symmetric,
@@ -748,7 +748,7 @@ def affine_invariant_parallel_transport(
     transformation_matrix = affine_invariant_parallel_transport_transformation(
         current_reference, new_reference
     )
-    return congruence_rectangular(data, transformation_matrix)
+    return congruence_fullrank(data, transformation_matrix)
 
 
 def AffineInvariantParallelTransport(
@@ -776,7 +776,7 @@ def AffineInvariantParallelTransport(
     transformation_matrix = AffineInvariantParallelTransportTransformation(
         current_reference, new_reference
     )
-    return CongruenceRectangular.apply(data, transformation_matrix)
+    return CongruenceFullRank.apply(data, transformation_matrix)
 
 
 # --------------------------------------
@@ -807,7 +807,7 @@ def affine_invariant_coordinates_transport(
     data_transp : torch.Tensor of shape (..., n_features, n_features)
         Batch of transported symmetric (or SPD) matrices
     """
-    return congruence_SPD_sqrtm(whitening(data, current_reference), new_reference)
+    return coloring(whitening(data, current_reference), new_reference)
 
 
 def AffineInvariantCoordinatesTransport(
@@ -835,9 +835,7 @@ def AffineInvariantCoordinatesTransport(
     data_transp : torch.Tensor of shape (..., n_features, n_features)
         Batch of transported symmetric (or SPD) matrices
     """
-    return CongruenceSPDSqrtm.apply(
-        Whitening.apply(data, current_reference), new_reference
-    )
+    return Coloring.apply(Whitening.apply(data, current_reference), new_reference)
 
 
 # -----------------------------------
@@ -913,7 +911,7 @@ def affine_invariant_exp_coordinates(
     """
     data = sym_coordinates_to_matrix(data_coordinates, reference_point.shape[0])
     data_expm = expm_symmetric(data)[0]
-    return congruence_SPD_sqrtm(data_expm, reference_point)
+    return coloring(data_expm, reference_point)
 
 
 def AffineInvariantExpCoordinates(
@@ -937,7 +935,7 @@ def AffineInvariantExpCoordinates(
     """
     data = SymCoordinatesToMatrix.apply(data_coordinates, reference_point.shape[0])
     data_expm = ExpmSymmetric.apply(data)
-    return CongruenceSPDSqrtm.apply(data_expm, reference_point)
+    return Coloring.apply(data_expm, reference_point)
 
 
 # ---------------------------------------------------------------------------------

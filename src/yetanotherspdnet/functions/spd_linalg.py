@@ -1646,92 +1646,10 @@ class CongruenceSPD(Function):
         )
 
 
-def congruence_SPD_sqrtm(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
-    """
-    Congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
-
-    Parameters
-    ----------
-    data : torch.Tensor of shape (..., n_features, n_features)
-        Batch of SPD matrices
-
-    matrix : torch.Tensor of shape (n_features, n_features)
-        SPD matrix
-
-    Returns
-    -------
-    data_transformed : torch.Tensor of shape (..., n_features, n_features)
-        Transformed batch of SPD matrices
-    """
-    matrix_sqrtm = sqrtm_SPD(matrix)[0]
-    return congruence_SPD(data, matrix_sqrtm)
-
-
-class CongruenceSPDSqrtm(Function):
-    """
-    Congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
-    """
-
-    @staticmethod
-    def forward(ctx, data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of SPD matrices
-
-        matrix : torch.Tensor of shape (n_features, n_features)
-            SPD matrix
-
-        Returns
-        -------
-        data_transformed : torch.Tensor of shape (..., n_features, n_features)
-            Transformed batch of SPD matrices
-        """
-        matrix_sqrtm, eigvals_matrix, eigvecs_matrix = sqrtm_SPD(matrix)
-        ctx.save_for_backward(data, eigvals_matrix, eigvecs_matrix, matrix_sqrtm)
-        return congruence_SPD(data, matrix_sqrtm)
-
-    @staticmethod
-    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Backward pass of the congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        grad_output : torch.Tensor of shape (..., n_features, n_features)
-            Gradient of the loss with respect to the batch of whitened SPD matrices
-
-        Returns
-        -------
-        grad_input_data : torch.Tensor of shape (..., n_features, n_features)
-            Gradient of the loss with respect to the input batch of SPD matrices
-
-        grad_input_matrix : torch.Tensor of shape (n_features, n_features)
-            Gradient of the loss with respect to the SPD matrix used for whitening
-        """
-        data, eigvals_matrix, eigvecs_matrix, matrix_sqrtm = ctx.saved_tensors
-        grad_input_data = matrix_sqrtm @ symmetrize(grad_output) @ matrix_sqrtm
-        syl_right = 2 * symmetrize(
-            torch.einsum("...ik, kl, ...lj->ij", data, matrix_sqrtm, grad_output)
-        )
-        grad_input_matrix = solve_sylvester_SPD(
-            torch.sqrt(eigvals_matrix), eigvecs_matrix, syl_right
-        )
-        return grad_input_data, grad_input_matrix
-
-
 def whitening(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
     """
     Whitening of a batch of SPD matrices with an SPD matrix
+    (congruence with matrix inverse square root of SPD matrix).
 
     Parameters
     ----------
@@ -1753,6 +1671,7 @@ def whitening(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
 class Whitening(Function):
     """
     Whitening of a batch of SPD matrices with an SPD matrix
+    (congruence with matrix inverse square root of SPD matrix).
     """
 
     @staticmethod
@@ -1818,9 +1737,94 @@ class Whitening(Function):
         return grad_input_data, grad_input_matrix
 
 
-def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+def coloring(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
     """
-    Forward pass of the congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
+    Coloring of a batch of SPD matrices with an SPD matrix
+    (congruence with the matrix square root of the SPD matrix)
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    matrix : torch.Tensor of shape (n_features, n_features)
+        SPD matrix
+
+    Returns
+    -------
+    data_transformed : torch.Tensor of shape (..., n_features, n_features)
+        Transformed batch of SPD matrices
+    """
+    matrix_sqrtm = sqrtm_SPD(matrix)[0]
+    return congruence_SPD(data, matrix_sqrtm)
+
+
+class Coloring(Function):
+    """
+    Coloring of a batch of SPD matrices with an SPD matrix
+    (congruence with the matrix square root of the SPD matrix)
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the coloring of a batch of SPD matrices with an SPD matrix
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        matrix : torch.Tensor of shape (n_features, n_features)
+            SPD matrix
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Transformed batch of SPD matrices
+        """
+        matrix_sqrtm, eigvals_matrix, eigvecs_matrix = sqrtm_SPD(matrix)
+        ctx.save_for_backward(data, eigvals_matrix, eigvecs_matrix, matrix_sqrtm)
+        return congruence_SPD(data, matrix_sqrtm)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Backward pass of the coloring of a batch of SPD matrices with an SPD matrix
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the batch of whitened SPD matrices
+
+        Returns
+        -------
+        grad_input_data : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input batch of SPD matrices
+
+        grad_input_matrix : torch.Tensor of shape (n_features, n_features)
+            Gradient of the loss with respect to the SPD matrix used for whitening
+        """
+        data, eigvals_matrix, eigvecs_matrix, matrix_sqrtm = ctx.saved_tensors
+        grad_input_data = matrix_sqrtm @ symmetrize(grad_output) @ matrix_sqrtm
+        syl_right = 2 * symmetrize(
+            torch.einsum("...ik, kl, ...lj->ij", data, matrix_sqrtm, grad_output)
+        )
+        grad_input_matrix = solve_sylvester_SPD(
+            torch.sqrt(eigvals_matrix), eigvecs_matrix, syl_right
+        )
+        return grad_input_data, grad_input_matrix
+
+
+def congruence_fullrank(data: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    """
+    Forward pass of the congruence of a batch of SPD matrices with a full-rank matrix
 
     Parameters
     ----------
@@ -1829,7 +1833,7 @@ def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Te
 
     weight : torch.Tensor of shape (n_in, n_out)
         Rectangular matrix (e.g., weights),
-        n_in > n_out is expected
+        n_in >= n_out is expected
 
     Returns
     -------
@@ -1842,15 +1846,15 @@ def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Te
     return weight.transpose(-1, -2) @ data @ weight
 
 
-class CongruenceRectangular(Function):
+class CongruenceFullRank(Function):
     """
-    Congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
+    Congruence of a batch of SPD matrices with a full-rank matrix
     """
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
+        Forward pass of the congruence of a batch of SPD matrices with a full-rank matrix
 
         Parameters
         ----------
@@ -1870,12 +1874,12 @@ class CongruenceRectangular(Function):
             Transformed batch of SPD matrices
         """
         ctx.save_for_backward(data, weight)
-        return congruence_rectangular(data, weight)
+        return congruence_fullrank(data, weight)
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
+        Backward pass of the congruence of a batch of SPD matrices with a full-rank matrix
 
         Parameters
         ----------
