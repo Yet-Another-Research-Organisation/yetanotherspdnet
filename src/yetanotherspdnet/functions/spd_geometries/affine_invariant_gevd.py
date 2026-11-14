@@ -212,6 +212,7 @@ class AffineInvariantExponentialGEVD(Function):
         data_exp, general_eigvals, general_eigvecs, general_eigvecs_inv = (
             affine_invariant_exponential_gevd(data, reference_point)
         )
+        ctx.ref_shape = reference_point.shape
         ctx.save_for_backward(general_eigvals, general_eigvecs, general_eigvecs_inv)
         return data_exp
 
@@ -245,6 +246,7 @@ class AffineInvariantExponentialGEVD(Function):
             torch.exp,
             torch.exp,
         )
+        grad_reference = grad_reference.sum_to_size(ctx.ref_shape)
         return grad_data, grad_reference
 
 
@@ -317,6 +319,7 @@ class AffineInvariantLogarithmGEVD(Function):
         data_log, general_eigvals, general_eigvecs, general_eigvecs_inv = (
             affine_invariant_logarithm_gevd(data, reference_point)
         )
+        ctx.ref_shape = reference_point.shape
         ctx.save_for_backward(general_eigvals, general_eigvecs, general_eigvecs_inv)
         return data_log
 
@@ -350,6 +353,7 @@ class AffineInvariantLogarithmGEVD(Function):
             torch.log,
             inv,
         )
+        grad_reference = grad_reference.sum_to_size(ctx.ref_shape)
         return grad_data, grad_reference
 
 

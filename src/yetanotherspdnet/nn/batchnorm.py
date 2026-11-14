@@ -346,7 +346,6 @@ class BatchNormSPDBase(ABC, nn.Module):
                 "mean_regularizer",
                 torch.eye(self.n_features, dtype=self.dtype, device=self.device),
             )
-            self.regularize_mean_fun = self._CURVE_FUNS[self.mean_type]
             self._minibatch_momentum_fun = self._MINIBATCH_MOMENTUM_FUNS[
                 self.minibatch_mode
             ]
@@ -385,7 +384,7 @@ class BatchNormSPDBase(ABC, nn.Module):
         mean : torch.Tensor of shape (n_features, n_features)
             SPD mean used for normalization
         """
-        mean = self.regularize_mean_fun(
+        mean = self.adaptive_mean_fun(
             self.mean_regularizer, mean_batch, self._get_minibatch_momentum()
         )
         with torch.no_grad():
@@ -690,13 +689,34 @@ class BatchNormSPDMean(BatchNormSPDBase):
         Initialize normalization and bias functions
         """
         if self.norm_and_bias_mode == "norm_only":
-            self._norm_and_bias_fun = Whitening.apply
+            self._norm_and_bias_fun = self._norm_and_bias_norm_only
         elif self.norm_and_bias_mode == "whitening":
             self.transport_fun = AffineInvariantCoordinatesTransport
             self._norm_and_bias_fun = self._norm_and_bias_transport
         elif self.norm_and_bias_mode == "parallel_transport":
             self.transport_fun = self._TRANSPORT_FUNS[self.mean_type]
             self._norm_and_bias_fun = self._norm_and_bias_transport
+
+    def _norm_and_bias_norm_only(
+        self, data: torch.Tensor, parameters: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Only apply normalization
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        parameters : torch.Tensor of shape (n_features, n_features)
+            SPD mean used for normalization
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Transformed batch of SPD matrices
+        """
+        return Whitening.apply(data, parameters)
 
     def _norm_and_bias_transport(
         self, data: torch.Tensor, parameters: torch.Tensor
@@ -843,6 +863,19 @@ class BatchNormSPDMean(BatchNormSPDBase):
 
 
 class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
+    # Transport functions used in "parallel_transport" mode.
+    # It must cover all mean types
+    _STD_FUNS = {
+        "affine_invariant": AffineInvariantStdScalar.apply,
+        "affine_invariant_gevd": AffineInvariantStdScalar.apply,  # TODO: GEVD version of StdScalar
+        "log_euclidean": LogEuclideanStdScalar.apply,
+        "arithmetic": LeftKullbackLeiblerStdScalar.apply,
+        "harmonic": RightKullbackLeiblerStdScalar.apply,
+        "geometric_arithmetic_harmonic": SymmetrizedKullbackLeiblerStdScalar.apply,
+    }
+    # It must be added to _MEAN_LINKED_TABLES to check that it's ok
+    _MEAN_LINKED_TABLES = BatchNormSPDMean._MEAN_LINKED_TABLES + ("_STD_FUNS",)
+
     def __init__(
         self,
         n_features: int,
@@ -951,13 +984,26 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         # init mean parameters from parent class
         super()._init_norm_parameters()
         # init scalar std parameters and functions
-        self._init_std()
+        self.std_fun = self._STD_FUNS[self.mean_type]
         self._init_norm_strategy_std()
         # set running std
         self.register_buffer(
             "running_std_scalar",
             torch.tensor(1.0, dtype=self.dtype, device=self.device),
         )
+
+    def _init_norm_strategy_std(self) -> None:
+        """
+        Auxiliary function to select norm strategy
+        """
+        if self.norm_strategy == "classical":
+            self.get_norm_std = _identity
+        elif self.norm_strategy == "minibatch":
+            self.get_norm_std = self._handle_minibatch_std
+            self.register_buffer(
+                "std_regularizer",
+                torch.tensor(1.0, dtype=self.dtype, device=self.device),
+            )
 
     def _init_bias_parameters(self) -> None:
         """
@@ -971,42 +1017,51 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         )
         register_parametrization(self, "stdScalarbias", ScalarSoftPlusParametrization())
 
-    def _init_norm_and_bias(self) -> None:
-        """
-        Initialize normalization and bias functions
-        """
-        # init parent class norm and bias functions
-        super()._init_norm_and_bias()
-        # normalize and add bias scalar variance function
-        self.norm_and_bias_var = PowmSPD.apply
+    # No need to change  _init_norm_and_bias, only its 2 subfunctions
+    # Also no need to change _norm_and_bias
 
-    def _init_std(self) -> None:
+    def _norm_and_bias_norm_only(
+        self, data: torch.Tensor, parameters: tuple[torch.Tensor, torch.Tensor]
+    ) -> torch.Tensor:
         """
-        Auxiliray function to select std function
-        """
-        if self.mean_type == "affine_invariant":
-            self.std_fun = AffineInvariantStdScalar.apply
-        elif self.mean_type == "log_euclidean":
-            self.std_fun = LogEuclideanStdScalar.apply
-        elif self.mean_type == "arithmetic":
-            self.std_fun = LeftKullbackLeiblerStdScalar.apply
-        elif self.mean_type == "harmonic":
-            self.std_fun = RightKullbackLeiblerStdScalar.apply
-        elif self.mean_type == "geometric_arithmetic_harmonic":
-            self.std_fun = SymmetrizedKullbackLeiblerStdScalar.apply
+        Only apply normalization
 
-    def _init_norm_strategy_std(self) -> None:
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        parameters : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and ()
+            SPD mean and scalar std used for normalization
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Transformed batch of SPD matrices
         """
-        Auxiliary function to select norm strategy
+        # normalize variance
+        return Whitening.apply(data, parameters)
+
+    def _norm_and_bias_transport(
+        self, data: torch.Tensor, parameters: tuple[torch.Tensor, torch.Tensor]
+    ) -> torch.Tensor:
         """
-        if self.norm_strategy == "classical":
-            self.get_norm_std = lambda std: std
-        elif self.norm_strategy == "minibatch":
-            self.get_norm_std = self._handle_minibatch_std
-            self.register_buffer(
-                "std_regularizer",
-                torch.tensor(1.0, dtype=self.dtype, device=self.device),
-            )
+        Apply normalization and add bias
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        parameters : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and ()
+            SPD mean and scalar std used for normalization
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Transformed batch of SPD matrices
+        """
+        return self.transport_fun(data, parameters, self.Covbias)
 
     def _handle_minibatch_std(self, std_scalar_batch: torch.Tensor) -> torch.Tensor:
         """
@@ -1084,32 +1139,6 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             Running mean and scalar std
         """
         return (self.running_mean, self.running_std_scalar)
-
-    def _norm_and_bias(
-        self, data: torch.Tensor, parameters: tuple[torch.Tensor, torch.Tensor]
-    ) -> torch.Tensor:
-        """
-        Apply normalization and add bias
-
-        Parameters
-        ----------
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of SPD matrices
-
-        parameters : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and ()
-            SPD mean and scalar std used for normalization
-
-        Returns
-        -------
-        data_transformed : torch.Tensor of shape (..., n_features, n_features)
-            Transformed batch of SPD matrices
-        """
-        data_normalized = self.normalize_mean(data, parameters[0])
-        data_std_transf = self.norm_and_bias_var(
-            data_normalized, self.stdScalarbias / parameters[1]
-        )
-        data_transformed = self.add_bias_mean(data_std_transf, self.Covbias)
-        return data_transformed
 
     def __repr__(self) -> str:
         """

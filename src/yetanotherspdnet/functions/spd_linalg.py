@@ -642,6 +642,8 @@ def gevd_operation(
     return result
 
 
+# TODO Issue with dimension of grad_input_1 !!! Need to pass info though -> shape of point1 ?
+# Ou alors, on deande a user de sommer quand necessaire ? -> option 2 + logique je pense !
 def gevd_operation_grad(
     grad_output: torch.Tensor,
     general_eigvals: torch.Tensor,
@@ -656,6 +658,11 @@ def gevd_operation_grad(
     symmetric matrix point2 and a SPD matrix point1.
 
     We have :math: `point1 = general_eigvecs^\top general_eigvecs, point2 = general_eigvecs^\top general_eigvals general_eigvecs`.
+
+    WARNING: If one point is a single matrix while the other is a batch, this function does not know and
+    returns a batch for the gradient of both. The user then needs to sum the result to get the final gradient.
+    Torch appears to do it anyway by broadcasting gradient but we believe that this should be done
+    manually for good practice.
 
     Parameters
     ----------
@@ -679,11 +686,11 @@ def gevd_operation_grad(
 
     Returns
     -------
-    grad_point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
-        Gradient w.r.t. SPD matrix (or batch) point1
+    grad_point1 : torch.Tensor of shape  (..., n_features, n_features)
+        Gradient w.r.t. SPD matrix  point1
 
     grad_point2 : torch.Tensor of shape (..., n_features, n_features)
-        Gradient w.r.t. batch of symmetric matrices point2
+        Gradient w.r.t. symmetric matrix point2
     """
     grad_out_cong = (
         general_eigvecs @ symmetrize(grad_output) @ general_eigvecs.transpose(-1, -2)

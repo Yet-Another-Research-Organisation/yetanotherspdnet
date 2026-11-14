@@ -608,6 +608,8 @@ class TestAffineInvariantExponentialGEVD:
         assert torch.isfinite(X_auto.grad).all()
         assert_close(X_manual.grad, X_auto.grad)
 
+        print(G_manual.grad.shape)
+
         assert G_manual.grad is not None
         assert G_auto.grad is not None
         assert torch.isfinite(G_manual.grad).all()
