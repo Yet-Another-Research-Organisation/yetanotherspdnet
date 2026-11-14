@@ -31,56 +31,72 @@ class TestEuclideanGeodesic:
     Test suite for Euclidean geodesics
     """
 
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 30), (30, 30)])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_shape(self, n_features, cond, device, dtype, generator):
+    def test_shape(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
         """
         Test that euclidean_geodesic function works and return appropriate shape
         """
-        # generate 2 random SPD points
-        points = random_SPD(
+        # generate random SPD points
+        point1 = random_SPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices1,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        point1 = points[0]
-        point2 = points[1]
+        point2 = random_SPD(
+            n_features,
+            n_matrices=n_matrices2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
         point_auto = kullback_leibler.euclidean_geodesic(point1, point2, t)
         point_manual = kullback_leibler.EuclideanGeodesic.apply(point1, point2, t)
 
-        assert point_auto.shape == point1.shape
-        assert point_auto.device == point1.device
-        assert point_auto.dtype == point1.dtype
+        assert point_auto.shape == point2.shape
+        assert point_auto.device == point2.device
+        assert point_auto.dtype == point2.dtype
         assert is_spd(point_auto)
 
-        assert point_manual.shape == point1.shape
-        assert point_manual.device == point1.device
-        assert point_manual.dtype == point1.dtype
+        assert point_manual.shape == point2.shape
+        assert point_manual.device == point2.device
+        assert point_manual.dtype == point2.dtype
         assert is_spd(point_manual)
 
         assert_close(point_auto, point_manual)
 
+    @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_extremities(self, n_features, cond, device, dtype, generator):
+    def test_extremities(self, n_matrices, n_features, cond, device, dtype, generator):
         """
         Test that for t=0 and t=1 we get point1 and point2
         """
-        # generate 2 random SPD points
-        points = random_SPD(
+        # generate random SPD points
+        point1 = random_SPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        point1 = points[0]
-        point2 = points[1]
+        point2 = random_SPD(
+            n_features,
+            n_matrices=n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
 
         point1_auto = kullback_leibler.euclidean_geodesic(point1, point2, 0)
         point2_auto = kullback_leibler.euclidean_geodesic(point1, point2, 1)
@@ -92,21 +108,29 @@ class TestEuclideanGeodesic:
         assert_close(point1_manual, point1)
         assert_close(point2_manual, point2)
 
+    @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_symmetry(self, n_features, cond, device, dtype, generator):
+    def test_symmetry(self, n_matrices, n_features, cond, device, dtype, generator):
         """
         Test the symmetry property of the geodesic
         """
-        points = random_SPD(
+        # generate random SPD points
+        point1 = random_SPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        point1 = points[0]
-        point2 = points[1]
+        point2 = random_SPD(
+            n_features,
+            n_matrices=n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
@@ -120,15 +144,18 @@ class TestEuclideanGeodesic:
         assert_close(point_12_auto, point_21_auto)
         assert_close(point_12_manual, point_21_manual)
 
+    @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_identical_points(self, n_features, cond, device, dtype, generator):
+    def test_identical_points(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
         """
         Test that for t in [0,1], the geodesic between point and point returns point
         """
         # generate 1 SPD matrix
         point = random_SPD(
             n_features,
-            n_matrices=1,
+            n_matrices=n_matrices,
             cond=cond,
             device=device,
             dtype=dtype,
@@ -143,23 +170,32 @@ class TestEuclideanGeodesic:
         assert_close(point_auto, point)
         assert_close(point_manual, point)
 
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 30), (30, 30)])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_diagonal_matrices(self, n_features, cond, device, dtype, generator):
+    def test_diagonal_matrices(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
         """
         Test that geodesic between 2 diagonal matrices works as expected
         """
         # random diagonal
-        diag_points = random_DPD(
+        point1 = random_DPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices1,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        point1 = diag_points[0]
         diagvals1 = point1.diagonal(dim1=-1, dim2=-2)
-        point2 = diag_points[1]
+        point2 = random_DPD(
+            n_features,
+            n_matrices=n_matrices2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
         diagvals2 = point2.diagonal(dim1=-1, dim2=-2)
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
@@ -168,28 +204,37 @@ class TestEuclideanGeodesic:
         point_manual = kullback_leibler.EuclideanGeodesic.apply(point1, point2, t)
 
         expected_diag = (1 - t) * diagvals1 + t * diagvals2
-        expected = torch.diag(expected_diag)
+        expected = torch.diag_embed(expected_diag)
 
         assert_close(point_auto, expected)
         assert_close(point_manual, expected)
 
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 30), (30, 30)])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_commuting_matrices(self, n_features, cond, device, dtype, generator):
+    def test_commuting_matrices(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
         """
         Test that geodesic between 2 commuting matrices works as expected
         """
         # random diagonal
-        diag_points = random_DPD(
+        diag_point1 = random_DPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices1,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        diag_point1 = diag_points[0]
         diagvals1 = diag_point1.diagonal(dim1=-1, dim2=-2)
-        diag_point2 = diag_points[1]
+        diag_point2 = random_DPD(
+            n_features,
+            n_matrices=n_matrices2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
         diagvals2 = diag_point2.diagonal(dim1=-1, dim2=-2)
         # random eigvecs
         eigvecs = random_stiefel(
@@ -210,21 +255,24 @@ class TestEuclideanGeodesic:
         point_manual = kullback_leibler.EuclideanGeodesic.apply(point1, point2, t)
 
         expected_diag = (1 - t) * diagvals1 + t * diagvals2
-        expected = eigvecs @ torch.diag(expected_diag) @ eigvecs.transpose(-1, -2)
+        expected = eigvecs @ torch.diag_embed(expected_diag) @ eigvecs.transpose(-1, -2)
 
         assert_close(point_auto, expected)
         assert_close(point_manual, expected)
 
+    @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_identity_to_general(self, n_features, cond, device, dtype, generator):
+    def test_identity_to_general(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
         """
-        Test that the geodesic between the zero matrix and a random SPD works as expected
+        Test that the geodesic between the identity and a random SPD works as expected
         """
         Id = torch.eye(n_features, device=device, dtype=dtype)
         # random point
         point = random_SPD(
             n_features,
-            n_matrices=1,
+            n_matrices=n_matrices,
             cond=cond,
             device=device,
             dtype=dtype,
@@ -241,29 +289,44 @@ class TestEuclideanGeodesic:
         assert_close(point_auto, expected)
         assert_close(point_manual, expected)
 
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 30), (30, 30)])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_backward(self, n_features, cond, device, dtype, generator):
+    def test_backward(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
         """
         Test that backward works and that automatic and manual differentiation yield same results
         """
         # generate some random SPD matrices
-        X = random_SPD(
+        X1 = random_SPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices1,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        X_manual = X.clone().detach()
-        X_manual.requires_grad = True
-        X_auto = X.clone().detach()
-        X_auto.requires_grad = True
+        X1_manual = X1.clone().detach()
+        X1_manual.requires_grad = True
+        X1_auto = X1.clone().detach()
+        X1_auto.requires_grad = True
+        X2 = random_SPD(
+            n_features,
+            n_matrices=n_matrices2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X2_manual = X2.clone().detach()
+        X2_manual.requires_grad = True
+        X2_auto = X2.clone().detach()
+        X2_auto.requires_grad = True
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        G_auto = kullback_leibler.euclidean_geodesic(X_auto[0], X_auto[1], t)
-        G_manual = kullback_leibler.EuclideanGeodesic.apply(X_manual[0], X_manual[1], t)
+        G_auto = kullback_leibler.euclidean_geodesic(X1_auto, X2_auto, t)
+        G_manual = kullback_leibler.EuclideanGeodesic.apply(X1_manual, X2_manual, t)
         assert_close(G_auto, G_manual)
 
         loss_manual = torch.norm(G_manual)
@@ -271,13 +334,21 @@ class TestEuclideanGeodesic:
         loss_auto = torch.norm(G_auto)
         loss_auto.backward()
 
-        assert X_manual.grad is not None
-        assert X_auto.grad is not None
-        assert torch.isfinite(X_manual.grad).all()
-        assert torch.isfinite(X_auto.grad).all()
-        assert is_symmetric(X_manual.grad)
-        assert is_symmetric(X_auto.grad)
-        assert_close(X_manual.grad, X_auto.grad)
+        assert X1_manual.grad is not None
+        assert X1_auto.grad is not None
+        assert torch.isfinite(X1_manual.grad).all()
+        assert torch.isfinite(X1_auto.grad).all()
+        assert is_symmetric(X1_manual.grad)
+        assert is_symmetric(X1_auto.grad)
+        assert_close(X1_manual.grad, X1_auto.grad)
+
+        assert X2_manual.grad is not None
+        assert X2_auto.grad is not None
+        assert torch.isfinite(X2_manual.grad).all()
+        assert torch.isfinite(X2_auto.grad).all()
+        assert is_symmetric(X2_manual.grad)
+        assert is_symmetric(X2_auto.grad)
+        assert_close(X2_manual.grad, X2_auto.grad)
 
 
 class TestArithmeticMean:
@@ -950,54 +1021,72 @@ class TestHarmonicCurve:
     Test suite for harmonic curves
     """
 
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 30), (30, 30)])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_shape(self, n_features, cond, device, dtype, generator):
+    def test_shape(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
         """
         Test that harmonic_curve function works and return appropriate shape
         """
-        # generate 2 random SPD points
-        points = random_SPD(
+        # generate random SPD points
+        point1 = random_SPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices1,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        point1 = points[0]
-        point2 = points[1]
+        point2 = random_SPD(
+            n_features,
+            n_matrices=n_matrices2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
         point_auto = kullback_leibler.harmonic_curve(point1, point2, t)
         point_manual = kullback_leibler.HarmonicCurve.apply(point1, point2, t)
 
-        assert point_auto.shape == point1.shape
-        assert point_auto.device == point1.device
-        assert point_auto.dtype == point1.dtype
+        assert point_auto.shape == point2.shape
+        assert point_auto.device == point2.device
+        assert point_auto.dtype == point2.dtype
         assert is_spd(point_auto)
-        assert point_manual.shape == point1.shape
-        assert point_manual.device == point1.device
-        assert point_manual.dtype == point1.dtype
+
+        assert point_manual.shape == point2.shape
+        assert point_manual.device == point2.device
+        assert point_manual.dtype == point2.dtype
         assert is_spd(point_manual)
+
         assert_close(point_auto, point_manual)
 
+    @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_extremities(self, n_features, cond, device, dtype, generator):
+    def test_extremities(self, n_matrices, n_features, cond, device, dtype, generator):
         """
         Test that for t=0 and t=1 we get point1 and point2
         """
-        # generate 2 random SPD points
-        points = random_SPD(
+        # generate random SPD points
+        point1 = random_SPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        point1 = points[0]
-        point2 = points[1]
+        point2 = random_SPD(
+            n_features,
+            n_matrices=n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
 
         point1_auto = kullback_leibler.harmonic_curve(point1, point2, 0)
         point2_auto = kullback_leibler.harmonic_curve(point1, point2, 1)
@@ -1009,21 +1098,29 @@ class TestHarmonicCurve:
         assert_close(point1_manual, point1)
         assert_close(point2_manual, point2)
 
+    @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_symmetry(self, n_features, cond, device, dtype, generator):
+    def test_symmetry(self, n_matrices, n_features, cond, device, dtype, generator):
         """
-        Test the symmetry property of the curve
+        Test the symmetry property of the geodesic
         """
-        points = random_SPD(
+        # generate random SPD points
+        point1 = random_SPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        point1 = points[0]
-        point2 = points[1]
+        point2 = random_SPD(
+            n_features,
+            n_matrices=n_matrices,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
         # generate random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
@@ -1035,15 +1132,18 @@ class TestHarmonicCurve:
         assert_close(point_12_auto, point_21_auto)
         assert_close(point_12_manual, point_21_manual)
 
+    @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_identical_points(self, n_features, cond, device, dtype, generator):
+    def test_identical_points(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
         """
-        Test that for t in [0,1], the curve between point and point returns point
+        Test that for t in [0,1], the geodesic between point and point returns point
         """
         # generate 1 SPD matrix
         point = random_SPD(
             n_features,
-            n_matrices=1,
+            n_matrices=n_matrices,
             cond=cond,
             device=device,
             dtype=dtype,
@@ -1058,23 +1158,32 @@ class TestHarmonicCurve:
         assert_close(point_auto, point)
         assert_close(point_manual, point)
 
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 30), (30, 30)])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_diagonal_matrices(self, n_features, cond, device, dtype, generator):
+    def test_diagonal_matrices(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
         """
         Test that geodesic between 2 diagonal matrices works as expected
         """
         # random diagonal
-        diag_points = random_DPD(
+        point1 = random_DPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices1,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        point1 = diag_points[0]
         diagvals1 = point1.diagonal(dim1=-1, dim2=-2)
-        point2 = diag_points[1]
+        point2 = random_DPD(
+            n_features,
+            n_matrices=n_matrices2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
         diagvals2 = point2.diagonal(dim1=-1, dim2=-2)
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
@@ -1083,28 +1192,37 @@ class TestHarmonicCurve:
         point_manual = kullback_leibler.HarmonicCurve.apply(point1, point2, t)
 
         expected_diag = 1 / ((1 - t) * 1 / diagvals1 + t * 1 / diagvals2)
-        expected = torch.diag(expected_diag)
+        expected = torch.diag_embed(expected_diag)
 
         assert_close(point_auto, expected)
         assert_close(point_manual, expected)
 
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 30), (30, 30)])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_commuting_matrices(self, n_features, cond, device, dtype, generator):
+    def test_commuting_matrices(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
         """
-        Test that curve between 2 commuting matrices works as expected
+        Test that geodesic between 2 commuting matrices works as expected
         """
         # random diagonal
-        diag_points = random_DPD(
+        diag_point1 = random_DPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices1,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        diag_point1 = diag_points[0]
         diagvals1 = diag_point1.diagonal(dim1=-1, dim2=-2)
-        diag_point2 = diag_points[1]
+        diag_point2 = random_DPD(
+            n_features,
+            n_matrices=n_matrices2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
         diagvals2 = diag_point2.diagonal(dim1=-1, dim2=-2)
         # random eigvecs
         eigvecs = random_stiefel(
@@ -1125,21 +1243,24 @@ class TestHarmonicCurve:
         point_manual = kullback_leibler.HarmonicCurve.apply(point1, point2, t)
 
         expected_diag = 1 / ((1 - t) * 1 / diagvals1 + t * 1 / diagvals2)
-        expected = eigvecs @ torch.diag(expected_diag) @ eigvecs.transpose(-1, -2)
+        expected = eigvecs @ torch.diag_embed(expected_diag) @ eigvecs.transpose(-1, -2)
 
         assert_close(point_auto, expected)
         assert_close(point_manual, expected)
 
+    @pytest.mark.parametrize("n_matrices", [1, 30])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_identity_to_general(self, n_features, cond, device, dtype, generator):
+    def test_identity_to_general(
+        self, n_matrices, n_features, cond, device, dtype, generator
+    ):
         """
-        Test that the curve between the identity and a random SPD works as expected
+        Test that the geodesic between the identity and a random SPD works as expected
         """
         Id = torch.eye(n_features, device=device, dtype=dtype)
         # random point
         point = random_SPD(
             n_features,
-            n_matrices=1,
+            n_matrices=n_matrices,
             cond=cond,
             device=device,
             dtype=dtype,
@@ -1156,29 +1277,44 @@ class TestHarmonicCurve:
         assert_close(point_auto, expected)
         assert_close(point_manual, expected)
 
+    @pytest.mark.parametrize("n_matrices1, n_matrices2", [(1, 1), (1, 30), (30, 30)])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_backward(self, n_features, cond, device, dtype, generator):
+    def test_backward(
+        self, n_matrices1, n_matrices2, n_features, cond, device, dtype, generator
+    ):
         """
         Test that backward works and that automatic and manual differentiation yield same results
         """
         # generate some random SPD matrices
-        X = random_SPD(
+        X1 = random_SPD(
             n_features,
-            n_matrices=2,
+            n_matrices=n_matrices1,
             cond=cond,
             device=device,
             dtype=dtype,
             generator=generator,
         )
-        X_manual = X.clone().detach()
-        X_manual.requires_grad = True
-        X_auto = X.clone().detach()
-        X_auto.requires_grad = True
+        X1_manual = X1.clone().detach()
+        X1_manual.requires_grad = True
+        X1_auto = X1.clone().detach()
+        X1_auto.requires_grad = True
+        X2 = random_SPD(
+            n_features,
+            n_matrices=n_matrices2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        X2_manual = X2.clone().detach()
+        X2_manual.requires_grad = True
+        X2_auto = X2.clone().detach()
+        X2_auto.requires_grad = True
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
 
-        G_auto = kullback_leibler.harmonic_curve(X_auto[0], X_auto[1], t)
-        G_manual = kullback_leibler.HarmonicCurve.apply(X_manual[0], X_manual[1], t)
+        G_auto = kullback_leibler.harmonic_curve(X1_auto, X2_auto, t)
+        G_manual = kullback_leibler.HarmonicCurve.apply(X1_manual, X2_manual, t)
         assert_close(G_auto, G_manual)
 
         loss_manual = torch.norm(G_manual)
@@ -1186,13 +1322,21 @@ class TestHarmonicCurve:
         loss_auto = torch.norm(G_auto)
         loss_auto.backward()
 
-        assert X_manual.grad is not None
-        assert X_auto.grad is not None
-        assert torch.isfinite(X_manual.grad).all()
-        assert torch.isfinite(X_auto.grad).all()
-        assert is_symmetric(X_manual.grad)
-        assert is_symmetric(X_auto.grad)
-        assert_close(X_manual.grad, X_auto.grad)
+        assert X1_manual.grad is not None
+        assert X1_auto.grad is not None
+        assert torch.isfinite(X1_manual.grad).all()
+        assert torch.isfinite(X1_auto.grad).all()
+        assert is_symmetric(X1_manual.grad)
+        assert is_symmetric(X1_auto.grad)
+        assert_close(X1_manual.grad, X1_auto.grad)
+
+        assert X2_manual.grad is not None
+        assert X2_auto.grad is not None
+        assert torch.isfinite(X2_manual.grad).all()
+        assert torch.isfinite(X2_auto.grad).all()
+        assert is_symmetric(X2_manual.grad)
+        assert is_symmetric(X2_auto.grad)
+        assert_close(X2_manual.grad, X2_auto.grad)
 
 
 class TestHarmonicMean:

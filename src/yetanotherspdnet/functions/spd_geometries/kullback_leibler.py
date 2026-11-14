@@ -7,7 +7,6 @@ from ..spd_linalg import (
     SymMatrixToCoordinates,
     Whitening,
     coloring,
-    inv_sqrtm_SPD,
     invm_SPD,
     sym_matrix_to_coordinates,
     symmetrize,
@@ -27,8 +26,8 @@ def euclidean_geodesic(
 
     Parameters
     ----------
-    point1 : torch.Tensor of shape (..., n_features, n_features)
-        Symmetric matrices
+    point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+        Symmetric matrix (or matrices)
 
     point2 : torch.Tensor of shape (..., n_features, n_features)
         Symmetric matrices
@@ -61,8 +60,8 @@ class EuclideanGeodesic(Function):
         ctx : torch.autograd.function._ContextMethodMixin
             Context object to retrieve tensors saved during the forward pass
 
-        point1 : torch.Tensor of shape (..., n_features, n_features)
-            Symmetric matrices
+        point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+            Symmetric matrix (or matrices)
 
         point2 : torch.Tensor of shape (..., n_features, n_features)
             Symmetric matrices
@@ -76,6 +75,7 @@ class EuclideanGeodesic(Function):
             Symmetric matrices
         """
         ctx.t = t
+        ctx.point1_shape = point1.shape
         return symmetrize((1 - t) * point1 + t * point2)
 
     @staticmethod
@@ -94,12 +94,15 @@ class EuclideanGeodesic(Function):
 
         Returns
         -------
-        grad_input1 : torch.Tensor of shape (..., n_features, n_features)
+        grad_input1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
 
         grad_input2 : torch.Tensor of shape (..., n_features, n_features)
         """
         t = ctx.t
-        return symmetrize((1 - t) * grad_output), symmetrize(t * grad_output), None
+        grad_input1 = symmetrize((1 - t) * grad_output)
+        grad_input1 = grad_input1.sum_to_size(ctx.point1_shape)
+        grad_input2 = symmetrize(t * grad_output)
+        return grad_input1, grad_input2, None
 
 
 # ---------------
@@ -355,8 +358,8 @@ def harmonic_curve(
 
     Parameters
     ----------
-    point1 : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
+    point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+        SPD matrix (or matrices)
 
     point2 : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
@@ -392,8 +395,8 @@ class HarmonicCurve(Function):
         ctx : torch.autograd.function._ContextMethodMixin
             Context object to retrieve tensors saved during the forward pass
 
-        point1 : torch.Tensor of shape (..., n_features, n_features)
-            SPD matrices
+        point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+            Symmetric matrix (or matrices)
 
         point2 : torch.Tensor of shape (..., n_features, n_features)
             SPD matrices
@@ -411,6 +414,7 @@ class HarmonicCurve(Function):
         point_inv = euclidean_geodesic(point1_inv, point2_inv, t)
         point = torch.cholesky_inverse(torch.linalg.cholesky(point_inv))
         ctx.t = t
+        ctx.point1_shape = point1.shape
         ctx.save_for_backward(point1_inv, point2_inv, point)
         return point
 
@@ -430,17 +434,20 @@ class HarmonicCurve(Function):
 
         Returns
         -------
-        grad_input1 : torch.Tensor of shape (..., n_features, n_features)
+        grad_input1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
 
         grad_input2 : torch.Tensor of shape (..., n_features, n_features)
         """
         t = ctx.t
         point1_inv, point2_inv, point = ctx.saved_tensors
-        return (
-            (1 - t) * point1_inv @ point @ symmetrize(grad_output) @ point @ point1_inv,
-            t * point2_inv @ point @ symmetrize(grad_output) @ point @ point2_inv,
-            None,
+        grad_input1 = (
+            (1 - t) * point1_inv @ point @ symmetrize(grad_output) @ point @ point1_inv
         )
+        grad_input1 = grad_input1.sum_to_size(ctx.point1_shape)
+        grad_input2 = (
+            t * point2_inv @ point @ symmetrize(grad_output) @ point @ point2_inv
+        )
+        return grad_input1, grad_input2, None
 
 
 # -------------

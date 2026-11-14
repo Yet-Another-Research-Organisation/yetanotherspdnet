@@ -51,8 +51,8 @@ def affine_invariant_geodesic(
 
     Parameters
     ----------
-    point1 : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
+    point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+        SPD matrix (or matrices)
 
     point2 : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
@@ -93,8 +93,8 @@ class AffineInvariantGeodesic(Function):
         ctx : torch.autograd.function._ContextMethodMixin
             Context object to retrieve tensors saved during the forward pass
 
-        point1 : torch.Tensor of shape (..., nfeatures, nfeatures)
-            SPD matrices
+        point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+            SPD matrix (or matrices)
 
         point2 : torch.Tensor of shape (..., nfeatures, nfeatures)
             SPD matrices
@@ -121,6 +121,7 @@ class AffineInvariantGeodesic(Function):
             point2,
         )
         ctx.t = t
+        ctx.point1_shape = point1.shape
         return point1_sqrtm @ middle_term1 @ point1_sqrtm
 
     @staticmethod
@@ -140,7 +141,7 @@ class AffineInvariantGeodesic(Function):
 
         Returns
         -------
-        grad_input1 : torch.Tensor of shape (..., nfeatures, nfeatures)
+        grad_input1 : torch.Tensor of shape (n_features,n_features) or (..., nfeatures, nfeatures)
             Gradient of the loss with respect to point1
 
         grad_input2 : torch.Tensor of shape (..., nfeatures, nfeatures)
@@ -194,6 +195,7 @@ class AffineInvariantGeodesic(Function):
             )
             @ point1_inv_sqrtm
         )
+        grad_input1 = grad_input1.sum_to_size(ctx.point1_shape)
         return grad_input1, grad_input2, None
 
 

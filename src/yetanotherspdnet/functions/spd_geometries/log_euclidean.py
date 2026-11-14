@@ -34,8 +34,8 @@ def log_euclidean_geodesic(
 
     Parameters
     ----------
-    point1 : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
+    point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+        SPD matrix (or matrices)
 
     point2 : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
@@ -62,8 +62,8 @@ def LogEuclideanGeodesic(
 
     Parameters
     ----------
-    point1 : torch.Tensor of shape (..., nfeatures, nfeatures)
-        SPD matrices
+    point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+        SPD matrix (or matrices)
 
     point2 : torch.Tensor of shape (..., nfeatures, nfeatures)
         SPD matrices

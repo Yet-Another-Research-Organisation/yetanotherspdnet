@@ -38,8 +38,8 @@ def geometric_euclidean_harmonic_curve(
 
     Parameters
     ----------
-    point1 : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
+    point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+        SPD matrix (or matrices)
 
     point2 : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
@@ -69,8 +69,8 @@ def GeometricEuclideanHarmonicCurve(
 
     Parameters
     ----------
-    point1 : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
+    point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+        SPD matrix (or matrices)
 
     point2 : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices

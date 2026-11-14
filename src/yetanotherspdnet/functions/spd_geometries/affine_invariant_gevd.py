@@ -30,8 +30,8 @@ def affine_invariant_geodesic_gevd(
 
     Parameters
     ----------
-    point1 : torch.Tensor of shape (..., n_features, n_features)
-        SPD matrices
+    point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+        SPD matrix (or matrices)
 
     point2 : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
@@ -80,8 +80,8 @@ class AffineInvariantGeodesicGEVD(Function):
         ctx : torch.autograd.function._ContextMethodMixin
             Context object to retrieve tensors saved during the forward pass
 
-        point1 : torch.Tensor of shape (..., nfeatures, nfeatures)
-            SPD matrices
+        point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
+            SPD matrix (or matrices)
 
         point2 : torch.Tensor of shape (..., nfeatures, nfeatures)
             SPD matrices
@@ -94,6 +94,7 @@ class AffineInvariantGeodesicGEVD(Function):
         point, general_eigvals, general_eigvecs, general_eigvecs_inv = (
             affine_invariant_geodesic_gevd(point1, point2, t)
         )
+        ctx.point1_shape = point1.shape
         ctx.t = t
         ctx.save_for_backward(general_eigvals, general_eigvecs, general_eigvecs_inv)
         return point
@@ -115,7 +116,7 @@ class AffineInvariantGeodesicGEVD(Function):
 
         Returns
         -------
-        grad_input1 : torch.Tensor of shape (..., nfeatures, nfeatures)
+        grad_input1 : torch.Tensor of shape (n_features,n_features) or (..., nfeatures, nfeatures)
             Gradient of the loss with respect to point1
 
         grad_input2 : torch.Tensor of shape (..., nfeatures, nfeatures)
@@ -140,6 +141,7 @@ class AffineInvariantGeodesicGEVD(Function):
             pow_t,
             pow_t_deriv,
         )
+        grad_input1 = grad_input1.sum_to_size(ctx.point1_shape)
         return grad_input1, grad_input2, None
 
 
