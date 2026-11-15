@@ -641,21 +641,21 @@ class BatchNormSPDMean(BatchNormSPDBase):
             Default is torch.float64
         """
         super().__init__(
-            n_features,
-            mean_type,
-            mean_options,
-            momentum,
-            norm_only,
-            norm_and_bias_mode,
-            norm_strategy,
-            minibatch_mode,
-            minibatch_momentum,
-            minibatch_maxstep,
-            parametrization,
-            parametrization_mode,
-            n_steps_ref_update,
-            device,
-            dtype,
+            n_features=n_features,
+            mean_type=mean_type,
+            mean_options=mean_options,
+            momentum=momentum,
+            norm_only=norm_only,
+            norm_and_bias_mode=norm_and_bias_mode,
+            norm_strategy=norm_strategy,
+            minibatch_mode=minibatch_mode,
+            minibatch_momentum=minibatch_momentum,
+            minibatch_maxstep=minibatch_maxstep,
+            parametrization=parametrization,
+            parametrization_mode=parametrization_mode,
+            n_steps_ref_update=n_steps_ref_update,
+            device=device,
+            dtype=dtype,
         )
 
     def _init_neutral_bias(self) -> None:
@@ -1015,8 +1015,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         """
         # TODO This won't work because...pas de backprop par rapport au parametre t des functions
         # Il faut changer pour que ça fonctionne...
-        self.geodesic_fun(parameters[0], data, self.stdScalarbias / parameters[1])
-        return self.transport_fun(data, parameters[0], self.Covbias)
+        data_rescaled = self.geodesic_fun(
+            parameters[0], data, self.stdScalarbias / parameters[1]
+        )
+        return self.transport_fun(data_rescaled, parameters[0], self.Covbias)
 
     def _handle_minibatch_std(self, std_scalar_batch: torch.Tensor) -> torch.Tensor:
         """
