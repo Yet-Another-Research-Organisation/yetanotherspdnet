@@ -102,7 +102,7 @@ class AffineInvariantGeodesicGEVD(Function):
     @staticmethod
     def backward(
         ctx, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """
         Backward pass of the affine-invariant geodesic
 
@@ -121,9 +121,11 @@ class AffineInvariantGeodesicGEVD(Function):
 
         grad_input2 : torch.Tensor of shape (..., nfeatures, nfeatures)
             Gradient of the loss with respect to point2
+
+        grad_t : torch.Tensor of shape ()
+            Gradient of the loss with respect to t
         """
-        # TODO: We need to add the backward with respect to t
-        # We need to add conditions to only compute required gradients
+        # TODO: We need to add conditions to only compute required gradients
         # condition is made possible by ctx.needs_input_grad
         # This should be done everywhere
         # Also, here, probably better to switch roles of point1 and point2
@@ -142,7 +144,20 @@ class AffineInvariantGeodesicGEVD(Function):
             pow_t_deriv,
         )
         grad_input1 = grad_input1.sum_to_size(ctx.point1_shape)
-        return grad_input1, grad_input2, None
+        if torch.is_tensor(t):
+            t_deriv_fun = lambda x: torch.pow(x, t) * torch.log(x)
+            grad_t = (
+                (
+                    grad_output
+                    @ gevd_operation(general_eigvals, general_eigvecs, t_deriv_fun)
+                )
+                .diagonal(offset=0, dim1=-1, dim2=-2)
+                .sum()
+                .reshape(t.shape)
+            )
+        else:
+            grad_t = None
+        return grad_input1, grad_input2, grad_t
 
 
 # ------------------------------------

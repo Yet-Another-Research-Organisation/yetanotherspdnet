@@ -127,7 +127,7 @@ class AffineInvariantGeodesic(Function):
     @staticmethod
     def backward(
         ctx, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """
         Backward pass of the affine-invariant geodesic
 
@@ -146,9 +146,11 @@ class AffineInvariantGeodesic(Function):
 
         grad_input2 : torch.Tensor of shape (..., nfeatures, nfeatures)
             Gradient of the loss with respect to point2
+
+        grad_t : torch.Tensor of shape ()
+            Gradient of the loss with respect to t
         """
-        # TODO: We need to add the backward with respect to t
-        # We need to add conditions to only compute required gradients
+        # TODO: We need to add conditions to only compute required gradients
         # condition is made possible by ctx.needs_input_grad
         # This should be done everywhere
         # Also, here, probably better to switch roles of point1 and point2
@@ -184,10 +186,12 @@ class AffineInvariantGeodesic(Function):
             )
             @ point2_inv_sqrtm
         )
+        grad_input1 = grad_input1.sum_to_size(ctx.point1_shape)
+        grad_output_colored1 = point1_sqrtm @ grad_output @ point1_sqrtm
         grad_input2 = (
             point1_inv_sqrtm
             @ eigh_operation_grad(
-                point1_sqrtm @ grad_output @ point1_sqrtm,
+                grad_output_colored1,
                 eigvals_middle_term1,
                 eigvecs_middle_term1,
                 pow_t,
@@ -195,8 +199,22 @@ class AffineInvariantGeodesic(Function):
             )
             @ point1_inv_sqrtm
         )
-        grad_input1 = grad_input1.sum_to_size(ctx.point1_shape)
-        return grad_input1, grad_input2, None
+        if torch.is_tensor(t):
+            t_deriv_fun = lambda x: torch.pow(x, t) * torch.log(x)
+            grad_t = (
+                (
+                    grad_output_colored1
+                    @ eigh_operation(
+                        eigvals_middle_term1, eigvecs_middle_term1, t_deriv_fun
+                    )
+                )
+                .diagonal(offset=0, dim1=-1, dim2=-2)
+                .sum()
+                .reshape(t.shape)
+            )
+        else:
+            grad_t = None
+        return grad_input1, grad_input2, grad_t
 
 
 # -----------------------------------

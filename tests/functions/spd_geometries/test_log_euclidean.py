@@ -323,9 +323,13 @@ class TestLogEuclideanGeodesic:
         X2_auto.requires_grad = True
         # random t
         t = torch.rand(1, device=device, dtype=dtype, generator=generator)
+        t_manual = t.clone().detach()
+        t_manual.requires_grad = True
+        t_auto = t.clone().detach()
+        t_auto.requires_grad = True
 
-        G_auto = log_euclidean.log_euclidean_geodesic(X1_auto, X2_auto, t)
-        G_manual = log_euclidean.LogEuclideanGeodesic(X1_manual, X2_manual, t)
+        G_auto = log_euclidean.log_euclidean_geodesic(X1_auto, X2_auto, t_auto)
+        G_manual = log_euclidean.LogEuclideanGeodesic(X1_manual, X2_manual, t_manual)
         assert_close(G_auto, G_manual)
 
         loss_manual = torch.norm(G_manual)
@@ -348,6 +352,12 @@ class TestLogEuclideanGeodesic:
         assert is_symmetric(X2_manual.grad)
         assert is_symmetric(X2_auto.grad)
         assert_close(X2_manual.grad, X2_auto.grad)
+
+        assert t_manual.grad is not None
+        assert t_auto.grad is not None
+        assert torch.isfinite(t_manual.grad).all()
+        assert torch.isfinite(t_auto.grad).all()
+        assert_close(t_manual.grad, t_auto.grad)
 
 
 # ------------------

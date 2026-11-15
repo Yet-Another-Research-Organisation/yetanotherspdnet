@@ -76,12 +76,13 @@ class EuclideanGeodesic(Function):
         """
         ctx.t = t
         ctx.point1_shape = point1.shape
+        ctx.save_for_backward(point1, point2)
         return symmetrize((1 - t) * point1 + t * point2)
 
     @staticmethod
     def backward(
         ctx, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """
         Backward pass of the Euclidean geodesic
 
@@ -97,12 +98,25 @@ class EuclideanGeodesic(Function):
         grad_input1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
 
         grad_input2 : torch.Tensor of shape (..., n_features, n_features)
+
+        grad_t : torch.Tensor of shape ()
+            Gradient of the loss with respect to t
         """
         t = ctx.t
+        point1, point2 = ctx.saved_tensors
         grad_input1 = symmetrize((1 - t) * grad_output)
         grad_input1 = grad_input1.sum_to_size(ctx.point1_shape)
         grad_input2 = symmetrize(t * grad_output)
-        return grad_input1, grad_input2, None
+        if torch.is_tensor(t):
+            grad_t = (
+                (grad_output @ (point2 - point1))
+                .diagonal(offset=0, dim1=-1, dim2=-2)
+                .sum()
+                .reshape(t.shape)
+            )
+        else:
+            grad_t = None
+        return grad_input1, grad_input2, grad_t
 
 
 # ---------------
@@ -440,14 +454,20 @@ class HarmonicCurve(Function):
         """
         t = ctx.t
         point1_inv, point2_inv, point = ctx.saved_tensors
-        grad_input1 = (
-            (1 - t) * point1_inv @ point @ symmetrize(grad_output) @ point @ point1_inv
-        )
+        grad_output_transf = point @ symmetrize(grad_output) @ point
+        grad_input1 = (1 - t) * point1_inv @ grad_output_transf @ point1_inv
         grad_input1 = grad_input1.sum_to_size(ctx.point1_shape)
-        grad_input2 = (
-            t * point2_inv @ point @ symmetrize(grad_output) @ point @ point2_inv
-        )
-        return grad_input1, grad_input2, None
+        grad_input2 = t * point2_inv @ grad_output_transf @ point2_inv
+        if torch.is_tensor(t):
+            grad_t = (
+                -(grad_output_transf @ (point2_inv - point1_inv))
+                .diagonal(offset=0, dim1=-1, dim2=-2)
+                .sum()
+                .reshape(t.shape)
+            )
+        else:
+            grad_t = None
+        return grad_input1, grad_input2, grad_t
 
 
 # -------------
