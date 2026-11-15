@@ -11,9 +11,6 @@ from yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd import (
     AffineInvariantGeodesicGEVD,
     AffineInvariantMeanGEVD,
     AffineInvariantParallelTransportGEVD,
-    affine_invariant_geodesic_gevd,
-    affine_invariant_mean_gevd,
-    affine_invariant_parallel_transport_gevd,
 )
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     ArithmeticMean,
@@ -22,30 +19,17 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     HarmonicMean,
     LeftKullbackLeiblerStdScalar,
     RightKullbackLeiblerStdScalar,
-    arithmetic_mean,
-    euclidean_geodesic,
-    harmonic_curve,
-    harmonic_mean,
-    left_kullback_leibler_std_scalar,
-    right_kullback_leibler_std_scalar,
 )
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     GeometricArithmeticHarmonicMean,
     GeometricEuclideanHarmonicCurve,
     SymmetrizedKullbackLeiblerStdScalar,
-    geometric_arithmetic_harmonic_mean,
-    geometric_euclidean_harmonic_curve,
-    symmetrized_kullback_leibler_std_scalar,
 )
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
     LogEuclideanGeodesic,
     LogEuclideanMean,
     LogEuclideanParalleTransportSPD,
     LogEuclideanStdScalar,
-    log_euclidean_geodesic,
-    log_euclidean_mean,
-    log_euclidean_parallel_transport_SPD,
-    log_euclidean_std_scalar,
 )
 
 from ..functions.spd_geometries.affine_invariant import (
@@ -54,19 +38,6 @@ from ..functions.spd_geometries.affine_invariant import (
     AffineInvariantMean,
     AffineInvariantParallelTransport,
     AffineInvariantStdScalar,
-    affine_invariant_coordinates_transport,
-    affine_invariant_geodesic,
-    affine_invariant_mean,
-    affine_invariant_parallel_transport,
-    affine_invariant_std_scalar,
-)
-from ..functions.spd_linalg import (
-    CongruenceSPD,
-    PowmSPD,
-    Whitening,
-    congruence_SPD,
-    powm_SPD,
-    whitening,
 )
 from .parametrizations import (
     SPDAdaptiveParametrization,
@@ -331,7 +302,7 @@ class BatchNormSPDBase(ABC, nn.Module):
         self.mean_fun = partial(fun, **options) if options else fun
 
         # select adaptive mean update function
-        self.adaptive_mean_fun = self._CURVE_FUNS[self.mean_type]
+        self.geodesic_fun = self._CURVE_FUNS[self.mean_type]
 
         self._init_norm_strategy_mean()
 
@@ -398,7 +369,7 @@ class BatchNormSPDBase(ABC, nn.Module):
         mean : torch.Tensor of shape (n_features, n_features)
             SPD mean used for normalization
         """
-        mean = self.adaptive_mean_fun(
+        mean = self.geodesic_fun(
             self.mean_regularizer, mean_batch, self._get_minibatch_momentum()
         )
         with torch.no_grad():
@@ -774,7 +745,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
         parameters_batch : torch.Tensor of shape (n_features, n_features)
             SPD mean of the batch of data
         """
-        self.running_mean = self.adaptive_mean_fun(
+        self.running_mean = self.geodesic_fun(
             self.running_mean.to(parameters_batch.device),
             parameters_batch,
             self.momentum,
@@ -866,6 +837,8 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         mean_type: str = "affine_invariant",
         mean_options: dict | None = None,
         momentum: float = 0.01,
+        norm_only: bool = False,
+        norm_and_bias_mode: str = "whitening",
         norm_strategy: str = "classical",
         minibatch_mode: str = "constant",
         minibatch_momentum: float = 0.01,
@@ -899,6 +872,14 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         momentum : float, optional
             Momentum for running mean update.
             Default is 0.01
+
+        norm_only : bool, optional
+            Whether to apply some bias or only perform normalization.
+            Default is False
+
+        norm_and_bias_mode : str, optional
+            How normalization and bias is applied. Default is "whitening"
+            Choices are: "whitening", "parallel_transport", "norm_only"
 
         norm_strategy : str, optional
             Strategy for normalization.
@@ -949,6 +930,8 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             mean_type=mean_type,
             mean_options=mean_options,
             momentum=momentum,
+            norm_only=norm_only,
+            norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
             minibatch_momentum=minibatch_momentum,
@@ -989,6 +972,17 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
                 torch.tensor(1.0, dtype=self.dtype, device=self.device),
             )
 
+    def _init_neutral_bias(self) -> None:
+        """
+        Set bias parameters as neutral parameters
+        """
+        # init cov neutral bias from parent class
+        super()._init_neutral_bias()
+        # scalar variance bias to 1
+        self.stdScalarbias = torch.ones(
+            (), dtype=self.dtype, device=self.device, requires_grad=False
+        )
+
     def _init_bias_parameters(self) -> None:
         """
         Initialize bias parameters and their parametrization
@@ -1001,34 +995,8 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         )
         register_parametrization(self, "stdScalarbias", ScalarSoftPlusParametrization())
 
-    # No need to change  _init_norm_and_bias, only its 2 subfunctions
-    # Also no need to change _norm_and_bias
-
-    def _norm_and_bias_norm_only(
-        self, data: torch.Tensor, parameters: tuple[torch.Tensor, torch.Tensor]
-    ) -> torch.Tensor:
-        """
-        Only apply normalization
-
-        Parameters
-        ----------
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of SPD matrices
-
-        parameters : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and ()
-            SPD mean and scalar std used for normalization
-
-        Returns
-        -------
-        data_transformed : torch.Tensor of shape (..., n_features, n_features)
-            Transformed batch of SPD matrices
-        """
-        # normalize variance
-        return Whitening.apply(data, parameters)
-
-    def _norm_and_bias_transport(
-        self, data: torch.Tensor, parameters: tuple[torch.Tensor, torch.Tensor]
-    ) -> torch.Tensor:
+    # No need to change  _init_norm_and_bias, only _norm_and_bias
+    def _norm_and_bias(self, data: torch.Tensor, parameters) -> torch.Tensor:
         """
         Apply normalization and add bias
 
@@ -1037,15 +1005,18 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
 
-        parameters : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and ()
-            SPD mean and scalar std used for normalization
+        parameters : torch.Tensor of shape (n_features, n_features)
+            SPD mean used for normalization
 
         Returns
         -------
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Transformed batch of SPD matrices
         """
-        return self.transport_fun(data, parameters, self.Covbias)
+        # TODO This won't work because...pas de backprop par rapport au parametre t des functions
+        # Il faut changer pour que ça fonctionne...
+        self.geodesic_fun(parameters[0], data, self.stdScalarbias / parameters[1])
+        return self.transport_fun(data, parameters[0], self.Covbias)
 
     def _handle_minibatch_std(self, std_scalar_batch: torch.Tensor) -> torch.Tensor:
         """
@@ -1139,6 +1110,8 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             f"  mean_type={self.mean_type},\n"
             f"  mean_options={self.mean_options},\n"
             f"  momentum={self.momentum},\n"
+            f"  norm_only={self.norm_only},\n"
+            f"  norm_and_bias_mode={self.norm_and_bias_mode},\n"
             f"  norm_strategy={self.norm_strategy},\n"
             f"  minibatch_mode={self.minibatch_mode},\n"
             f"  minibatch_momentum={self.minibatch_momentum},\n"
