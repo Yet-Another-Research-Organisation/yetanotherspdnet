@@ -1,6 +1,7 @@
 import pytest
 import torch
 from torch.testing import assert_close
+from torch.nn.utils.parametrize import is_parametrized
 
 from yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd import (
     affine_invariant_mean_gevd,
@@ -66,9 +67,8 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize(
-        "norm_and_bias_mode", ["whitening", "parallel_transport", "norm_only"]
-    )
+    @pytest.mark.parametrize("norm_only", [True, False])
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -85,6 +85,7 @@ class TestBatchNormSPDMean:
         n_features,
         mean_type,
         mean_options,
+        norm_only,
         norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
@@ -102,6 +103,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=momentum,
+            norm_only=norm_only,
             norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
@@ -120,7 +122,7 @@ class TestBatchNormSPDMean:
         assert layer.minibatch_momentum == momentum
         assert layer.device.type == device.type
         assert layer.dtype == dtype
-        if norm_and_bias_mode == "norm_only":
+        if norm_only:
             # check no parameters in that case
             assert len(list(layer.parameters())) == 0
         else:
@@ -151,9 +153,8 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize(
-        "norm_and_bias_mode", ["whitening", "parallel_transport", "norm_only"]
-    )
+    @pytest.mark.parametrize("norm_only", [True, False])
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -172,6 +173,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_only,
         norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
@@ -191,6 +193,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=momentum,
+            norm_only=norm_only,
             norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
@@ -211,11 +214,22 @@ class TestBatchNormSPDMean:
 
         output = layer(X)
 
-        if norm_and_bias_mode != "norm_only":
-            assert is_spd(layer.Covbias)
-            assert_close(
-                layer.Covbias, torch.eye(n_features, device=device, dtype=dtype)
+        assert is_spd(layer.Covbias)
+        assert_close(layer.Covbias, torch.eye(n_features, device=device, dtype=dtype))
+        if norm_only:
+            assert not isinstance(layer.Covbias, torch.nn.Parameter)
+            assert not is_parametrized(layer, "Covbias")
+            assert not layer.Covbias.requires_grad
+            # no learnable bias among the parameters, and nothing got a gradient
+            assert all("Covbias" not in name for name, _ in layer.named_parameters())
+        else:
+            assert is_parametrized(layer, "Covbias")
+            assert isinstance(
+                layer.parametrizations.Covbias.original, torch.nn.Parameter
             )
+            assert layer.Covbias.requires_grad
+            # no learnable bias among the parameters, and nothing got a gradient
+            assert any("Covbias" in name for name, _ in layer.named_parameters())
 
         assert output.shape == X.shape
         assert output.dtype == X.dtype
@@ -253,7 +267,7 @@ class TestBatchNormSPDMean:
         elif mean_type == "geometric_arithmetic_harmonic":
             G_output = geometric_arithmetic_harmonic_mean(output)
 
-        if norm_and_bias_mode == "norm_only":
+        if norm_only:
             assert_close(
                 G_output,
                 torch.eye(n_features, dtype=dtype, device=device),
@@ -281,6 +295,7 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
+    @pytest.mark.parametrize("norm_only", [True, False])
     @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
@@ -300,6 +315,7 @@ class TestBatchNormSPDMean:
         cond,
         mean_type,
         mean_options,
+        norm_only,
         norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
@@ -317,6 +333,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_only=norm_only,
             norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
@@ -347,13 +364,24 @@ class TestBatchNormSPDMean:
         assert not torch.isnan(X.grad).any()
         assert not torch.isinf(X.grad).any()
         assert is_symmetric(X.grad)
-        # check Covbias gradient
-        original_bias = layer.parametrizations.Covbias.original
-        assert original_bias.grad is not None
-        assert original_bias.grad.shape == layer.Covbias.shape
-        assert not torch.isnan(original_bias.grad).any()
-        assert not torch.isinf(original_bias.grad).any()
-        assert is_symmetric(original_bias.grad)
+        if norm_only:
+            assert_close(
+                layer.Covbias, torch.eye(n_features, device=device, dtype=dtype)
+            )
+            assert not isinstance(layer.Covbias, torch.nn.Parameter)
+            assert not layer.Covbias.requires_grad
+            assert not is_parametrized(layer, "Covbias")
+            # no learnable bias among the parameters, and nothing got a gradient
+            assert all("Covbias" not in name for name, _ in layer.named_parameters())
+            assert all(p.grad is None for p in layer.parameters())
+        else:
+            # check Covbias gradient
+            original_bias = layer.parametrizations.Covbias.original
+            assert original_bias.grad is not None
+            assert original_bias.grad.shape == layer.Covbias.shape
+            assert not torch.isnan(original_bias.grad).any()
+            assert not torch.isinf(original_bias.grad).any()
+            assert is_symmetric(original_bias.grad)
 
     @pytest.mark.parametrize("n_matrices", [10])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
@@ -409,6 +437,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_only=False,
             norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
@@ -490,6 +519,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_only=False,
             norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
@@ -558,6 +588,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_only=False,
             norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
@@ -639,9 +670,8 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize(
-        "norm_and_bias_mode", ["whitening", "parallel_transport", "norm_only"]
-    )
+    @pytest.mark.parametrize("norm_only", [True, False])
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -658,6 +688,7 @@ class TestBatchNormSPDMean:
         n_features,
         mean_type,
         mean_options,
+        norm_only,
         norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
@@ -674,6 +705,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_only=norm_only,
             norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,
@@ -691,6 +723,7 @@ class TestBatchNormSPDMean:
         assert f"mean_type={mean_type}" in repr_str
         assert f"mean_options={mean_options}" in repr_str
         assert f"momentum={0.1}" in repr_str
+        assert f"norm_only={norm_only}" in repr_str
         assert f"norm_and_bias_mode={norm_and_bias_mode}" in repr_str
         assert f"norm_strategy={norm_strategy}" in repr_str
         assert f"minibatch_mode={minibatch_mode}" in repr_str
@@ -716,9 +749,8 @@ class TestBatchNormSPDMean:
             ),
         ],
     )
-    @pytest.mark.parametrize(
-        "norm_and_bias_mode", ["whitening", "parallel_transport", "norm_only"]
-    )
+    @pytest.mark.parametrize("norm_only", [True, False])
+    @pytest.mark.parametrize("norm_and_bias_mode", ["whitening", "parallel_transport"])
     @pytest.mark.parametrize(
         "norm_strategy, minibatch_mode",
         [
@@ -735,6 +767,7 @@ class TestBatchNormSPDMean:
         n_features,
         mean_type,
         mean_options,
+        norm_only,
         norm_and_bias_mode,
         norm_strategy,
         minibatch_mode,
@@ -751,6 +784,7 @@ class TestBatchNormSPDMean:
             mean_type,
             mean_options,
             momentum=0.1,
+            norm_only=norm_only,
             norm_and_bias_mode=norm_and_bias_mode,
             norm_strategy=norm_strategy,
             minibatch_mode=minibatch_mode,

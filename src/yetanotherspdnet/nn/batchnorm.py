@@ -104,7 +104,7 @@ def _minibatch_momentum_growth(momentum: float, maxstep: int, step: int) -> floa
 
 
 class BatchNormSPDBase(ABC, nn.Module):
-    _NORM_AND_BIAS_MODES = ("whitening", "parallel_transport", "norm_only")
+    _NORM_AND_BIAS_MODES = ("whitening", "parallel_transport")
     _NORM_STRATEGIES = ("classical", "minibatch")
     _PARAMETRIZATIONS = ("softplus", "exp")
     _PARAMETRIZATION_MODES = ("static", "dynamic")
@@ -174,6 +174,7 @@ class BatchNormSPDBase(ABC, nn.Module):
         mean_type: str = "affine_invariant",
         mean_options: dict | None = None,
         momentum: float = 0.01,
+        norm_only: bool = False,
         norm_and_bias_mode: str = "whitening",
         norm_strategy: str = "classical",
         minibatch_mode: str = "constant",
@@ -208,9 +209,13 @@ class BatchNormSPDBase(ABC, nn.Module):
             Momentum for running mean update.
             Default is 0.01
 
+        norm_only : bool, optional
+            Whether to apply some bias or only perform normalization.
+            Default is False
+
         norm_and_bias_mode : str, optional
             How normalization and bias is applied. Default is "whitening"
-            Choices are: "whitening", "parallel_transport", "norm_only"
+            Choices are: "whitening", "parallel_transport"
 
         norm_strategy : str, optional
             Strategy for normalization.
@@ -278,6 +283,7 @@ class BatchNormSPDBase(ABC, nn.Module):
         self.mean_type = mean_type
         self.mean_options = mean_options
         self.momentum = momentum
+        self.norm_only = norm_only
         self.norm_and_bias_mode = norm_and_bias_mode
         self.norm_strategy = norm_strategy
         self.minibatch_mode = minibatch_mode
@@ -302,10 +308,11 @@ class BatchNormSPDBase(ABC, nn.Module):
         # initialize normalization parameters and running parameters
         self._init_norm_parameters()
 
-        if self.norm_and_bias_mode == "norm_only":
+        if self.norm_only:
             # no bias parameters, so no init of them
             # no bias, also ensure not entering _post_optimizer_hook
             self.is_dynamic = False
+            self._init_neutral_bias()
         else:
             # initialize bias parameters
             self._init_bias_parameters()
@@ -349,6 +356,13 @@ class BatchNormSPDBase(ABC, nn.Module):
             self._minibatch_momentum_fun = self._MINIBATCH_MOMENTUM_FUNS[
                 self.minibatch_mode
             ]
+
+    @abstractmethod
+    def _init_neutral_bias(self) -> None:
+        """
+        Set bias parameters as neutral parameters.
+        They need to be constant, i.e. require_grad must be False
+        """
 
     @abstractmethod
     def _init_bias_parameters(self) -> None:
@@ -521,6 +535,7 @@ class BatchNormSPDBase(ABC, nn.Module):
             f"  mean_type={self.mean_type},\n"
             f"  mean_options={self.mean_options},\n"
             f"  momentum={self.momentum},\n"
+            f"  norm_only={self.norm_only},\n"
             f"  norm_and_bias_mode={self.norm_and_bias_mode},\n"
             f"  norm_strategy={self.norm_strategy},\n"
             f"  minibatch_mode={self.minibatch_mode},\n"
@@ -566,6 +581,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
         mean_type: str = "affine_invariant",
         mean_options: dict | None = None,
         momentum: float = 0.01,
+        norm_only: bool = False,
         norm_and_bias_mode: str = "whitening",
         norm_strategy: str = "classical",
         minibatch_mode: str = "constant",
@@ -600,6 +616,10 @@ class BatchNormSPDMean(BatchNormSPDBase):
         momentum : float, optional
             Momentum for running mean update.
             Default is 0.01
+
+        norm_only : bool, optional
+            Whether to apply some bias or only perform normalization.
+            Default is False
 
         norm_and_bias_mode : str, optional
             How normalization and bias is applied. Default is "whitening"
@@ -654,6 +674,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
             mean_type,
             mean_options,
             momentum,
+            norm_only,
             norm_and_bias_mode,
             norm_strategy,
             minibatch_mode,
@@ -664,6 +685,14 @@ class BatchNormSPDMean(BatchNormSPDBase):
             n_steps_ref_update,
             device,
             dtype,
+        )
+
+    def _init_neutral_bias(self) -> None:
+        """
+        Set bias parameters as neutral parameters
+        """
+        self.Covbias = torch.eye(
+            self.n_features, dtype=self.dtype, device=self.device, requires_grad=False
         )
 
     def _init_bias_parameters(self) -> None:
@@ -688,56 +717,10 @@ class BatchNormSPDMean(BatchNormSPDBase):
         """
         Initialize normalization and bias functions
         """
-        if self.norm_and_bias_mode == "norm_only":
-            self._norm_and_bias_fun = self._norm_and_bias_norm_only
-        elif self.norm_and_bias_mode == "whitening":
+        if self.norm_and_bias_mode == "whitening":
             self.transport_fun = AffineInvariantCoordinatesTransport
-            self._norm_and_bias_fun = self._norm_and_bias_transport
         elif self.norm_and_bias_mode == "parallel_transport":
             self.transport_fun = self._TRANSPORT_FUNS[self.mean_type]
-            self._norm_and_bias_fun = self._norm_and_bias_transport
-
-    def _norm_and_bias_norm_only(
-        self, data: torch.Tensor, parameters: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Only apply normalization
-
-        Parameters
-        ----------
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of SPD matrices
-
-        parameters : torch.Tensor of shape (n_features, n_features)
-            SPD mean used for normalization
-
-        Returns
-        -------
-        data_transformed : torch.Tensor of shape (..., n_features, n_features)
-            Transformed batch of SPD matrices
-        """
-        return Whitening.apply(data, parameters)
-
-    def _norm_and_bias_transport(
-        self, data: torch.Tensor, parameters: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Apply normalization and add bias
-
-        Parameters
-        ----------
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of SPD matrices
-
-        parameters : torch.Tensor of shape (n_features, n_features)
-            SPD mean used for normalization
-
-        Returns
-        -------
-        data_transformed : torch.Tensor of shape (..., n_features, n_features)
-            Transformed batch of SPD matrices
-        """
-        return self.transport_fun(data, parameters, self.Covbias)
 
     def _norm_and_bias(self, data: torch.Tensor, parameters) -> torch.Tensor:
         """
@@ -756,7 +739,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Transformed batch of SPD matrices
         """
-        return self._norm_and_bias_fun(data, parameters)
+        return self.transport_fun(data, parameters, self.Covbias)
 
     def _get_norm_parameters(
         self, data: torch.Tensor
@@ -848,6 +831,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
             f"  mean_type={self.mean_type},\n"
             f"  mean_options={self.mean_options},\n"
             f"  momentum={self.momentum},\n"
+            f"  norm_only={self.norm_only},\n"
             f"  norm_and_bias_mode={self.norm_and_bias_mode},\n"
             f"  norm_strategy={self.norm_strategy},\n"
             f"  minibatch_mode={self.minibatch_mode},\n"
