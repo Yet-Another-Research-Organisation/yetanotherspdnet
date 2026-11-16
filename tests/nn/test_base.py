@@ -41,14 +41,12 @@ class TestBiMap:
         "parametrization_mode",
         ["static", "dynamic"],
     )
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_initialization(
         self,
         n_in,
         n_out,
         parametrized,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
         generator,
@@ -67,7 +65,6 @@ class TestBiMap:
             device=device,
             dtype=dtype,
             generator=generator,
-            use_autograd=use_autograd,
         )
         assert layer.n_in == n_in
         assert layer.n_out == n_out
@@ -97,7 +94,6 @@ class TestBiMap:
         "parametrization_mode",
         ["static", "dynamic"],
     )
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_shape(
         self,
         n_matrices,
@@ -105,7 +101,6 @@ class TestBiMap:
         n_out,
         parametrized,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
         generator,
@@ -121,7 +116,6 @@ class TestBiMap:
             device=device,
             dtype=dtype,
             generator=generator,
-            use_autograd=use_autograd,
         )
         X = random_SPD(
             n_in, n_matrices, device=device, dtype=dtype, generator=generator
@@ -146,63 +140,6 @@ class TestBiMap:
         "parametrization_mode",
         ["static", "dynamic"],
     )
-    def test_both_modes_give_same_result(
-        self,
-        n_matrices,
-        n_in,
-        parametrized,
-        parametrization_mode,
-        n_out,
-        device,
-        dtype,
-        generator,
-        seed,
-    ):
-        """
-        Test that autograd and manual gradient give same forward results
-        """
-        X = random_SPD(
-            n_in, n_matrices, device=device, dtype=dtype, generator=generator
-        )
-
-        # we need to reset the generator seed to ensure we generate same weights in both case
-        generator.manual_seed(seed)
-        layer_manual = nn_spd_base.BiMap(
-            n_in=n_in,
-            n_out=n_out,
-            parametrized=parametrized,
-            parametrization_mode=parametrization_mode,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-            use_autograd=False,
-        )
-        generator.manual_seed(seed)
-        layer_autograd = nn_spd_base.BiMap(
-            n_in=n_in,
-            n_out=n_out,
-            parametrized=parametrized,
-            parametrization_mode=parametrization_mode,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-            use_autograd=False,
-        )
-        assert_close(layer_manual.weight, layer_autograd.weight)
-
-        output_manual = layer_manual(X)
-        output_autograd = layer_autograd(X)
-
-        assert_close(output_manual, output_autograd)
-
-    @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
-    @pytest.mark.parametrize("parametrized", [True, False])
-    @pytest.mark.parametrize(
-        "parametrization_mode",
-        ["static", "dynamic"],
-    )
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(
         self,
         n_matrices,
@@ -210,7 +147,6 @@ class TestBiMap:
         n_out,
         parametrized,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
         generator,
@@ -226,7 +162,6 @@ class TestBiMap:
             device=device,
             dtype=dtype,
             generator=generator,
-            use_autograd=use_autograd,
         )
         X = random_SPD(
             n_in, n_matrices, device=device, dtype=dtype, generator=generator
@@ -264,7 +199,6 @@ class TestBiMap:
         "parametrization_mode",
         ["static", "dynamic"],
     )
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_parameter_update(
         self,
         n_matrices,
@@ -272,7 +206,6 @@ class TestBiMap:
         n_out,
         parametrized,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
         generator,
@@ -288,7 +221,6 @@ class TestBiMap:
             device=device,
             dtype=dtype,
             generator=generator,
-            use_autograd=use_autograd,
         )
         optimizer = torch.optim.SGD(layer.parameters(), lr=0.01)
         X = random_SPD(
@@ -308,95 +240,9 @@ class TestBiMap:
         # Check that weights changed
         assert not torch.allclose(layer.weight, initial_weights)
 
-    @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
-    @pytest.mark.parametrize("parametrized", [True, False])
-    @pytest.mark.parametrize(
-        "parametrization_mode",
-        ["static", "dynamic"],
-    )
-    def test_both_modes_give_same_gradient(
-        self,
-        n_matrices,
-        n_in,
-        n_out,
-        parametrized,
-        parametrization_mode,
-        device,
-        dtype,
-        generator,
-        seed,
-    ):
-        """
-        Test that parameters are updated the same way in both modes
-        """
-        # For parametrization.orthogonal, we need to set use_trivialization option to False when n_in > n_out
-        # because it appears that the corresponding module then use a torch.randn that we cannot control
-        # which makes it impossible to get the same results.
-        if (n_out < n_in) and (parametrization_mode == "static"):
-            parametrization_options = {"use_trivialization": False}
-        else:
-            parametrization_options = None
-
-        # we need to reset the generator seed to ensure we generate same weights in both case
-        generator.manual_seed(seed)
-        layer_manual = nn_spd_base.BiMap(
-            n_in=n_in,
-            n_out=n_out,
-            parametrized=parametrized,
-            parametrization_mode=parametrization_mode,
-            parametrization_options=parametrization_options,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-            use_autograd=False,
-        )
-        #
-        generator.manual_seed(seed)
-        layer_auto = nn_spd_base.BiMap(
-            n_in=n_in,
-            n_out=n_out,
-            parametrized=parametrized,
-            parametrization_mode=parametrization_mode,
-            parametrization_options=parametrization_options,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-            use_autograd=True,
-        )
-        X1 = random_SPD(
-            n_in, n_matrices, device=device, dtype=dtype, generator=generator
-        )
-        X2 = X1.clone()
-        X1.requires_grad = True
-        X2.requires_grad = True
-
-        assert_close(layer_manual.weight, layer_auto.weight)
-
-        # Forward + backward + update
-        output_manual = layer_manual(X1)
-        loss_manual = output_manual.sum()
-        loss_manual.backward()
-
-        output_auto = layer_auto(X2)
-        loss_auto = output_auto.sum()
-        loss_auto.backward()
-
-        # check input gradients
-        assert_close(X1.grad, X2.grad)
-        # check weight gradients
-        if parametrized:
-            # due to parametrization, gradient not directly on layer.weight
-            original_weight1 = layer_manual.parametrizations.weight.original
-            original_weight2 = layer_auto.parametrizations.weight.original
-            assert_close(original_weight1.grad, original_weight2.grad)
-        else:
-            assert_close(layer_manual.weight.grad, layer_auto.weight.grad)
-
-    @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_dynamic_parametrization_initialization(
-        self, n_in, n_out, use_autograd, device, dtype, generator
+        self, n_in, n_out, device, dtype, generator
     ):
         """
         Test that dynamic parametrization is initialized as expected, i.e.,
@@ -410,7 +256,6 @@ class TestBiMap:
             device=device,
             dtype=dtype,
             generator=generator,
-            use_autograd=use_autograd,
         )
         weight_tangent = layer.parametrizations.weight.original
         assert_close(
@@ -420,9 +265,8 @@ class TestBiMap:
 
     @pytest.mark.parametrize("n_matrices", [30])
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_dynamic_parametrization_ref_update(
-        self, n_matrices, n_in, n_out, use_autograd, device, dtype, generator
+        self, n_matrices, n_in, n_out, device, dtype, generator
     ):
         """
         Test that reference point is updated as expected
@@ -436,7 +280,6 @@ class TestBiMap:
             device=device,
             dtype=dtype,
             generator=generator,
-            use_autograd=use_autograd,
         )
         layer.train()
         optimizer = torch.optim.SGD(layer.parameters(), lr=0.01)
@@ -479,14 +322,12 @@ class TestBiMap:
         "parametrization_mode",
         ["static", "dynamic"],
     )
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_repr_and_str(
         self,
         n_in,
         n_out,
         parametrized,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
         generator,
@@ -502,7 +343,6 @@ class TestBiMap:
             device=device,
             dtype=dtype,
             generator=generator,
-            use_autograd=use_autograd,
         )
 
         repr_str = repr(layer)
@@ -515,7 +355,6 @@ class TestBiMap:
         assert f"device={device}" in repr_str
         assert f"dtype={dtype}" in repr_str
         assert f"generator={generator}" in repr_str
-        assert f"use_autograd={use_autograd}" in repr_str
         assert repr_str == str_str
 
     @pytest.mark.parametrize("n_in, n_out", [(100, 100), (100, 50)])
@@ -524,14 +363,12 @@ class TestBiMap:
         "parametrization_mode",
         ["static", "dynamic"],
     )
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_module_mode(
         self,
         n_in,
         n_out,
         parametrized,
         parametrization_mode,
-        use_autograd,
         device,
         dtype,
         generator,
@@ -547,7 +384,6 @@ class TestBiMap:
             device=device,
             dtype=dtype,
             generator=generator,
-            use_autograd=use_autograd,
         )
 
         # Should work in both modes
@@ -566,14 +402,13 @@ class TestReEig:
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize("eps", [1e-4])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_shape(
-        self, n_matrices, n_features, cond, eps, use_autograd, device, dtype, generator
+        self, n_matrices, n_features, cond, eps, device, dtype, generator
     ):
         """
         Test that forward pass returns correct shape
         """
-        layer = nn_spd_base.ReEig(eps=eps, use_autograd=use_autograd)
+        layer = nn_spd_base.ReEig(eps=eps)
         X = random_SPD(
             n_features,
             n_matrices,
@@ -592,14 +427,13 @@ class TestReEig:
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize("eps", [1e-4])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_output_symmetric(
-        self, n_matrices, n_features, cond, eps, use_autograd, device, dtype, generator
+        self, n_matrices, n_features, cond, eps, device, dtype, generator
     ):
         """
         Test that output matrices are SPD
         """
-        layer = nn_spd_base.ReEig(eps=eps, use_autograd=use_autograd)
+        layer = nn_spd_base.ReEig(eps=eps)
         X = random_SPD(
             n_features,
             n_matrices,
@@ -614,40 +448,13 @@ class TestReEig:
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize("eps", [1e-4])
-    def test_both_modes_give_same_result(
-        self, n_matrices, n_features, cond, eps, device, dtype, generator
-    ):
-        """
-        Test that autograd and manual gradient give same forward results
-        """
-        X = random_SPD(
-            n_features,
-            n_matrices,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-
-        layer_autograd = nn_spd_base.ReEig(eps=eps, use_autograd=True)
-        layer_manual = nn_spd_base.ReEig(eps=eps, use_autograd=False)
-
-        output_autograd = layer_autograd(X)
-        output_manual = layer_manual(X)
-
-        assert_close(output_autograd, output_manual)
-
-    @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    @pytest.mark.parametrize("eps", [1e-4])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(
-        self, n_matrices, n_features, cond, eps, use_autograd, device, dtype, generator
+        self, n_matrices, n_features, cond, eps, device, dtype, generator
     ):
         """
         Test that backward pass works (gradient computation)
         """
-        layer = nn_spd_base.ReEig(eps=eps, use_autograd=use_autograd)
+        layer = nn_spd_base.ReEig(eps=eps)
         X = random_SPD(
             n_features,
             n_matrices,
@@ -668,63 +475,25 @@ class TestReEig:
         assert not torch.isnan(X.grad).any()
         assert not torch.isinf(X.grad).any()
 
-    @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     @pytest.mark.parametrize("eps", [1e-4])
-    def test_both_modes_give_same_gradient(
-        self, n_matrices, n_features, cond, eps, device, dtype, generator
-    ):
-        """
-        Test that autograd and manual gradient give same gradients
-        """
-        X1 = random_SPD(
-            n_features,
-            n_matrices,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        X2 = X1.clone()
-        X1.requires_grad = True
-        X2.requires_grad = True
-
-        layer_autograd = nn_spd_base.ReEig(eps=eps, use_autograd=True)
-        layer_manual = nn_spd_base.ReEig(eps=eps, use_autograd=False)
-
-        output1 = layer_autograd(X1)
-        output2 = layer_manual(X2)
-
-        loss1 = torch.norm(output1)
-        loss2 = torch.norm(output2)
-
-        loss1.backward()
-        loss2.backward()
-
-        assert_close(X1.grad, X2.grad)
-
-    @pytest.mark.parametrize("eps", [1e-4])
-    @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_repr_and_str(self, eps, use_autograd):
+    def test_repr_and_str(self, eps):
         """
         Test string representations
         """
-        layer = nn_spd_base.ReEig(eps=eps, use_autograd=use_autograd)
+        layer = nn_spd_base.ReEig(eps=eps)
 
         repr_str = repr(layer)
         str_str = str(layer)
 
         assert f"eps={eps}" in repr_str
-        assert f"use_autograd={use_autograd}" in repr_str
         assert repr_str == str_str
 
     @pytest.mark.parametrize("eps", [1e-4])
-    @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_module_mode(self, eps, use_autograd):
+    def test_module_mode(self, eps):
         """
         Test that module respects train/eval mode
         """
-        layer = nn_spd_base.ReEig(eps=eps, use_autograd=use_autograd)
+        layer = nn_spd_base.ReEig(eps=eps)
 
         # Should work in both modes
         layer.train()
@@ -741,14 +510,13 @@ class TestLogEig:
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_shape(
-        self, n_matrices, n_features, cond, use_autograd, device, dtype, generator
+        self, n_matrices, n_features, cond, device, dtype, generator
     ):
         """
         Test that forward pass returns correct shape
         """
-        layer = nn_spd_base.LogEig(use_autograd=use_autograd)
+        layer = nn_spd_base.LogEig()
         X = random_SPD(
             n_features,
             n_matrices,
@@ -766,14 +534,13 @@ class TestLogEig:
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_forward_output_symmetric(
-        self, n_matrices, n_features, cond, use_autograd, device, dtype, generator
+        self, n_matrices, n_features, cond, device, dtype, generator
     ):
         """
         Test that output matrices are symmetric
         """
-        layer = nn_spd_base.LogEig(use_autograd=use_autograd)
+        layer = nn_spd_base.LogEig()
         X = random_SPD(
             n_features,
             n_matrices,
@@ -787,39 +554,13 @@ class TestLogEig:
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_both_modes_give_same_result(
-        self, n_matrices, n_features, cond, device, dtype, generator
-    ):
-        """
-        Test that autograd and manual gradient give same forward results
-        """
-        X = random_SPD(
-            n_features,
-            n_matrices,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-
-        layer_autograd = nn_spd_base.LogEig(use_autograd=True)
-        layer_manual = nn_spd_base.LogEig(use_autograd=False)
-
-        output_autograd = layer_autograd(X)
-        output_manual = layer_manual(X)
-
-        assert_close(output_autograd, output_manual)
-
-    @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    @pytest.mark.parametrize("use_autograd", [True, False])
     def test_backward_pass(
-        self, n_matrices, n_features, cond, use_autograd, device, dtype, generator
+        self, n_matrices, n_features, cond, device, dtype, generator
     ):
         """
         Test that backward pass works (gradient computation)
         """
-        layer = nn_spd_base.LogEig(use_autograd=use_autograd)
+        layer = nn_spd_base.LogEig()
         X = random_SPD(
             n_features,
             n_matrices,
@@ -840,59 +581,22 @@ class TestLogEig:
         assert not torch.isnan(X.grad).any()
         assert not torch.isinf(X.grad).any()
 
-    @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
-    def test_both_modes_give_same_gradient(
-        self, n_matrices, n_features, cond, device, dtype, generator
-    ):
-        """
-        Test that autograd and manual gradient give same gradients
-        """
-        X1 = random_SPD(
-            n_features,
-            n_matrices,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        X2 = X1.clone()
-        X1.requires_grad = True
-        X2.requires_grad = True
-
-        layer_autograd = nn_spd_base.LogEig(use_autograd=True)
-        layer_manual = nn_spd_base.LogEig(use_autograd=False)
-
-        output1 = layer_autograd(X1)
-        output2 = layer_manual(X2)
-
-        loss1 = torch.norm(output1)
-        loss2 = torch.norm(output2)
-
-        loss1.backward()
-        loss2.backward()
-
-        assert_close(X1.grad, X2.grad)
-
-    @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_repr_and_str(self, use_autograd):
+    def test_repr_and_str(self):
         """
         Test string representations
         """
-        layer = nn_spd_base.LogEig(use_autograd=use_autograd)
+        layer = nn_spd_base.LogEig()
 
         repr_str = repr(layer)
         str_str = str(layer)
 
-        assert f"use_autograd={use_autograd}" in repr_str
         assert repr_str == str_str
 
-    @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_module_mode(self, use_autograd):
+    def test_module_mode(self):
         """
         Test that module respects train/eval mode
         """
-        layer = nn_spd_base.LogEig(use_autograd=use_autograd)
+        layer = nn_spd_base.LogEig()
 
         # Should work in both modes
         layer.train()
@@ -909,14 +613,11 @@ class TestVec:
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features", [100])
-    @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_forward_shape(
-        self, n_matrices, n_features, use_autograd, device, dtype, generator
-    ):
+    def test_forward_shape(self, n_matrices, n_features, device, dtype, generator):
         """
         Test that forward pass returns correct shape
         """
-        layer = nn_spd_base.Vec(use_autograd=use_autograd)
+        layer = nn_spd_base.Vec()
         # random batch of symmetric matrices
         X = symmetrize(
             torch.squeeze(
@@ -940,42 +641,11 @@ class TestVec:
 
     @pytest.mark.parametrize("n_matrices", [1, 50])
     @pytest.mark.parametrize("n_features", [100])
-    def test_both_modes_give_same_result(
-        self, n_matrices, n_features, device, dtype, generator
-    ):
-        """
-        Test that autograd and manual gradient give same forward results
-        """
-        # random batch of symmetric matrices
-        X = symmetrize(
-            torch.squeeze(
-                torch.randn(
-                    (n_matrices, n_features, n_features),
-                    device=device,
-                    dtype=dtype,
-                    generator=generator,
-                )
-            )
-        )
-
-        layer_autograd = nn_spd_base.Vec(use_autograd=True)
-        layer_manual = nn_spd_base.Vec(use_autograd=False)
-
-        output_autograd = layer_autograd(X)
-        output_manual = layer_manual(X)
-
-        assert_close(output_autograd, output_manual)
-
-    @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_features", [100])
-    @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_backward_pass(
-        self, n_matrices, n_features, use_autograd, device, dtype, generator
-    ):
+    def test_backward_pass(self, n_matrices, n_features, device, dtype, generator):
         """
         Test that backward pass works (gradient computation)
         """
-        layer = nn_spd_base.Vec(use_autograd=use_autograd)
+        layer = nn_spd_base.Vec()
         # random batch of symmetric matrices
         X = symmetrize(
             torch.squeeze(
@@ -999,62 +669,22 @@ class TestVec:
         assert not torch.isnan(X.grad).any()
         assert not torch.isinf(X.grad).any()
 
-    @pytest.mark.parametrize("n_matrices", [1, 50])
-    @pytest.mark.parametrize("n_features", [100])
-    def test_both_modes_give_same_gradient(
-        self, n_matrices, n_features, device, dtype, generator
-    ):
-        """
-        Test that autograd and manual gradient give same gradients
-        """
-        # random batch of symmetric matrices
-        X1 = symmetrize(
-            torch.squeeze(
-                torch.randn(
-                    (n_matrices, n_features, n_features),
-                    device=device,
-                    dtype=dtype,
-                    generator=generator,
-                )
-            )
-        )
-        X2 = X1.clone()
-        X1.requires_grad = True
-        X2.requires_grad = True
-
-        layer_autograd = nn_spd_base.Vec(use_autograd=True)
-        layer_manual = nn_spd_base.Vec(use_autograd=False)
-
-        output1 = layer_autograd(X1)
-        output2 = layer_manual(X2)
-
-        loss1 = torch.norm(output1)
-        loss2 = torch.norm(output2)
-
-        loss1.backward()
-        loss2.backward()
-
-        assert_close(X1.grad, X2.grad)
-
-    @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_repr_and_str(self, use_autograd):
+    def test_repr_and_str(self):
         """
         Test string representations
         """
-        layer = nn_spd_base.Vec(use_autograd=use_autograd)
+        layer = nn_spd_base.Vec()
 
         repr_str = repr(layer)
         str_str = str(layer)
 
-        assert f"use_autograd={use_autograd}" in repr_str
         assert repr_str == str_str
 
-    @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_module_mode(self, use_autograd):
+    def test_module_mode(self):
         """
         Test that module respects train/eval mode
         """
-        layer = nn_spd_base.Vec(use_autograd=use_autograd)
+        layer = nn_spd_base.Vec()
 
         layer.train()
         assert layer.training is True

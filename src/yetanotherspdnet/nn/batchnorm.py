@@ -1013,8 +1013,6 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Transformed batch of SPD matrices
         """
-        # TODO This won't work because...pas de backprop par rapport au parametre t des functions
-        # Il faut changer pour que ça fonctionne...
         data_rescaled = self.geodesic_fun(
             parameters[0], data, self.stdScalarbias / parameters[1]
         )

@@ -67,7 +67,7 @@ class ScalarSoftPlusParametrization(nn.Module):
 
 
 class SPDParametrization(nn.Module):
-    def __init__(self, mapping: str = "softplus", use_autograd: bool = False) -> None:
+    def __init__(self, mapping: str = "softplus") -> None:
         """
         SPD Parametrization
 
@@ -77,10 +77,6 @@ class SPDParametrization(nn.Module):
             Mapping to obtain a SPD point from a symmetric matrix.
             Default is "softplus".
             Choices are: "softplus" and "exp"
-
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula. Default is False.
         """
         super().__init__()
         assert mapping in [
@@ -88,29 +84,14 @@ class SPDParametrization(nn.Module):
             "exp",
         ], f"mapping must be in ['softplus', 'exp'], got {mapping}"
         self.mapping = mapping
-        self.use_autograd = use_autograd
 
         # deal with mapping
         if self.mapping == "softplus":
-            self.spd_fun = (
-                (lambda data: scaled_softplus_symmetric(data)[0])
-                if self.use_autograd
-                else ScaledSoftPlusSymmetric.apply
-            )
-            self.tangent_fun = (
-                (lambda data: inv_scaled_softplus_SPD(data)[0])
-                if self.use_autograd
-                else InvScaledSoftPlusSPD.apply
-            )
+            self.spd_fun = ScaledSoftPlusSymmetric.apply
+            self.tangent_fun = InvScaledSoftPlusSPD.apply
         elif self.mapping == "exp":
-            self.spd_fun = (
-                (lambda data: expm_symmetric(data)[0])
-                if self.use_autograd
-                else ExpmSymmetric.apply
-            )
-            self.tangent_fun = (
-                (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
-            )
+            self.spd_fun = ExpmSymmetric.apply
+            self.tangent_fun = LogmSPD.apply
 
     def forward(self, tangent_vector: torch.Tensor) -> torch.Tensor:
         """
@@ -153,7 +134,7 @@ class SPDParametrization(nn.Module):
         str
             Representation of the layer
         """
-        return f"SPDParametrization(mapping={self.mapping}, use_autograd={self.use_autograd})"
+        return f"SPDParametrization(mapping={self.mapping})"
 
     def __str__(self) -> str:
         """
@@ -173,7 +154,6 @@ class SPDAdaptiveParametrization(nn.Module):
         n_features: int,
         initial_reference: torch.Tensor | None = None,
         mapping: str = "softplus",
-        use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
@@ -195,12 +175,6 @@ class SPDAdaptiveParametrization(nn.Module):
             Default is "softplus".
             Choices are: "softplus" and "exp"
 
-        use_autograd : bool | dict, optional
-            Use torch autograd for gradient computation. Can be bool for all layers,
-            or dict with keys: 'bimap', 'reeig', 'logeig', 'batchnorm', 'vec'.
-            Note that Vech module always uses manual gradient.
-            Default is False
-
         device : torch.device, optional
             Device to run model on. Default is torch.device('cpu')
 
@@ -216,7 +190,6 @@ class SPDAdaptiveParametrization(nn.Module):
             "exp",
         ], f"mapping must be in ['softplus', 'exp'], got {mapping}"
         self.mapping = mapping
-        self.use_autograd = use_autograd
         self.device = device
         self.dtype = dtype
 
@@ -254,25 +227,11 @@ class SPDAdaptiveParametrization(nn.Module):
 
         # Deal with mapping
         if self.mapping == "softplus":
-            self.spd_fun = (
-                (lambda data: scaled_softplus_symmetric(data)[0])
-                if self.use_autograd
-                else ScaledSoftPlusSymmetric.apply
-            )
-            self.tangent_fun = (
-                (lambda data: inv_scaled_softplus_SPD(data)[0])
-                if self.use_autograd
-                else InvScaledSoftPlusSPD.apply
-            )
+            self.spd_fun = ScaledSoftPlusSymmetric.apply
+            self.tangent_fun = InvScaledSoftPlusSPD.apply
         elif self.mapping == "exp":
-            self.spd_fun = (
-                (lambda data: expm_symmetric(data)[0])
-                if self.use_autograd
-                else ExpmSymmetric.apply
-            )
-            self.tangent_fun = (
-                (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
-            )
+            self.spd_fun = ExpmSymmetric.apply
+            self.tangent_fun = LogmSPD.apply
 
     def forward(self, tangent_vector: torch.Tensor) -> torch.Tensor:
         """
@@ -349,7 +308,6 @@ class SPDAdaptiveParametrization(nn.Module):
         return (
             f"SPDAdaptiveParametrization(n_features={self.n_features}, "
             f"initial_reference={self.initial_reference}, mapping={self.mapping}, "
-            f"use_autograd={self.use_autograd}), "
             f"device={self.device}, dtype={self.dtype})"
         )
 
@@ -372,7 +330,6 @@ class StiefelAdaptiveParametrization(nn.Module):
         n_out: int,
         initial_reference: torch.Tensor | None = None,
         mapping: str = "QR",
-        use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
@@ -399,12 +356,6 @@ class StiefelAdaptiveParametrization(nn.Module):
             Choices are: "QR" and "polar"
             WARNING: with "polar", use_autograd needs to be False
 
-        use_autograd : bool | dict, optional
-            Use torch autograd for gradient computation. Can be bool for all layers,
-            or dict with keys: 'bimap', 'reeig', 'logeig', 'batchnorm', 'vec'.
-            Note that Vech module always uses manual gradient.
-            Default is False
-
         device : torch.device, optional
             Device to run model on. Default is torch.device('cpu')
 
@@ -425,7 +376,6 @@ class StiefelAdaptiveParametrization(nn.Module):
             "polar",
         ], f"mapping must be in ['QR', 'polar'], got {mapping}"
         self.mapping = mapping
-        self.use_autograd = use_autograd
         self.device = device
         self.dtype = dtype
         self.generator = generator
@@ -456,23 +406,11 @@ class StiefelAdaptiveParametrization(nn.Module):
         self.register_buffer("last_stiefel_value", self.reference_point.detach())
 
         # Deal with retraction and tangent projection functions
-        self.projectionTangent = (
-            stiefel_projection_tangent_orthogonal
-            if self.use_autograd
-            else StiefelProjectionTangentOrthogonal.apply
-        )
+        self.projectionTangent = StiefelProjectionTangentOrthogonal.apply
         if self.mapping == "QR":
-            self.projectionStiefel = (
-                stiefel_projection_qr
-                if self.use_autograd
-                else StiefelProjectionQR.apply
-            )
+            self.projectionStiefel = StiefelProjectionQR.apply
         elif self.mapping == "polar":
-            self.projectionStiefel = (
-                stiefel_projection_polar
-                if self.use_autograd
-                else StiefelProjectionPolar.apply
-            )
+            self.projectionStiefel = StiefelProjectionPolar.apply
 
     def forward(self, weight_tangent: torch.Tensor) -> torch.Tensor:
         """
@@ -536,7 +474,6 @@ class StiefelAdaptiveParametrization(nn.Module):
         return (
             f"StiefelAdaptiveParametrization(n_in={self.n_in}, n_out={self.n_out}, "
             f"initial_reference={self.initial_reference}, mapping={self.mapping}, "
-            f"use_autograd={self.use_autograd}), "
             f"device={self.device}, dtype={self.dtype}, generator={self.generator})"
         )
 

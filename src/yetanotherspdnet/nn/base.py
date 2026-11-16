@@ -11,10 +11,6 @@ from ..functions.spd_linalg import (
     LogmSPD,
     VecBatch,
     VechBatch,
-    congruence_fullrank,
-    eigh_relu,
-    logm_SPD,
-    vec_batch,
 )
 from ..random.stiefel import _init_weights_stiefel
 
@@ -28,7 +24,6 @@ class BiMap(nn.Module):
         parametrization_mode: str = "static",
         parametrization_options: dict | None = None,
         n_steps_ref_update: int = 100,
-        use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
@@ -64,10 +59,6 @@ class BiMap(nn.Module):
             number of steps in between each reference point update.
             Default is 100
 
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula. Default is False
-
         device : torch.device, optional
             Device on which the layer is initialized.
             Default is torch.device("cpu")
@@ -89,7 +80,6 @@ class BiMap(nn.Module):
         self.parametrization_mode = parametrization_mode
         self.parametrization_options = parametrization_options
         self.n_steps_ref_update = n_steps_ref_update
-        self.use_autograd = use_autograd
         self.device = device
         self.dtype = dtype
         self.generator = generator
@@ -132,9 +122,7 @@ class BiMap(nn.Module):
                 parametrization=self.stiefel_parametrization,
             )
         # BiMap function
-        self.bimap_fun = (
-            congruence_fullrank if self.use_autograd else CongruenceFullRank.apply
-        )
+        self.bimap_fun = CongruenceFullRank.apply
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -207,7 +195,6 @@ class BiMap(nn.Module):
             f"parametrized={self.parametrized}, parametrization_mode={self.parametrization_mode}, "
             f"parametrization_options={self.parametrization_options}, "
             f"n_steps_ref_update={self.n_steps_ref_update}, "
-            f"use_autograd={self.use_autograd}, "
             f"device={self.device}, dtype={self.dtype}, generator={self.generator})"
         )
 
@@ -224,9 +211,7 @@ class BiMap(nn.Module):
 
 
 class ReEig(nn.Module):
-    def __init__(
-        self, eps: float = 1e-4, use_autograd: bool = False, dim: int | None = None
-    ) -> None:
+    def __init__(self, eps: float = 1e-4, dim: int | None = None) -> None:
         """
         ReEig layer in a SPDnet layer according to the paper:
             A Riemannian Network for SPD Matrix Learning, Huang et al
@@ -237,24 +222,14 @@ class ReEig(nn.Module):
         eps : float, optional
             Value of rectification of the eigenvalues. Default is 1e-2.
 
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula. Default is False.
-
         dim : int, optional
             Dimension of the SPD matrices. Default is None.
             Used for logging purposes.
         """
         super().__init__()
         self.eps = eps
-        self.use_autograd = use_autograd
         self.dim = dim
-
-        self.reeig_fun = (
-            (lambda data, eps: eigh_relu(data, eps)[0])
-            if self.use_autograd
-            else EighReLu.apply
-        )
+        self.reeig_fun = EighReLu.apply
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -281,7 +256,7 @@ class ReEig(nn.Module):
         str
             Representation of the layer
         """
-        return f"ReEig(eps={self.eps}, use_autograd={self.use_autograd})"
+        return f"ReEig(eps={self.eps}, dim={self.dim})"
 
     def __str__(self) -> str:
         """
@@ -296,23 +271,14 @@ class ReEig(nn.Module):
 
 
 class LogEig(nn.Module):
-    def __init__(self, use_autograd: bool = False) -> None:
+    def __init__(self) -> None:
         """
         LogEig layer in a SPDnet layer according to the paper:
             A Riemannian Network for SPD Matrix Learning, Huang et al
             AAAI Conference on Artificial Intelligence, 2017
-
-        Parameters
-        ----------
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula. Default is False.
         """
         super().__init__()
-        self.use_autograd = use_autograd
-        self.logmSPD = (
-            (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
-        )
+        self.logmSPD = LogmSPD.apply
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -339,7 +305,7 @@ class LogEig(nn.Module):
         str
             Representation of the layer
         """
-        return f"LogEig(use_autograd={self.use_autograd})"
+        return "LogEig()"
 
     def __str__(self) -> str:
         """
@@ -354,20 +320,13 @@ class LogEig(nn.Module):
 
 
 class Vec(nn.Module):
-    def __init__(self, use_autograd: bool = False):
+    def __init__(self):
         """
         Vectorization operator of a batch of matrices according to
         the last two dimensions
-
-        Parameters
-        ----------
-        use_autograd : bool, optional
-            Use torch autograd for the computation of the gradient rather than
-            the analytical formula. Default is False.
         """
         super().__init__()
-        self.use_autograd = use_autograd
-        self.vecBatch = vec_batch if self.use_autograd else VecBatch.apply
+        self.vecBatch = VecBatch.apply
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -386,14 +345,15 @@ class Vec(nn.Module):
         return self.vecBatch(data)
 
     def __repr__(self) -> str:
-        """Representation of the layer
+        """
+        Representation of the layer
 
         Returns
         -------
         str
             Representation of the layer
         """
-        return f"Vec(use_autograd={self.use_autograd})"
+        return "Vec()"
 
     def __str__(self) -> str:
         """String representation of the layer
@@ -410,16 +370,12 @@ class Vech(nn.Module):
     def __init__(self) -> None:
         """
         Vech operator of a batch of matrices according to the last two dimensions
-
-        WARNING : no automatic differentiation available here because it fails
         """
         super().__init__()
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the Vech layer
-
-        WARNING : no automatic differentiation available here because it fails
 
         Parameters
         ----------
