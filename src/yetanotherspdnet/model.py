@@ -37,7 +37,6 @@ class SPDnet(nn.Module):
         batchnorm_n_steps_ref_update: int = 100,
         vec_type: str = "vec",
         use_logeig: bool = True,
-        use_autograd: bool | dict = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
@@ -150,12 +149,6 @@ class SPDnet(nn.Module):
             Whether to apply LogEig layer before vectorization.
             Default is True
 
-        use_autograd : bool | dict, optional
-            Use torch autograd for gradient computation. Can be bool for all layers,
-            or dict with keys: 'bimap', 'reeig', 'logeig', 'batchnorm', 'vec'.
-            Note that Vech module always uses manual gradient.
-            Default is False
-
         device : torch.device, optional
             Device to run model on. Default is torch.device('cpu')
 
@@ -209,29 +202,6 @@ class SPDnet(nn.Module):
         self.dtype = dtype
         self.generator = generator
 
-        # Handle use_autograd as bool or dict
-        if isinstance(use_autograd, bool):
-            self.use_autograd = {
-                "bimap": use_autograd,
-                "reeig": use_autograd,
-                "logeig": use_autograd,
-                "batchnorm": use_autograd,
-                "vec": use_autograd,
-            }
-        else:
-            # Default all to False, then update with provided values
-            self.use_autograd = {
-                "bimap": False,
-                "reeig": False,
-                "logeig": False,
-                "batchnorm": False,
-                "vec": False,
-            }
-            self.use_autograd.update(use_autograd)
-
-        # Store original for compatibility
-        self._use_autograd_original = use_autograd
-
         # Create layers
         spdnet_layers: list[nn.Module] = [
             BiMap(
@@ -241,7 +211,6 @@ class SPDnet(nn.Module):
                 parametrization_mode=self.bimap_parametrization_mode,
                 parametrization_options=self.bimap_parametrization_options,
                 n_steps_ref_update=self.bimap_n_steps_ref_update,
-                use_autograd=self.use_autograd["bimap"],
                 device=self.device,
                 dtype=self.dtype,
                 generator=self.generator,
@@ -252,7 +221,6 @@ class SPDnet(nn.Module):
             ReEig(
                 eps=self.reeig_eps,
                 dim=self.hidden_layers_size[0],
-                use_autograd=self.use_autograd["reeig"],
             )
         )
 
@@ -272,7 +240,6 @@ class SPDnet(nn.Module):
                         parametrization=self.batchnorm_parametrization,
                         parametrization_mode=self.batchnorm_parametrization_mode,
                         n_steps_ref_update=self.batchnorm_n_steps_ref_update,
-                        use_autograd=self.use_autograd["batchnorm"],
                         device=self.device,
                         dtype=self.dtype,
                     )
@@ -291,7 +258,6 @@ class SPDnet(nn.Module):
                         parametrization=self.batchnorm_parametrization,
                         parametrization_mode=self.batchnorm_parametrization_mode,
                         n_steps_ref_update=self.batchnorm_n_steps_ref_update,
-                        use_autograd=self.use_autograd["batchnorm"],
                         device=self.device,
                         dtype=self.dtype,
                     )
@@ -305,7 +271,6 @@ class SPDnet(nn.Module):
                     parametrization_mode=self.bimap_parametrization_mode,
                     parametrization_options=self.bimap_parametrization_options,
                     n_steps_ref_update=self.bimap_n_steps_ref_update,
-                    use_autograd=self.use_autograd["bimap"],
                     device=self.device,
                     dtype=self.dtype,
                     generator=self.generator,
@@ -315,7 +280,6 @@ class SPDnet(nn.Module):
                 ReEig(
                     eps=self.reeig_eps,
                     dim=self.hidden_layers_size[i],
-                    use_autograd=self.use_autograd["reeig"],
                 )
             )
 
@@ -335,7 +299,6 @@ class SPDnet(nn.Module):
                             parametrization=self.batchnorm_parametrization,
                             parametrization_mode=self.batchnorm_parametrization_mode,
                             n_steps_ref_update=self.batchnorm_n_steps_ref_update,
-                            use_autograd=self.use_autograd["batchnorm"],
                             device=self.device,
                             dtype=self.dtype,
                         )
@@ -354,7 +317,6 @@ class SPDnet(nn.Module):
                             parametrization=self.batchnorm_parametrization,
                             parametrization_mode=self.batchnorm_parametrization_mode,
                             n_steps_ref_update=self.batchnorm_n_steps_ref_update,
-                            use_autograd=self.use_autograd["batchnorm"],
                             device=self.device,
                             dtype=self.dtype,
                         )
@@ -362,13 +324,13 @@ class SPDnet(nn.Module):
 
         # Conditionally add LogEig layer
         if self.use_logeig:
-            spdnet_layers.append(LogEig(use_autograd=self.use_autograd["logeig"]))
+            spdnet_layers.append(LogEig())
 
         self.spdnet_layers = nn.Sequential(*spdnet_layers)
 
         # Create final layer(s)
         if self.vec_type == "vec":
-            self.vectorization = Vec(use_autograd=self.use_autograd["vec"])
+            self.vectorization = Vec()
             self.linear = nn.Linear(
                 self.hidden_layers_size[-1] ** 2,
                 self.output_dim,
@@ -462,7 +424,6 @@ class SPDnet(nn.Module):
             f"  batchnorm_n_steps_ref_update={self.batchnorm_n_steps_ref_update},\n"
             f"  vec_type='{self.vec_type}',\n"
             f"  use_logeig={self.use_logeig},\n"
-            f"  use_autograd={self._use_autograd_original}\n"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f"  generator={self.generator},\n"

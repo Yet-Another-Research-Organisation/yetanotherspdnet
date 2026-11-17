@@ -225,85 +225,7 @@ class TestSPDnet:
 
     @pytest.mark.parametrize("vec_type", ["vec", "vech"])
     @pytest.mark.parametrize("batchnorm_type", ["mean_only", "mean_var_scalar"])
-    def test_use_autograd(self, vec_type, batchnorm_type, device, dtype, generator):
-        """Test that autograd and manual gradient give same results"""
-        # Create two models with same initialization
-        gen1 = torch.Generator(device=device)
-        gen1.manual_seed(777)
-        model_manual = SPDnet(
-            input_dim=10,
-            hidden_layers_size=[5],
-            output_dim=3,
-            batchnorm=True,
-            batchnorm_type=batchnorm_type,
-            vec_type=vec_type,
-            use_autograd=False,
-            device=device,
-            dtype=dtype,
-            generator=gen1,
-        )
-
-        gen2 = torch.Generator(device=device)
-        gen2.manual_seed(777)
-        model_autograd = SPDnet(
-            input_dim=10,
-            hidden_layers_size=[5],
-            output_dim=3,
-            batchnorm=True,
-            batchnorm_type=batchnorm_type,
-            vec_type=vec_type,
-            use_autograd=True,
-            device=device,
-            dtype=dtype,
-            generator=gen2,
-        )
-
-        # Copy weights to ensure both models have identical parameters
-        for (_name1, param1), (_name2, param2) in zip(
-            model_manual.named_parameters(), model_autograd.named_parameters()
-        ):
-            param2.data.copy_(param1.data)
-
-        # Create input
-        X = random_SPD(10, 5, device=device, dtype=dtype, generator=generator)
-        X_manual = X.clone().detach()
-        X_manual.requires_grad = True
-        X_autograd = X.clone().detach()
-        X_autograd.requires_grad = True
-
-        # Forward pass
-        output_manual = model_manual(X_manual)
-        output_autograd = model_autograd(X_autograd)
-
-        # Check forward outputs are the same
-        assert_close(output_manual, output_autograd)
-
-        # Backward pass
-        loss_manual = output_manual.sum()
-        loss_manual.backward()
-
-        loss_autograd = output_autograd.sum()
-        loss_autograd.backward()
-
-        # Check input gradients
-        assert X_manual.grad is not None
-        assert X_autograd.grad is not None
-        assert torch.isfinite(X_manual.grad).all()
-        assert torch.isfinite(X_autograd.grad).all()
-        assert_close(X_manual.grad, X_manual.grad.transpose(-1, -2))
-        assert_close(X_autograd.grad, X_autograd.grad.transpose(-1, -2))
-        # assert is_symmetric(X_manual.grad)
-        # assert is_symmetric(X_autograd.grad)
-
-        # Compare gradients - should be the same
-        assert_close(X_manual.grad, X_autograd.grad, atol=1e-5, rtol=1e-5)
-
-    @pytest.mark.parametrize("vec_type", ["vec", "vech"])
-    @pytest.mark.parametrize("batchnorm_type", ["mean_only", "mean_var_scalar"])
-    @pytest.mark.parametrize("use_autograd", [True, False])
-    def test_backward_pass(
-        self, vec_type, batchnorm_type, use_autograd, device, dtype, generator
-    ):
+    def test_backward_pass(self, vec_type, batchnorm_type, device, dtype, generator):
         """Test that gradients flow through the network"""
         model = SPDnet(
             input_dim=10,
@@ -315,7 +237,6 @@ class TestSPDnet:
             device=device,
             dtype=dtype,
             generator=generator,
-            use_autograd=use_autograd,
         )
 
         X = random_SPD(10, 5, device=device, dtype=dtype, generator=generator)
