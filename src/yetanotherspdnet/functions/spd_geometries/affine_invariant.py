@@ -1077,73 +1077,7 @@ def AffineInvariantParallelTransportCoordinates(
     return SymKronCoordinatesAction.apply(data_coordinates, transformation_matrix)
 
 
-def affine_invariant_parallel_transport_tangent_covariance(
-    tangent_covariance: torch.Tensor,
-    reference_point: torch.Tensor,
-    new_point: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Parallel transport of a covariance matrix (tensor) of tangent vectors in coordinates
-    from the tangent space of reference_point onto the tangent space of new_point
-
-    Parameters
-    ----------
-    tangent_covariance : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
-        Covariance matrix of tangent vectors in coordinates in the tangent space of reference_point.
-        SPD matrix
-
-    reference_point : torch.Tensor of shape (n_features, n_features)
-        SPD matrix
-
-    new_point : torch.Tensor of shape (n_features, n_features)
-        SPD matrix
-
-    Returns
-    -------
-    new_tangent_covariance : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
-        Transported covariance matrix in the tangent space of new_point
-    """
-    transformation_matrix = (
-        affine_invariant_parallel_transport_transformation_coordinates(
-            reference_point, new_point
-        )
-    )
-    return sym_kron_congruence(tangent_covariance, transformation_matrix)[0]
-
-
-def AffineInvariantParallelTransportTangentCovariance(
-    tangent_covariance: torch.Tensor,
-    reference_point: torch.Tensor,
-    new_point: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Parallel transport of a covariance matrix (tensor) of tangent vectors in coordinates
-    from the tangent space of reference_point onto the tangent space of new_point
-
-    Parameters
-    ----------
-    tangent_covariance : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
-        Covariance matrix of tangent vectors in coordinates in the tangent space of reference_point.
-        SPD matrix
-
-    reference_point : torch.Tensor of shape (n_features, n_features)
-        SPD matrix
-
-    new_point : torch.Tensor of shape (n_features, n_features)
-        SPD matrix
-
-    Returns
-    -------
-    new_tangent_covariance : torch.Tensor of shape (n_features*(n_features+1)//2, n_features*(n_features+1)//2)
-        Transported covariance matrix in the tangent space of new_point
-    """
-    transformation_matrix = AffineInvariantParallelTransportTransformationCoordinates(
-        reference_point, new_point
-    )
-    return SymKronCongruence.apply(tangent_covariance, transformation_matrix)
-
-
-def affine_invariant_parallel_transport_metric_tensor(
+def affine_invariant_parallel_transport_tangent_tensor(
     metric_tensor: torch.Tensor, reference_point: torch.Tensor, new_point: torch.Tensor
 ) -> torch.Tensor:
     """
@@ -1174,7 +1108,7 @@ def affine_invariant_parallel_transport_metric_tensor(
     return sym_kron_congruence(metric_tensor, transformation_matrix)[0]
 
 
-def AffineInvariantParallelTransportMetricTensor(
+def AffineInvariantParallelTransportTangentTensor(
     metric_tensor: torch.Tensor, reference_point: torch.Tensor, new_point: torch.Tensor
 ) -> torch.Tensor:
     """

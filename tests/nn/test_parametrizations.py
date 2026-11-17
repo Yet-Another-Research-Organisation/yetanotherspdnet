@@ -2,6 +2,9 @@ import pytest
 import torch
 from torch.testing import assert_close
 
+from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
+    AffineInvariantParallelTransportTangentTensor,
+)
 import yetanotherspdnet.nn.parametrizations as nn_parametrizations
 from utils import is_orthogonal, is_spd, is_symmetric
 from yetanotherspdnet.functions.spd_linalg import inv_sqrtm_SPD, sqrtm_SPD, symmetrize
@@ -42,22 +45,18 @@ class TestSPDParametrization:
         """
         Test that forward pass returns correct shape
         """
-        layer = nn_parametrizations.SPDParametrization(mapping=mapping)
-        # random batch of symmetric matrices
-        X = symmetrize(
-            torch.squeeze(
-                torch.randn(
-                    (n_features, n_features),
-                    device=device,
-                    dtype=dtype,
-                    generator=generator,
-                )
-            )
+        layer = nn_parametrizations.SPDParametrization(n_features, mapping=mapping)
+        # random batch of coordinates
+        X = torch.randn(
+            (n_features * (n_features + 1) // 2,),
+            device=device,
+            dtype=dtype,
+            generator=generator,
         )
 
         output = layer(X)
 
-        assert output.shape == X.shape
+        assert output.shape == (n_features, n_features)
         assert output.dtype == X.dtype
         assert output.device == X.device
         assert is_spd(output)
@@ -68,17 +67,13 @@ class TestSPDParametrization:
         """
         Test that backward pass works (gradient computation)
         """
-        layer = nn_parametrizations.SPDParametrization(mapping=mapping)
-        # random batch of symmetric matrices
-        X = symmetrize(
-            torch.squeeze(
-                torch.randn(
-                    (n_features, n_features),
-                    device=device,
-                    dtype=dtype,
-                    generator=generator,
-                )
-            )
+        layer = nn_parametrizations.SPDParametrization(n_features, mapping=mapping)
+        # random batch of coordinates
+        X = torch.randn(
+            (n_features * (n_features + 1) // 2,),
+            device=device,
+            dtype=dtype,
+            generator=generator,
         )
         X.requires_grad = True
 
@@ -88,29 +83,292 @@ class TestSPDParametrization:
 
         assert X.grad is not None
         assert X.grad.shape == X.shape
-        assert is_symmetric(X.grad)
         assert not torch.isnan(X.grad).any()
         assert not torch.isinf(X.grad).any()
 
+    @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize("mapping", ["softplus", "exp"])
-    def test_repr_and_str(self, mapping):
+    def test_right_inverse(self, n_features, mapping, device, dtype, generator):
+        """
+        Test that right inverse works, i.e., actually yields a tangent vector
+        """
+        layer = nn_parametrizations.SPDParametrization(n_features, mapping=mapping)
+        # random SPD matrix
+        X = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=100,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+
+        right_inv = layer.right_inverse(X)
+
+        assert right_inv.shape == (n_features * (n_features + 1) // 2,)
+        assert right_inv.device == X.device
+        assert right_inv.dtype == X.dtype
+
+    @pytest.mark.parametrize("n_features", [100])
+    @pytest.mark.parametrize("mapping", ["softplus", "exp"])
+    def test_repr_and_str(self, n_features, mapping):
         """
         Test string representations
         """
-        layer = nn_parametrizations.SPDParametrization(mapping=mapping)
+        layer = nn_parametrizations.SPDParametrization(n_features, mapping=mapping)
 
         repr_str = repr(layer)
         str_str = str(layer)
 
+        assert f"n_features={n_features}" in repr_str
         assert f"mapping={mapping}" in repr_str
         assert repr_str == str_str
 
+    @pytest.mark.parametrize("n_features", [100])
     @pytest.mark.parametrize("mapping", ["softplus", "exp"])
-    def test_module_mode(self, mapping):
+    def test_module_mode(self, n_features, mapping):
         """
         Test that module respects train/eval mode
         """
-        layer = nn_parametrizations.SPDParametrization(mapping=mapping)
+        layer = nn_parametrizations.SPDParametrization(n_features, mapping=mapping)
+
+        layer.train()
+        assert layer.training is True
+
+        layer.eval()
+        assert layer.training is False
+
+
+class TestSPDAndTensorParametrization:
+    """
+    Test suite for SPDAndTensorParametrization module
+    """
+
+    @pytest.mark.parametrize("n_features", [10])
+    @pytest.mark.parametrize("mapping", ["softplus", "exp"])
+    def test_forward_shape_diagonal(
+        self, n_features, mapping, device, dtype, generator
+    ):
+        """
+        Test that forward pass returns correct shape
+        """
+        dim = n_features * (n_features + 1) // 2
+        layer = nn_parametrizations.SPDAndTensorParametrization(
+            n_features, mapping=mapping, tensor_format="diagonal"
+        )
+        # random batch of coordinates
+        X = torch.randn((dim,), device=device, dtype=dtype, generator=generator)
+        T = torch.randn((dim,), device=device, dtype=dtype, generator=generator)
+
+        output = layer((X, T))
+
+        assert type(output) is tuple
+        assert len(output) == 2
+
+        assert output[0].shape == (n_features, n_features)
+        assert output[0].dtype == X.dtype
+        assert output[0].device == X.device
+        assert is_spd(output[0])
+
+        assert output[1].shape == (dim, dim)
+        assert output[1].dtype == T.dtype
+        assert output[1].device == T.device
+        assert is_spd(output[1])
+
+    @pytest.mark.parametrize("n_features", [10])
+    @pytest.mark.parametrize("mapping", ["softplus", "exp"])
+    def test_forward_shape_full(self, n_features, mapping, device, dtype, generator):
+        """
+        Test that forward pass returns correct shape
+        """
+        dim = n_features * (n_features + 1) // 2
+        layer = nn_parametrizations.SPDAndTensorParametrization(
+            n_features, mapping=mapping, tensor_format="full"
+        )
+        # random batch of coordinates
+        X = torch.randn((dim,), device=device, dtype=dtype, generator=generator)
+        T = torch.randn(
+            (dim * (dim + 1) // 2,), device=device, dtype=dtype, generator=generator
+        )
+
+        output = layer((X, T))
+
+        assert type(output) is tuple
+        assert len(output) == 2
+
+        assert output[0].shape == (n_features, n_features)
+        assert output[0].dtype == X.dtype
+        assert output[0].device == X.device
+        assert is_spd(output[0])
+
+        assert output[1].shape == (dim, dim)
+        assert output[1].dtype == T.dtype
+        assert output[1].device == T.device
+        assert is_spd(output[1])
+
+    @pytest.mark.parametrize("n_features", [10])
+    @pytest.mark.parametrize("mapping", ["softplus", "exp"])
+    def test_backward_pass_diagonal(
+        self, n_features, mapping, device, dtype, generator
+    ):
+        """
+        Test that backward pass works (gradient computation)
+        """
+        dim = n_features * (n_features + 1) // 2
+        layer = nn_parametrizations.SPDAndTensorParametrization(
+            n_features, mapping=mapping, tensor_format="diagonal"
+        )
+        # random batch of coordinates
+        X = torch.randn((dim,), device=device, dtype=dtype, generator=generator)
+        T = torch.randn((dim,), device=device, dtype=dtype, generator=generator)
+        X.requires_grad = True
+        T.requires_grad = True
+
+        output = layer((X, T))
+        loss = torch.norm(output[0]) + torch.norm(output[1])
+        loss.backward()
+
+        assert X.grad is not None
+        assert X.grad.shape == X.shape
+        assert not torch.isnan(X.grad).any()
+        assert not torch.isinf(X.grad).any()
+
+        assert T.grad is not None
+        assert T.grad.shape == T.shape
+        assert not torch.isnan(T.grad).any()
+        assert not torch.isinf(T.grad).any()
+
+    @pytest.mark.parametrize("n_features", [10])
+    @pytest.mark.parametrize("mapping", ["softplus", "exp"])
+    def test_backward_pass_full(self, n_features, mapping, device, dtype, generator):
+        """
+        Test that backward pass works (gradient computation)
+        """
+        dim = n_features * (n_features + 1) // 2
+        layer = nn_parametrizations.SPDAndTensorParametrization(
+            n_features, mapping=mapping, tensor_format="full"
+        )
+        # random batch of coordinates
+        X = torch.randn((dim,), device=device, dtype=dtype, generator=generator)
+        T = torch.randn(
+            (dim * (dim + 1) // 2,), device=device, dtype=dtype, generator=generator
+        )
+        X.requires_grad = True
+        T.requires_grad = True
+
+        output = layer((X, T))
+        loss = torch.norm(output[0]) + torch.norm(output[1])
+        loss.backward()
+
+        assert X.grad is not None
+        assert X.grad.shape == X.shape
+        assert not torch.isnan(X.grad).any()
+        assert not torch.isinf(X.grad).any()
+
+        assert T.grad is not None
+        assert T.grad.shape == T.shape
+        assert not torch.isnan(T.grad).any()
+        assert not torch.isinf(T.grad).any()
+
+    @pytest.mark.parametrize("n_features", [10])
+    @pytest.mark.parametrize("mapping", ["softplus", "exp"])
+    def test_right_inverse_diagonal(
+        self, n_features, mapping, device, dtype, generator
+    ):
+        """
+        Test that right inverse works, i.e., actually yields a tangent vector
+        """
+        dim = n_features * (n_features + 1) // 2
+        identity = torch.eye(n_features, dtype=dtype, device=device)
+        layer = nn_parametrizations.SPDAndTensorParametrization(
+            n_features, mapping=mapping, tensor_format="diagonal"
+        )
+        # random SPD matrix
+        X = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=100,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # random tensor
+        T_id = torch.diag_embed(torch.randn((dim,), dtype=dtype, device=device) ** 2)
+        T = AffineInvariantParallelTransportTangentTensor(T_id, identity, X)
+
+        right_inv = layer.right_inverse((X, T))
+
+        assert right_inv[0].shape == (n_features * (n_features + 1) // 2,)
+        assert right_inv[0].device == X.device
+        assert right_inv[0].dtype == X.dtype
+
+        assert right_inv[1].shape == (dim,)
+        assert right_inv[1].device == T.device
+        assert right_inv[1].dtype == T.dtype
+
+    @pytest.mark.parametrize("n_features", [10])
+    @pytest.mark.parametrize("mapping", ["softplus", "exp"])
+    def test_right_inverse_full(self, n_features, mapping, device, dtype, generator):
+        """
+        Test that right inverse works, i.e., actually yields a tangent vector
+        """
+        dim = n_features * (n_features + 1) // 2
+        layer = nn_parametrizations.SPDAndTensorParametrization(
+            n_features, mapping=mapping, tensor_format="diagonal"
+        )
+        # random SPD matrix
+        X = random_SPD(
+            n_features,
+            n_matrices=1,
+            cond=100,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # random tensor
+        T = random_SPD(
+            dim, n_matrices=1, cond=100, device=device, dtype=dtype, generator=generator
+        )
+
+        right_inv = layer.right_inverse((X, T))
+
+        assert right_inv[0].shape == (n_features * (n_features + 1) // 2,)
+        assert right_inv[0].device == X.device
+        assert right_inv[0].dtype == X.dtype
+
+        assert right_inv[1].shape == (dim,)
+        assert right_inv[1].device == T.device
+        assert right_inv[1].dtype == T.dtype
+
+    @pytest.mark.parametrize("n_features", [100])
+    @pytest.mark.parametrize("mapping", ["softplus", "exp"])
+    @pytest.mark.parametrize("tensor_format", ["diagonal", "full"])
+    def test_repr_and_str(self, n_features, mapping, tensor_format):
+        """
+        Test string representations
+        """
+        layer = nn_parametrizations.SPDAndTensorParametrization(
+            n_features, mapping=mapping, tensor_format=tensor_format
+        )
+
+        repr_str = repr(layer)
+        str_str = str(layer)
+
+        assert f"n_features={n_features}" in repr_str
+        assert f"mapping={mapping}" in repr_str
+        assert f"tensor_format={tensor_format}" in repr_str
+        assert repr_str == str_str
+
+    @pytest.mark.parametrize("n_features", [100])
+    @pytest.mark.parametrize("mapping", ["softplus", "exp"])
+    @pytest.mark.parametrize("tensor_format", ["diagonal", "full"])
+    def test_module_mode(self, n_features, mapping, tensor_format):
+        """
+        Test that module respects train/eval mode
+        """
+        layer = nn_parametrizations.SPDAndTensorParametrization(
+            n_features, mapping=mapping, tensor_format=tensor_format
+        )
 
         layer.train()
         assert layer.training is True

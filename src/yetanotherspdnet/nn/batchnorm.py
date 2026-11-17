@@ -675,7 +675,9 @@ class BatchNormSPDMean(BatchNormSPDBase):
         )
         # deal with parametrization
         if self.parametrization_mode == "static":
-            self.spd_parametrization = SPDParametrization(mapping=self.parametrization)
+            self.spd_parametrization = SPDParametrization(
+                self.n_features, mapping=self.parametrization
+            )
         elif self.parametrization_mode == "dynamic":
             self.spd_parametrization = SPDAdaptiveParametrization(
                 self.n_features,

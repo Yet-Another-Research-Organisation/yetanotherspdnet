@@ -3813,498 +3813,9 @@ class TestAffineInvariantParallelTransportCoordinates:
         assert_close(xi_manual.grad, xi_auto.grad)
 
 
-class TestAffineInvariantParallelTransportTangentCovariance:
+class TestAffineInvariantParallelTransportTangentTensor:
     """
-    Test suite for parallel transport of a covariance matrix of coordinates
-    """
-
-    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
-    def test_forward_shape(self, n_features, cond, device, dtype, generator):
-        """
-        Test that output structure is as expected
-        """
-        dim = n_features * (n_features + 1) // 2
-        Cov = random_SPD(
-            dim,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        # generate reference SPD point and new reference SPD point
-        reference_point = random_SPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        new_point = random_SPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-
-        Cov_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_tangent_covariance(
-                Cov, reference_point, new_point
-            )
-        )
-        Cov_transf_manual = (
-            affine_invariant.AffineInvariantParallelTransportTangentCovariance(
-                Cov, reference_point, new_point
-            )
-        )
-
-        assert Cov_transf_auto.shape == Cov.shape
-        assert Cov_transf_auto.device == Cov.device
-        assert Cov_transf_auto.dtype == Cov.dtype
-        assert is_spd(Cov_transf_auto)
-
-        assert Cov_transf_manual.shape == Cov.shape
-        assert Cov_transf_manual.device == Cov.device
-        assert Cov_transf_manual.dtype == Cov.dtype
-        assert is_spd(Cov_transf_manual)
-
-    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
-    def test_same_reference_points(self, n_features, cond, device, dtype, generator):
-        """
-        Test that same reference points leave covariance unchanged
-        """
-        dim = n_features * (n_features + 1) // 2
-        Cov = random_SPD(
-            dim,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        # generate reference SPD point and new reference SPD point
-        reference_point = random_SPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        new_point = reference_point
-
-        Cov_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_tangent_covariance(
-                Cov, reference_point, new_point
-            )
-        )
-        Cov_transf_manual = (
-            affine_invariant.AffineInvariantParallelTransportTangentCovariance(
-                Cov, reference_point, new_point
-            )
-        )
-
-        assert_close(Cov_transf_auto, Cov)
-        assert_close(Cov_transf_manual, Cov)
-
-    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
-    def test_from_identity(self, n_features, cond, device, dtype, generator):
-        """
-        Test that reference_point = Id leaves covariance unchanged
-        """
-        dim = n_features * (n_features + 1) // 2
-        Cov = random_SPD(
-            dim,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        # generate reference SPD point and new reference SPD point
-        reference_point = torch.eye(n_features, device=device, dtype=dtype)
-        new_point = random_SPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-
-        Cov_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_tangent_covariance(
-                Cov, reference_point, new_point
-            )
-        )
-        Cov_transf_manual = (
-            affine_invariant.AffineInvariantParallelTransportTangentCovariance(
-                Cov, reference_point, new_point
-            )
-        )
-
-        assert_close(Cov_transf_auto, Cov)
-        assert_close(Cov_transf_manual, Cov)
-
-    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
-    def test_to_identity(self, n_features, cond, device, dtype, generator):
-        """
-        Test that new_point = Id leaves covariance unchanged
-        """
-        dim = n_features * (n_features + 1) // 2
-        Cov = random_SPD(
-            dim,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        # generate reference SPD point and new reference SPD point
-        reference_point = random_SPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        new_point = torch.eye(n_features, device=device, dtype=dtype)
-
-        Cov_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_tangent_covariance(
-                Cov, reference_point, new_point
-            )
-        )
-        Cov_transf_manual = (
-            affine_invariant.AffineInvariantParallelTransportTangentCovariance(
-                Cov, reference_point, new_point
-            )
-        )
-
-        assert_close(Cov_transf_auto, Cov)
-        assert_close(Cov_transf_manual, Cov)
-
-    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
-    def test_diagonal_reference_points(
-        self, n_features, cond, device, dtype, generator
-    ):
-        """
-        Test that it works as expected for diagonal reference points
-        """
-        dim = n_features * (n_features + 1) // 2
-        Cov = random_SPD(
-            dim,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        reference_point = random_DPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        new_point = random_DPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-
-        Cov_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_tangent_covariance(
-                Cov, reference_point, new_point
-            )
-        )
-        Cov_transf_manual = (
-            affine_invariant.AffineInvariantParallelTransportTangentCovariance(
-                Cov, reference_point, new_point
-            )
-        )
-
-        assert_close(Cov_transf_auto, Cov)
-        assert_close(Cov_transf_manual, Cov)
-
-    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
-    def test_commuting_reference_points(
-        self, n_features, cond, device, dtype, generator
-    ):
-        """
-        Test that it works as expected for commuting reference points
-        """
-        dim = n_features * (n_features + 1) // 2
-        Cov = random_SPD(
-            dim,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        diag_reference = random_DPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        diag_new = random_DPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        eigvecs = random_stiefel(
-            n_features,
-            n_features,
-            n_matrices=1,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        reference_point = eigvecs @ diag_reference @ eigvecs.transpose(-2, -1)
-        new_point = eigvecs @ diag_new @ eigvecs.transpose(-2, -1)
-
-        Cov_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_tangent_covariance(
-                Cov, reference_point, new_point
-            )
-        )
-        Cov_transf_manual = (
-            affine_invariant.AffineInvariantParallelTransportTangentCovariance(
-                Cov, reference_point, new_point
-            )
-        )
-
-        assert_close(Cov_transf_auto, Cov)
-        assert_close(Cov_transf_manual, Cov)
-
-    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
-    def test_identity_cov(self, n_features, cond, device, dtype, generator):
-        """
-        Test that identity covariance yields an identity covariance
-        """
-        dim = n_features * (n_features + 1) // 2
-        Cov = torch.eye(dim, device=device, dtype=dtype)
-        # generate reference SPD point and new reference SPD point
-        reference_point = random_SPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        new_point = random_SPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-
-        Cov_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_tangent_covariance(
-                Cov, reference_point, new_point
-            )
-        )
-        Cov_transf_manual = (
-            affine_invariant.AffineInvariantParallelTransportTangentCovariance(
-                Cov, reference_point, new_point
-            )
-        )
-
-        assert_close(Cov_transf_auto, Cov)
-        assert_close(Cov_transf_manual, Cov)
-
-    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
-    def test_inner_product_conservation(
-        self, n_features, cond, device, dtype, generator
-    ):
-        """
-        Test that inner product is conserved
-        """
-        dim = n_features * (n_features + 1) // 2
-        Cov = random_SPD(
-            dim,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        # generate reference SPD point and new reference SPD point
-        reference_point = random_SPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        new_point = random_SPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-
-        Cov_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_tangent_covariance(
-                Cov, reference_point, new_point
-            )
-        )
-        Cov_transf_manual = (
-            affine_invariant.AffineInvariantParallelTransportTangentCovariance(
-                Cov, reference_point, new_point
-            )
-        )
-
-        # generate random coordinates at reference_point
-        coordinates_reference = torch.squeeze(
-            torch.randn(
-                dim,
-                device=device,
-                dtype=dtype,
-                generator=generator,
-            )
-        )
-
-        # transported coordinates
-        coordinates_new = (
-            affine_invariant.affine_invariant_parallel_transport_coordinates(
-                coordinates_reference, reference_point, new_point
-            )
-        )
-
-        assert_close(
-            torch.sum(
-                coordinates_new * (torch.linalg.inv(Cov_transf_auto) @ coordinates_new)
-            ),
-            torch.sum(
-                coordinates_reference * (torch.linalg.inv(Cov) @ coordinates_reference)
-            ),
-            rtol=1e-5,
-            atol=1e-5,
-        )
-
-        assert_close(
-            torch.sum(
-                coordinates_new
-                * (torch.linalg.inv(Cov_transf_manual) @ coordinates_new)
-            ),
-            torch.sum(
-                coordinates_reference * (torch.linalg.inv(Cov) @ coordinates_reference)
-            ),
-            rtol=1e-5,
-            atol=1e-5,
-        )
-
-    @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
-    def test_backward(self, n_features, cond, device, dtype, generator):
-        """
-        Test that automatic and manual gradients are the same
-        """
-        dim = n_features * (n_features + 1) // 2
-        Cov = random_SPD(
-            dim,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        # generate reference SPD point and new reference SPD point
-        reference_point = random_SPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-        new_point = random_SPD(
-            n_features,
-            n_matrices=1,
-            cond=cond,
-            device=device,
-            dtype=dtype,
-            generator=generator,
-        )
-
-        X_manual = reference_point.clone().detach()
-        X_manual.requires_grad = True
-        X_auto = reference_point.clone().detach()
-        X_auto.requires_grad = True
-
-        Y_manual = new_point.clone().detach()
-        Y_manual.requires_grad = True
-        Y_auto = new_point.clone().detach()
-        Y_auto.requires_grad = True
-
-        Cov_manual = Cov.clone().detach()
-        Cov_manual.requires_grad = True
-        Cov_auto = Cov.clone().detach()
-        Cov_auto.requires_grad = True
-
-        Cov_transf_manual = (
-            affine_invariant.AffineInvariantParallelTransportTangentCovariance(
-                Cov_manual, X_manual, Y_manual
-            )
-        )
-        Cov_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_tangent_covariance(
-                Cov_auto, X_auto, Y_auto
-            )
-        )
-
-        loss_manual = torch.norm(Cov_transf_manual)
-        loss_manual.backward()
-        loss_auto = torch.norm(Cov_transf_auto)
-        loss_auto.backward()
-
-        assert X_manual.grad is not None
-        assert X_auto.grad is not None
-        assert torch.isfinite(X_manual.grad).all()
-        assert torch.isfinite(X_auto.grad).all()
-        assert is_symmetric(X_manual.grad)
-        assert is_symmetric(X_auto.grad)
-        assert_close(X_manual.grad, X_auto.grad)
-
-        assert Y_manual.grad is not None
-        assert Y_auto.grad is not None
-        assert torch.isfinite(Y_manual.grad).all()
-        assert torch.isfinite(Y_auto.grad).all()
-        assert is_symmetric(Y_manual.grad)
-        assert is_symmetric(Y_auto.grad)
-        assert_close(Y_manual.grad, Y_auto.grad)
-
-        assert Cov_manual.grad is not None
-        assert Cov_auto.grad is not None
-        assert torch.isfinite(Cov_manual.grad).all()
-        assert torch.isfinite(Cov_auto.grad).all()
-        assert_close(Cov_manual.grad, Cov_auto.grad)
-
-
-class TestAffineInvariantParallelTransportMetricTensor:
-    """
-    Test suite for parallel transport of a covariance matrix of coordinates
+    Test suite for parallel transport of a tensor of coordinates
     """
 
     @pytest.mark.parametrize("n_features, cond", [(20, 1000)])
@@ -4340,12 +3851,14 @@ class TestAffineInvariantParallelTransportMetricTensor:
         )
 
         G_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_metric_tensor(
+            affine_invariant.affine_invariant_parallel_transport_tangent_tensor(
                 G, reference_point, new_point
             )
         )
-        G_transf_manual = affine_invariant.AffineInvariantParallelTransportMetricTensor(
-            G, reference_point, new_point
+        G_transf_manual = (
+            affine_invariant.AffineInvariantParallelTransportTangentTensor(
+                G, reference_point, new_point
+            )
         )
 
         assert G_transf_auto.shape == G.shape
@@ -4384,12 +3897,14 @@ class TestAffineInvariantParallelTransportMetricTensor:
         new_point = reference_point
 
         G_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_metric_tensor(
+            affine_invariant.affine_invariant_parallel_transport_tangent_tensor(
                 G, reference_point, new_point
             )
         )
-        G_transf_manual = affine_invariant.AffineInvariantParallelTransportMetricTensor(
-            G, reference_point, new_point
+        G_transf_manual = (
+            affine_invariant.AffineInvariantParallelTransportTangentTensor(
+                G, reference_point, new_point
+            )
         )
 
         assert_close(G_transf_auto, G)
@@ -4421,12 +3936,14 @@ class TestAffineInvariantParallelTransportMetricTensor:
         )
 
         G_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_metric_tensor(
+            affine_invariant.affine_invariant_parallel_transport_tangent_tensor(
                 G, reference_point, new_point
             )
         )
-        G_transf_manual = affine_invariant.AffineInvariantParallelTransportMetricTensor(
-            G, reference_point, new_point
+        G_transf_manual = (
+            affine_invariant.AffineInvariantParallelTransportTangentTensor(
+                G, reference_point, new_point
+            )
         )
 
         assert_close(G_transf_auto, G)
@@ -4458,12 +3975,14 @@ class TestAffineInvariantParallelTransportMetricTensor:
         new_point = torch.eye(n_features, device=device, dtype=dtype)
 
         G_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_metric_tensor(
+            affine_invariant.affine_invariant_parallel_transport_tangent_tensor(
                 G, reference_point, new_point
             )
         )
-        G_transf_manual = affine_invariant.AffineInvariantParallelTransportMetricTensor(
-            G, reference_point, new_point
+        G_transf_manual = (
+            affine_invariant.AffineInvariantParallelTransportTangentTensor(
+                G, reference_point, new_point
+            )
         )
 
         assert_close(G_transf_auto, G)
@@ -4503,12 +4022,14 @@ class TestAffineInvariantParallelTransportMetricTensor:
         )
 
         G_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_metric_tensor(
+            affine_invariant.affine_invariant_parallel_transport_tangent_tensor(
                 G, reference_point, new_point
             )
         )
-        G_transf_manual = affine_invariant.AffineInvariantParallelTransportMetricTensor(
-            G, reference_point, new_point
+        G_transf_manual = (
+            affine_invariant.AffineInvariantParallelTransportTangentTensor(
+                G, reference_point, new_point
+            )
         )
 
         assert_close(G_transf_auto, G)
@@ -4558,12 +4079,14 @@ class TestAffineInvariantParallelTransportMetricTensor:
         new_point = eigvecs @ diag_new @ eigvecs.transpose(-2, -1)
 
         G_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_metric_tensor(
+            affine_invariant.affine_invariant_parallel_transport_tangent_tensor(
                 G, reference_point, new_point
             )
         )
-        G_transf_manual = affine_invariant.AffineInvariantParallelTransportMetricTensor(
-            G, reference_point, new_point
+        G_transf_manual = (
+            affine_invariant.AffineInvariantParallelTransportTangentTensor(
+                G, reference_point, new_point
+            )
         )
 
         assert_close(G_transf_auto, G)
@@ -4595,12 +4118,14 @@ class TestAffineInvariantParallelTransportMetricTensor:
         )
 
         G_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_metric_tensor(
+            affine_invariant.affine_invariant_parallel_transport_tangent_tensor(
                 G, reference_point, new_point
             )
         )
-        G_transf_manual = affine_invariant.AffineInvariantParallelTransportMetricTensor(
-            G, reference_point, new_point
+        G_transf_manual = (
+            affine_invariant.AffineInvariantParallelTransportTangentTensor(
+                G, reference_point, new_point
+            )
         )
 
         assert_close(G_transf_auto, G)
@@ -4641,12 +4166,14 @@ class TestAffineInvariantParallelTransportMetricTensor:
         )
 
         G_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_metric_tensor(
+            affine_invariant.affine_invariant_parallel_transport_tangent_tensor(
                 G, reference_point, new_point
             )
         )
-        G_transf_manual = affine_invariant.AffineInvariantParallelTransportMetricTensor(
-            G, reference_point, new_point
+        G_transf_manual = (
+            affine_invariant.AffineInvariantParallelTransportTangentTensor(
+                G, reference_point, new_point
+            )
         )
 
         # generate random coordinates at reference_point
@@ -4727,11 +4254,13 @@ class TestAffineInvariantParallelTransportMetricTensor:
         G_auto = G.clone().detach()
         G_auto.requires_grad = True
 
-        G_transf_manual = affine_invariant.AffineInvariantParallelTransportMetricTensor(
-            G_manual, X_manual, Y_manual
+        G_transf_manual = (
+            affine_invariant.AffineInvariantParallelTransportTangentTensor(
+                G_manual, X_manual, Y_manual
+            )
         )
         G_transf_auto = (
-            affine_invariant.affine_invariant_parallel_transport_metric_tensor(
+            affine_invariant.affine_invariant_parallel_transport_tangent_tensor(
                 G_auto, X_auto, Y_auto
             )
         )
