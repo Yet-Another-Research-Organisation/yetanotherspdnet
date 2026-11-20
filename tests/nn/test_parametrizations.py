@@ -170,10 +170,10 @@ class TestSPDAndTensorParametrization:
         assert output[0].device == X.device
         assert is_spd(output[0])
 
-        assert output[1].shape == (dim, dim)
+        assert output[1].shape == (dim,)
         assert output[1].dtype == T.dtype
         assert output[1].device == T.device
-        assert is_spd(output[1])
+        assert torch.all(output[1] > 0)
 
     @pytest.mark.parametrize("n_features", [10])
     @pytest.mark.parametrize("mapping", ["softplus", "exp"])
@@ -293,8 +293,7 @@ class TestSPDAndTensorParametrization:
             generator=generator,
         )
         # random tensor
-        T_id = torch.diag_embed(torch.randn((dim,), dtype=dtype, device=device) ** 2)
-        T = AffineInvariantParallelTransportTangentTensor(T_id, identity, X)
+        T = torch.randn((dim,), dtype=dtype, device=device) ** 2
 
         right_inv = layer.right_inverse((X, T))
 
@@ -314,7 +313,7 @@ class TestSPDAndTensorParametrization:
         """
         dim = n_features * (n_features + 1) // 2
         layer = nn_parametrizations.SPDAndTensorParametrization(
-            n_features, mapping=mapping, tensor_format="diagonal"
+            n_features, mapping=mapping, tensor_format="full"
         )
         # random SPD matrix
         X = random_SPD(
@@ -332,11 +331,13 @@ class TestSPDAndTensorParametrization:
 
         right_inv = layer.right_inverse((X, T))
 
+        print(layer.tensor_format)
+
         assert right_inv[0].shape == (n_features * (n_features + 1) // 2,)
         assert right_inv[0].device == X.device
         assert right_inv[0].dtype == X.dtype
 
-        assert right_inv[1].shape == (dim,)
+        assert right_inv[1].shape == (dim * (dim + 1) // 2,)
         assert right_inv[1].device == T.device
         assert right_inv[1].dtype == T.dtype
 

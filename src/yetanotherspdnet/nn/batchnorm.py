@@ -4,9 +4,14 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import torch
-from torch import nn
+from torch import nn, tensor
 from torch.nn.utils.parametrize import register_parametrization
 
+from yetanotherspdnet.functions.covariance import (
+    LedoitWolfCovariance,
+    SampleCovariance,
+    SampleVariance,
+)
 from yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd import (
     AffineInvariantGeodesicGEVD,
     AffineInvariantMeanGEVD,
@@ -17,16 +22,20 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     EuclideanGeodesic,
     HarmonicCurve,
     HarmonicMean,
+    LeftKullbackLeiblerFisherVectorAffineInvariantCoordinates,
     LeftKullbackLeiblerStdScalar,
+    RightKullbackLeiblerFisherVectorAffineInvariantCoordinates,
     RightKullbackLeiblerStdScalar,
 )
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     GeometricArithmeticHarmonicMean,
     GeometricEuclideanHarmonicCurve,
+    SymmetrizedKullbackLeiblerFisherVectorAffineInvariantCoordinates,
     SymmetrizedKullbackLeiblerStdScalar,
 )
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
     LogEuclideanGeodesic,
+    LogEuclideanLogCoordinates,
     LogEuclideanMean,
     LogEuclideanParalleTransportSPD,
     LogEuclideanStdScalar,
@@ -35,6 +44,7 @@ from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
 from ..functions.spd_geometries.affine_invariant import (
     AffineInvariantCoordinatesTransport,
     AffineInvariantGeodesic,
+    AffineInvariantLogCoordinates,
     AffineInvariantMean,
     AffineInvariantParallelTransport,
     AffineInvariantStdScalar,
@@ -158,7 +168,7 @@ class BatchNormSPDBase(ABC, nn.Module):
         dtype: torch.dtype = torch.float64,
     ) -> None:
         """
-        Base class for battch normalization layers for SPDnet
+        Base class for batch normalization layers for SPDnet
 
         Parameters
         ----------
@@ -1128,19 +1138,33 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
 
 
 class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
+    _FISHER_VEC_FUNS = {
+        "affine_invariant": AffineInvariantLogCoordinates,
+        "affine_invariant_gevd": AffineInvariantLogCoordinates,  # TODO make native function for gevd
+        "log_euclidean": LogEuclideanLogCoordinates,
+        "arithmetic": LeftKullbackLeiblerFisherVectorAffineInvariantCoordinates,
+        "harmonic": RightKullbackLeiblerFisherVectorAffineInvariantCoordinates,
+        "geometric_arithmetic_harmonic": SymmetrizedKullbackLeiblerFisherVectorAffineInvariantCoordinates,
+    }
+
     def __init__(
         self,
         n_features: int,
         mean_type: str = "affine_invariant",
         mean_options: dict | None = None,
         momentum: float = 0.01,
-        norm_strategy: str = "classical",
-        minibatch_mode: str = "constant",
-        minibatch_momentum: float = 0.01,
-        minibatch_maxstep: int = 100,
+        norm_only: bool = False,
+        norm_and_bias_mode: str = "whitening",
+        # norm_strategy: str = "classical",
+        # minibatch_mode: str = "constant",
+        # minibatch_momentum: float = 0.01,
+        # minibatch_maxstep: int = 100,
         parametrization: str = "softplus",
-        parametrization_mode: str = "static",
-        n_steps_ref_update: int = 100,
+        # parametrization_mode: str = "static",
+        # n_steps_ref_update: int = 100,
+        tensor_format: str = "diagonal",
+        tensor_full_mode: str = "ledoit_wolf",
+        tensor_adaptive_momentum: float = 0.1,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
@@ -1168,41 +1192,66 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
             Momentum for running mean and variance update.
             Default is 0.01
 
-        norm_strategy : str, optional
-            Strategy for normalization.
-            Default is "classical".
-            Choices are: "classical" and "minibatch"
+        norm_only : bool, optional
+            Whether to apply some bias or only perform normalization.
+            Default is False
 
-        minibatch_mode : str, optional
-            How the minibatch momentum behaves during the training.
-            Default is "constant".
-            Choices are: "constant", "decay", "growth"
+        norm_and_bias_mode : str, optional
+            How normalization and bias is applied. Default is "whitening"
+            Choices are: "whitening", "parallel_transport"
 
-        minibatch_momentum : float, optional
-            Momentum for mean regularization in minibatch normalization strategy.
-            If minibatch_mode is "decay", this momentum corresponds to the minimum momentum that is reached.
-            If minibatch_mode is "growth", this momentum corresponds to the initial momentum.
-            Default is 0.01
-
-        minibatch_maxstep : int, optional
-            If minibatch_mode is "decay" or "growth", this is the training step at which the minibatch momentum
-            attains its final value.
-            Default is 100
+        # norm_strategy : str, optional
+        #     Strategy for normalization.
+        #     Default is "classical".
+        #     Choices are: "classical" and "minibatch"
+        #     NOT IMPLEMENTED YET HERE
+        #
+        # minibatch_mode : str, optional
+        #     How the minibatch momentum behaves during the training.
+        #     Default is "constant".
+        #     Choices are: "constant", "decay", "growth"
+        #     NOT IMPLEMENTED YET HERE
+        #
+        # minibatch_momentum : float, optional
+        #     Momentum for mean regularization in minibatch normalization strategy.
+        #     If minibatch_mode is "decay", this momentum corresponds to the minimum momentum that is reached.
+        #     If minibatch_mode is "growth", this momentum corresponds to the initial momentum.
+        #     Default is 0.01
+        #     NOT IMPLEMENTED YET HERE
+        #
+        # minibatch_maxstep : int, optional
+        #     If minibatch_mode is "decay" or "growth", this is the training step at which the minibatch momentum
+        #     attains its final value.
+        #     Default is 100
+        #     NOT IMPLEMENTED YET HERE
 
         parametrization : str, optional
             Parametrization to apply on covariance bias.
             Default is "softplus".
             Choices are: "softplus", "exp"
 
-        parametrization_mode : str, optional
-            Parametrization mode.
-            Default is "static".
-            Choices are: "static" and "dynamic"
+        # parametrization_mode : str, optional
+        #     Parametrization mode.
+        #     Default is "static".
+        #     Choices are: "static" and "dynamic"
+        #     NOT IMPLEMENTED YET HERE
+        #
+        # n_steps_ref_update : int, optional
+        #     If parametrization_mode is "dynamic",
+        #     number of steps in between each reference point update.
+        #     Default is 100
+        #     NOT IMPLEMENTED YET HERE
 
-        n_steps_ref_update : int, optional
-            If parametrization_mode is "dynamic",
-            number of steps in between each reference point update.
-            Default is 100
+        tensor_format : str, optional
+            Default is "diagonal"
+            Choices are "diagonal" and "full"
+
+        tensor_full_mode : str, optional
+            Default is "ledoit_wolf"
+            Choices are "ledoit_wolf" and "adaptive"
+
+        tensor_adaptive_momentum : float, optional
+            Default is 0.1
 
         device: torch.device, optional
             Device on which to store the parameters.
@@ -1212,18 +1261,62 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
             Data type of the layer.
             Default is torch.float64
         """
+        self.dim = n_features * (n_features + 1) // 2
+
+        assert tensor_format in ["diagonal", "full"], (
+            f"expected tensor_format in ['diagonal', 'full'], got {tensor_format}"
+        )
+        self.tensor_format = tensor_format
+        assert tensor_full_mode in ["ledoit_wolf", "adaptive"], (
+            f"expected tensor_full_mode in ['ledoit-wolf', 'adaptive'], got {tensor_full_mode}"
+        )
+        self.tensor_full_mode = tensor_full_mode
+        self.tensor_adaptive_momentum = tensor_adaptive_momentum
+
         super().__init__(
             n_features=n_features,
             mean_type=mean_type,
             mean_options=mean_options,
             momentum=momentum,
-            norm_strategy=norm_strategy,
-            minibatch_mode=minibatch_mode,
-            minibatch_momentum=minibatch_momentum,
-            minibatch_maxstep=minibatch_maxstep,
+            norm_only=norm_only,
+            norm_and_bias_mode=norm_and_bias_mode,
+            norm_strategy="classical",
+            # minibatch_mode=minibatch_mode,
+            # minibatch_momentum=minibatch_momentum,
+            # minibatch_maxstep=minibatch_maxstep,
             parametrization=parametrization,
-            parametrization_mode=parametrization_mode,
-            n_steps_ref_update=n_steps_ref_update,
+            parametrization_mode="static",
+            # n_steps_ref_update=n_steps_ref_update,
             device=device,
             dtype=dtype,
         )
+
+    def _init_norm_parameters(self) -> None:
+        # init mean stuffs
+        super()._init_norm_parameters()
+        # init tensor
+        # to compute Fisher vectors
+        self.fisher_vec_fun = self._FISHER_VEC_FUNS[self.mean_type]
+        # to compute variance or covariance of Fisher vectors
+        if self.tensor_format == "diagonal":
+            self.var_fun = SampleVariance.apply
+        elif self.tensor_format == "full":
+            if self.tensor_full_mode == "ledoit_wolf":
+                self.var_fun = LedoitWolfCovariance.apply
+            elif self.tensor_full_mode == "adaptive":
+                self.var_fun = self._adaptive_var_fun  # to implement ! Uses SampleCovariance and looks like minibatch stuffs
+                self.register_buffer(
+                    "CovTensor_adaptive",
+                    torch.eye(self.dim, dtype=self.dtype, device=self.device),
+                )
+
+    def _adaptive_var_fun(self, data: torch.Tensor) -> torch.Tensor:
+        """
+        Auxiliary function for computing adaptive covariance tensor of Fisher vectors
+        """
+        SCM = SampleCovariance.apply(data)
+        # Note : CovTensor_adaptive must be in the proper tangent space here
+        CovTensor = self.CovTensor_adaptive + self.tensor_adaptive_momentum * SCM
+        with torch.no_grad():
+            self.CovTensor_adaptive = CovTensor.detach()
+        return CovTensor
