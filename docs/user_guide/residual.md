@@ -95,7 +95,8 @@ points:
 
 `ResidualBlock` takes the options below; the models take them as
 `residual_options={...}` (passed to every block; `le_output` only to the
-last one). With $\nu$ the norm of the field ($\lVert V \rVert_X$ for the
+last one; `branch` as a factory `n_features -> nn.Module`, called once per
+block). With $\nu$ the norm of the field ($\lVert V \rVert_X$ for the
 affine-invariant metric, $\lVert V \rVert_F$ for the log-Euclidean one):
 
 | option | values (default first) | step |
@@ -125,7 +126,12 @@ $$
 with the step factor $s$ ($1/\nu$ for the unit step). Its backward splits the
 dependence on the eigenvalues (through $f$) from the rotation of the
 eigenvectors, $\Omega_{ij} = (g_i - g_j)/(\lambda_i - \lambda_j)$ for the new
-eigenvalues $g$.
+eigenvalues $g$. Since $f$ acts on the positions of the sorted spectrum,
+$g_i \ne g_j$ for close eigenvalues and $\Omega$ is large: the map is
+discontinuous at repeated eigenvalues and ill-conditioned near them. The
+precision benchmark finds float32 gradient errors of order 1 at any
+conditioning (float64 is consistent with autograd and passes `gradcheck` on
+separated spectra): an experimental option, for float64.
 
 **Branch with parallel transport** (`residual="branch_pt"`, Res2SPDNet).
 A branch $Z = F(X)$ (default `BiMap(n, n)` then `ReEig`, or any module given
@@ -145,8 +151,10 @@ Res2SPDNet code without transport normalizes the field at $Z$ but applies it
 at $X$; that variant is not offered. The log-Euclidean variant is
 $\exp(\log X + V(Z))$ (the log-Euclidean transport is the identity in log
 coordinates). `affine_invariant_parallel_transport` accepts one reference
-pair per matrix. In float32, $N$ has a condition number up to
-$\kappa(X)\kappa(Z)$: use float64 beyond $\kappa \approx 10^2$.
+pair per matrix. $N$ has a condition number up to $\kappa(X)\kappa(Z)$:
+float32 (even with `eigh_dtype=torch.float64`, $N$ being formed in float32)
+is unsafe from $\kappa = 10^4$, and float64 decompositions start to fail at
+$\kappa = 10^8$ (precision benchmark).
 
 **Congruence** (`residual="congruence"`, the cheap SPD "addition" of
 Res2SPDNet): $X_+ = X^{1/2} F(X) X^{1/2}$, with $X^{1/2}$ from the

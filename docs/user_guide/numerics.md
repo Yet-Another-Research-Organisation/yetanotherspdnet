@@ -267,7 +267,10 @@ singular matrix.
   $\exp$ and the output clamp (5 decompositions and a Cholesky); the floored
   matrix was formed and decomposed again, so its eigenvalues near the floor
   carried an error $\varepsilon\lVert X\rVert$ (relative $2\cdot 10^{-8}$ at
-  the $10^{-8}$ floor in float64).
+  the $10^{-8}$ floor in float64). Forward + backward on CPU (3 threads, batch 64,
+  $n = 64$, float64): affine-invariant block 64 → 30 ms, log-Euclidean block
+  40 → 25 ms, RResNet with two blocks 145 → 76 ms (1.5–2.5× faster over
+  $n \in \{16, 64\}$, float32 and float64).
 - **Floor, no output clamp.** The input eigenvalues are floored at
   `spd_floor(λ) = max(1e-8, ε max λ)` per matrix: $10^{-8}$ in float64 unless
   $\max\lambda > 4.5 \cdot 10^7$, the rounding level of the matrix itself in
@@ -280,9 +283,14 @@ singular matrix.
   `affine_invariant_projx` is a deprecated alias).
 - **Branch with transport.** `residual="branch_pt"` whitens the branch output
   by the input, $N = X^{-1/2} Z X^{-1/2}$, whose condition number reaches
-  $\kappa(X)\kappa(Z)$: float32 fails from $\kappa \approx 10^4$, even
+  $\kappa(X)\kappa(Z)$: float32 is unsafe from $\kappa = 10^4$, even
   with `eigh_dtype=torch.float64` (the matrix $N$ itself is formed in
-  float32).
+  float32), and float64 decompositions fail on some batches at
+  $\kappa = 10^8$.
+- **Eigenbasis field.** `basis="eigenbasis"` puts a position-dependent map of
+  the sorted spectrum on the eigenvectors of $X$: discontinuous at repeated
+  eigenvalues, ill-conditioned near them (float32 gradient errors of order
+  1); float64 only.
 
 ## 8. ReEig and its variants
 
@@ -373,13 +381,24 @@ output error $\le 10^{-2}$, gradient error $\le 1$; **unsafe**: failures
 | BN mean [GAH] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
 | BN mean [harmonic] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
 | BN mean [LE] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
-| ResidualBlock [AI] | safe | safe | degraded | unsafe | safe | safe | degraded | degraded |
-| ResidualBlock [LE] | safe | safe | degraded | unsafe | safe | safe | degraded | degraded |
+| ResidualBlock [AI] | safe | safe | degraded | degraded | safe | safe | degraded | degraded |
+| ResidualBlock [LE] | safe | safe | degraded | degraded | safe | safe | degraded | degraded |
+| ResidualBlock [LE, log output] | safe | degraded | unsafe | unsafe | safe | safe | degraded | unsafe |
+| ResidualBlock [congruence] | safe | safe | degraded | degraded | safe | safe | degraded | degraded |
+| ResidualBlock [branch_pt] | safe | unsafe | unsafe | unsafe | safe | unsafe | unsafe | unsafe |
+| ResidualBlock [eigenbasis] | degraded | degraded | degraded | degraded | degraded | degraded | degraded | degraded |
 | GBWBNRResNet | safe | unsafe | degraded | unsafe | safe | degraded | safe | unsafe |
-| RResNet | safe | safe | degraded | unsafe | safe | safe | safe | degraded |
+| RResNet | safe | safe | degraded | degraded | safe | safe | safe | degraded |
 | SPDnet | safe | safe | safe | degraded | safe | safe | safe | degraded |
 
 The Bures–Wasserstein scalar-variance normalization (GBWBN) is not viable in
 float32 beyond $\kappa \approx 10^{2}$: its cross term
 $\operatorname{tr}\big((B^{1/2} X B^{1/2})^{1/2}\big)$ squares the condition
 number. Use float64 for it (an SVD-based cross term is planned).
+
+The residual blocks no longer fail in float32 at $\kappa = 10^{8}$ (failure
+rate 0.12 before: the Cholesky factorization of the norm and the
+decomposition of the re-formed floored matrix). Their log output
+(`le_output="log"`) is compared in log coordinates, where the small
+eigenvalues weigh as much as the large ones: it carries the same information
+as the log-Euclidean block followed by LogEig.
