@@ -1,5 +1,7 @@
 """Riemannian Residual Network layers: spectral vector field and residual block."""
 
+from typing import cast
+
 import torch
 from torch import nn
 
@@ -21,6 +23,7 @@ from yetanotherspdnet.functions.spd_linalg import (
 )
 from yetanotherspdnet.nn.parametrizations import (
     StiefelAdaptiveParametrization,
+    _parametrization_of,
 )
 from yetanotherspdnet.random.stiefel import random_stiefel
 
@@ -265,10 +268,13 @@ class SpectralVectorField(nn.Module):
         ):
             with torch.no_grad():
                 # update reference point
-                self.parametrizations.Q[0].update_reference_point()
+                stiefel = cast(
+                    StiefelAdaptiveParametrization, _parametrization_of(self, "Q")[0]
+                )
+                stiefel.update_reference_point()
                 # reset tangent vector to zero, so that Q stays at the new
                 # reference point instead of jumping by the old tangent vector
-                self.parametrizations.Q.original.zero_()
+                _parametrization_of(self, "Q").original.zero_()
                 # reset counter
                 self.current_ref_step = 0
 

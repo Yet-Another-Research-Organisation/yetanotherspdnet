@@ -5,7 +5,10 @@ from torch import nn
 from torch.nn.utils import parametrizations
 from torch.nn.utils.parametrize import register_parametrization
 
-from yetanotherspdnet.nn.parametrizations import StiefelAdaptiveParametrization
+from yetanotherspdnet.nn.parametrizations import (
+    StiefelAdaptiveParametrization,
+    _parametrization_of,
+)
 
 from ..functions.spd_linalg import (
     CongruenceRectangular,
@@ -205,7 +208,7 @@ class BiMap(nn.Module):
                 # update reference point
                 self.stiefel_parametrization.update_reference_point()
                 # reset tangent vector to zero
-                self.parametrizations.weight.original.zero_()
+                _parametrization_of(self, "weight").original.zero_()
                 # reset counter
                 self.current_ref_step = 0
 

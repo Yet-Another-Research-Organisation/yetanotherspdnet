@@ -1,6 +1,7 @@
 """SPD network model definitions: SPDnet, GBWBNRResNet, and RResNet."""
 
 import zlib
+from typing import Any
 
 import torch
 from torch import nn
@@ -13,7 +14,7 @@ from yetanotherspdnet.nn.batchnorm import (
 from yetanotherspdnet.nn.rresnet_layers import ResidualBlock
 
 
-class _ModelMixin:
+class _ModelMixin(nn.Module):
     """
     Helpers shared by the models: optimizer hooks, model hash, layer listing.
 
@@ -26,6 +27,11 @@ class _ModelMixin:
     _use_autograd_keys: tuple[str, ...] = ()
     _layers_attr: str = "spd_layers"
     _layers_header: str = "Layers:\n-------\n"
+
+    # set in the __init__ of each model (declared for type checkers)
+    vectorization: nn.Module
+    linear: nn.Linear
+    softmax: bool
 
     def _set_use_autograd(self, use_autograd: bool | dict) -> None:
         """
@@ -532,7 +538,7 @@ def _make_batchnorm(
     (:class:`BatchNormSPDMean`) and ``bw_options`` only by
     ``batchnorm_type="mean_var_scalar"`` (:class:`BatchNormSPDMeanScalarVariance`).
     """
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "n_features": n_features,
         "mean_type": mean_type,
         "mean_options": mean_options,

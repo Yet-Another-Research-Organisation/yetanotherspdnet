@@ -6,6 +6,7 @@ import warnings
 import torch
 from torch.autograd import Function
 
+from yetanotherspdnet._deprecation import _mark_deprecated
 from yetanotherspdnet.functions.scalar_functions import inv, zero_where_zero_std
 
 from ..spd_linalg import (
@@ -370,6 +371,6 @@ def LogEuclideanParalleTransportSPD(
 
 
 # marker read by the documentation (docs/_ext/dualpath_pairing.py)
-LogEuclideanParalleTransportSPD.__deprecated__ = (
-    "use LogEuclideanParallelTransportSPD instead"
+_mark_deprecated(
+    LogEuclideanParalleTransportSPD, "use LogEuclideanParallelTransportSPD instead"
 )

@@ -1,7 +1,10 @@
 """SPD and Stiefel manifold parametrizations for constrained optimization."""
 
+from typing import cast
+
 import torch
 from torch import nn
+from torch.nn.utils.parametrize import ParametrizationList
 
 from yetanotherspdnet.functions._constants import SIGMOID_CLAMP_EPS
 from yetanotherspdnet.functions.scalar_functions import (
@@ -31,6 +34,28 @@ from ..functions.stiefel import (
     stiefel_projection_qr,
     stiefel_projection_tangent_orthogonal,
 )
+
+
+def _parametrization_of(module: nn.Module, tensor_name: str) -> ParametrizationList:
+    """
+    Return the parametrizations registered on ``module.<tensor_name>``.
+
+    Same as ``module.parametrizations.<tensor_name>``, typed for type checkers
+    (``nn.Module.__getattr__`` is typed ``Tensor | Module``).
+
+    Parameters
+    ----------
+    module : nn.Module
+        Module with a parametrized tensor.
+    tensor_name : str
+        Name of the parametrized tensor.
+
+    Returns
+    -------
+    ParametrizationList
+        Its parametrizations; ``.original`` is the unconstrained tensor.
+    """
+    return cast(ParametrizationList, getattr(module.parametrizations, tensor_name))
 
 
 class ScalarSoftPlusParametrization(nn.Module):
@@ -215,6 +240,12 @@ class SPDAdaptiveParametrization(nn.Module):
     which keeps the chart well conditioned during long trainings
     (``parametrization_mode="dynamic"`` in the layers).
     """
+
+    # buffers registered in __init__ (declared for type checkers)
+    reference_point: torch.Tensor
+    reference_point_sqrtm: torch.Tensor
+    reference_point_inv_sqrtm: torch.Tensor
+    last_spd_value: torch.Tensor
 
     def __init__(
         self,
@@ -408,6 +439,10 @@ class StiefelAdaptiveParametrization(nn.Module):
     mapped back to the Stiefel manifold by a QR or polar retraction. Used by
     BiMap with ``parametrization_mode="dynamic"``.
     """
+
+    # buffers registered in __init__ (declared for type checkers)
+    reference_point: torch.Tensor
+    last_stiefel_value: torch.Tensor
 
     def __init__(
         self,
