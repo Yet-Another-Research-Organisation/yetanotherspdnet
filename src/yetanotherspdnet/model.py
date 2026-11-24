@@ -493,12 +493,12 @@ class SPDnet(nn.Module):
             f"  batchnorm_parametrization={self.batchnorm_parametrization},\n"
             f"  batchnorm_parametrization_mode={self.batchnorm_parametrization_mode},\n"
             f"  batchnorm_n_steps_ref_update={self.batchnorm_n_steps_ref_update},\n"
+            f"  batchnorm_bw_options={self.batchnorm_bw_options},\n"
             f"  vec_type='{self.vec_type}',\n"
             f"  use_logeig={self.use_logeig},\n"
-            f"  use_autograd={self._use_autograd_original}\n"
+            f"  use_autograd={self._use_autograd_original},\n"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
-            f"  generator={self.generator},\n"
             f")"
         )
 
@@ -790,6 +790,28 @@ class GBWBNRResNet(nn.Module):
         self.batchnorm = batchnorm
         self.batchnorm_type = batchnorm_type
         self.batchnorm_mean_type = batchnorm_mean_type
+        # remaining hyper-parameters, kept for __repr__ and the model hash
+        self.bimap_parametrized = bimap_parametrized
+        self.bimap_parametrization_mode = bimap_parametrization_mode
+        self.bimap_parametrization_options = bimap_parametrization_options
+        self.bimap_n_steps_ref_update = bimap_n_steps_ref_update
+        self.batchnorm_mean_options = batchnorm_mean_options
+        self.batchnorm_momentum = batchnorm_momentum
+        self.batchnorm_norm_strategy = batchnorm_norm_strategy
+        self.batchnorm_minibatch_mode = batchnorm_minibatch_mode
+        self.batchnorm_minibatch_momentum = batchnorm_minibatch_momentum
+        self.batchnorm_minibatch_maxstep = batchnorm_minibatch_maxstep
+        self.batchnorm_parametrization = batchnorm_parametrization
+        self.batchnorm_parametrization_mode = batchnorm_parametrization_mode
+        self.batchnorm_n_steps_ref_update = batchnorm_n_steps_ref_update
+        self.batchnorm_bw_options = batchnorm_bw_options
+        self.spectrum_type = spectrum_type
+        self.spectrum_hidden_dim = spectrum_hidden_dim
+        self.spectrum_n_layers = spectrum_n_layers
+        self.spectrum_kernel_size = spectrum_kernel_size
+        self.stiefel_parametrization_mode = stiefel_parametrization_mode
+        self.stiefel_n_steps_ref_update = stiefel_n_steps_ref_update
+        self.residual_metric = residual_metric
 
         self.vec_type = vec_type
         assert vec_type in ["vec", "vech"], (
@@ -939,17 +961,39 @@ class GBWBNRResNet(nn.Module):
     def __repr__(self) -> str:
         return (
             f"GBWBNRResNet(\n"
-            f"  input_dim={self.input_dim},\n"
-            f"  hidden_dim={self.hidden_dim},\n"
-            f"  output_dim={self.output_dim},\n"
-            f"  batchnorm={self.batchnorm},\n"
-            f"  batchnorm_type='{self.batchnorm_type}',\n"
-            f"  batchnorm_mean_type='{self.batchnorm_mean_type}',\n"
-            f"  vec_type='{self.vec_type}',\n"
-            f"  use_logeig={self.use_logeig},\n"
-            f"  use_autograd={self._use_autograd_original},\n"
+            f"  input_dim={self.input_dim!r},\n"
+            f"  hidden_dim={self.hidden_dim!r},\n"
+            f"  output_dim={self.output_dim!r},\n"
+            f"  softmax={self.softmax!r},\n"
+            f"  bimap_parametrized={self.bimap_parametrized!r},\n"
+            f"  bimap_parametrization_mode={self.bimap_parametrization_mode!r},\n"
+            f"  bimap_parametrization_options={self.bimap_parametrization_options!r},\n"
+            f"  bimap_n_steps_ref_update={self.bimap_n_steps_ref_update!r},\n"
+            f"  batchnorm={self.batchnorm!r},\n"
+            f"  batchnorm_type={self.batchnorm_type!r},\n"
+            f"  batchnorm_mean_type={self.batchnorm_mean_type!r},\n"
+            f"  batchnorm_mean_options={self.batchnorm_mean_options!r},\n"
+            f"  batchnorm_momentum={self.batchnorm_momentum!r},\n"
+            f"  batchnorm_norm_strategy={self.batchnorm_norm_strategy!r},\n"
+            f"  batchnorm_minibatch_mode={self.batchnorm_minibatch_mode!r},\n"
+            f"  batchnorm_minibatch_momentum={self.batchnorm_minibatch_momentum!r},\n"
+            f"  batchnorm_minibatch_maxstep={self.batchnorm_minibatch_maxstep!r},\n"
+            f"  batchnorm_parametrization={self.batchnorm_parametrization!r},\n"
+            f"  batchnorm_parametrization_mode={self.batchnorm_parametrization_mode!r},\n"
+            f"  batchnorm_n_steps_ref_update={self.batchnorm_n_steps_ref_update!r},\n"
+            f"  batchnorm_bw_options={self.batchnorm_bw_options!r},\n"
+            f"  spectrum_type={self.spectrum_type!r},\n"
+            f"  spectrum_hidden_dim={self.spectrum_hidden_dim!r},\n"
+            f"  spectrum_n_layers={self.spectrum_n_layers!r},\n"
+            f"  spectrum_kernel_size={self.spectrum_kernel_size!r},\n"
+            f"  stiefel_parametrization_mode={self.stiefel_parametrization_mode!r},\n"
+            f"  stiefel_n_steps_ref_update={self.stiefel_n_steps_ref_update!r},\n"
+            f"  residual_metric={self.residual_metric!r},\n"
+            f"  vec_type={self.vec_type!r},\n"
+            f"  use_logeig={self.use_logeig!r},\n"
+            f"  use_autograd={self._use_autograd_original!r},\n"
             f"  device={self.device},\n"
-            f"  dtype={self.dtype}\n"
+            f"  dtype={self.dtype},\n"
             f")"
         )
 
@@ -1174,6 +1218,28 @@ class RResNet(nn.Module):
         self.batchnorm = batchnorm
         self.batchnorm_type = batchnorm_type
         self.batchnorm_mean_type = batchnorm_mean_type
+        # remaining hyper-parameters, kept for __repr__ and the model hash
+        self.bimap_parametrized = bimap_parametrized
+        self.bimap_parametrization_mode = bimap_parametrization_mode
+        self.bimap_parametrization_options = bimap_parametrization_options
+        self.bimap_n_steps_ref_update = bimap_n_steps_ref_update
+        self.batchnorm_mean_options = batchnorm_mean_options
+        self.batchnorm_momentum = batchnorm_momentum
+        self.batchnorm_norm_strategy = batchnorm_norm_strategy
+        self.batchnorm_minibatch_mode = batchnorm_minibatch_mode
+        self.batchnorm_minibatch_momentum = batchnorm_minibatch_momentum
+        self.batchnorm_minibatch_maxstep = batchnorm_minibatch_maxstep
+        self.batchnorm_parametrization = batchnorm_parametrization
+        self.batchnorm_parametrization_mode = batchnorm_parametrization_mode
+        self.batchnorm_n_steps_ref_update = batchnorm_n_steps_ref_update
+        self.batchnorm_bw_options = batchnorm_bw_options
+        self.spectrum_type = spectrum_type
+        self.spectrum_hidden_dim = spectrum_hidden_dim
+        self.spectrum_n_layers = spectrum_n_layers
+        self.spectrum_kernel_size = spectrum_kernel_size
+        self.stiefel_parametrization_mode = stiefel_parametrization_mode
+        self.stiefel_n_steps_ref_update = stiefel_n_steps_ref_update
+        self.residual_metric = residual_metric
 
         self.vec_type = vec_type
         assert vec_type in ["vec", "vech"], (
@@ -1342,19 +1408,42 @@ class RResNet(nn.Module):
     def __repr__(self) -> str:
         return (
             f"RResNet(\n"
-            f"  input_dim={self.input_dim},\n"
-            f"  hidden_layers_size={self.hidden_layers_size},\n"
-            f"  n_residual_blocks={self.n_residual_blocks},\n"
-            f"  output_dim={self.output_dim},\n"
-            f"  reeig={self.reeig},\n"
-            f"  batchnorm={self.batchnorm},\n"
-            f"  batchnorm_type='{self.batchnorm_type}',\n"
-            f"  batchnorm_mean_type='{self.batchnorm_mean_type}',\n"
-            f"  vec_type='{self.vec_type}',\n"
-            f"  use_logeig={self.use_logeig},\n"
-            f"  use_autograd={self._use_autograd_original},\n"
+            f"  input_dim={self.input_dim!r},\n"
+            f"  hidden_layers_size={self.hidden_layers_size!r},\n"
+            f"  n_residual_blocks={self.n_residual_blocks!r},\n"
+            f"  output_dim={self.output_dim!r},\n"
+            f"  softmax={self.softmax!r},\n"
+            f"  reeig={self.reeig!r},\n"
+            f"  reeig_eps={self.reeig_eps!r},\n"
+            f"  bimap_parametrized={self.bimap_parametrized!r},\n"
+            f"  bimap_parametrization_mode={self.bimap_parametrization_mode!r},\n"
+            f"  bimap_parametrization_options={self.bimap_parametrization_options!r},\n"
+            f"  bimap_n_steps_ref_update={self.bimap_n_steps_ref_update!r},\n"
+            f"  batchnorm={self.batchnorm!r},\n"
+            f"  batchnorm_type={self.batchnorm_type!r},\n"
+            f"  batchnorm_mean_type={self.batchnorm_mean_type!r},\n"
+            f"  batchnorm_mean_options={self.batchnorm_mean_options!r},\n"
+            f"  batchnorm_momentum={self.batchnorm_momentum!r},\n"
+            f"  batchnorm_norm_strategy={self.batchnorm_norm_strategy!r},\n"
+            f"  batchnorm_minibatch_mode={self.batchnorm_minibatch_mode!r},\n"
+            f"  batchnorm_minibatch_momentum={self.batchnorm_minibatch_momentum!r},\n"
+            f"  batchnorm_minibatch_maxstep={self.batchnorm_minibatch_maxstep!r},\n"
+            f"  batchnorm_parametrization={self.batchnorm_parametrization!r},\n"
+            f"  batchnorm_parametrization_mode={self.batchnorm_parametrization_mode!r},\n"
+            f"  batchnorm_n_steps_ref_update={self.batchnorm_n_steps_ref_update!r},\n"
+            f"  batchnorm_bw_options={self.batchnorm_bw_options!r},\n"
+            f"  spectrum_type={self.spectrum_type!r},\n"
+            f"  spectrum_hidden_dim={self.spectrum_hidden_dim!r},\n"
+            f"  spectrum_n_layers={self.spectrum_n_layers!r},\n"
+            f"  spectrum_kernel_size={self.spectrum_kernel_size!r},\n"
+            f"  stiefel_parametrization_mode={self.stiefel_parametrization_mode!r},\n"
+            f"  stiefel_n_steps_ref_update={self.stiefel_n_steps_ref_update!r},\n"
+            f"  residual_metric={self.residual_metric!r},\n"
+            f"  vec_type={self.vec_type!r},\n"
+            f"  use_logeig={self.use_logeig!r},\n"
+            f"  use_autograd={self._use_autograd_original!r},\n"
             f"  device={self.device},\n"
-            f"  dtype={self.dtype}\n"
+            f"  dtype={self.dtype},\n"
             f")"
         )
 

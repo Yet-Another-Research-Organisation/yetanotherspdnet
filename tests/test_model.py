@@ -429,7 +429,7 @@ class TestSPDnet:
 
         for module in model.modules():
             if isinstance(
-                module, BiMap or BatchNormSPDMean or BatchNormSPDMeanScalarVariance
+                module, (BiMap, BatchNormSPDMean, BatchNormSPDMeanScalarVariance)
             ):
                 assert hasattr(module, "is_dynamic") and module.is_dynamic is True
 
@@ -441,7 +441,7 @@ class TestSPDnet:
         # check current_ref_step is correct
         for module in model.modules():
             if isinstance(
-                module, BiMap or BatchNormSPDMean or BatchNormSPDMeanScalarVariance
+                module, (BiMap, BatchNormSPDMean, BatchNormSPDMeanScalarVariance)
             ):
                 assert module.current_ref_step == 1
         loss = output.sum()
@@ -455,7 +455,7 @@ class TestSPDnet:
                     module.stiefel_parametrization.reference_point,
                     module.stiefel_parametrization.initial_reference,
                 )
-            if isinstance(module, BatchNormSPDMean or BatchNormSPDMeanScalarVariance):
+            if isinstance(module, (BatchNormSPDMean, BatchNormSPDMeanScalarVariance)):
                 assert_close(
                     module.spd_parametrization.reference_point,
                     module.spd_parametrization.initial_reference,
@@ -469,7 +469,7 @@ class TestSPDnet:
         # check current_ref_step is correct
         for module in model.modules():
             if isinstance(
-                module, BiMap or BatchNormSPDMean or BatchNormSPDMeanScalarVariance
+                module, (BiMap, BatchNormSPDMean, BatchNormSPDMeanScalarVariance)
             ):
                 assert module.current_ref_step == 2
         loss = output.sum()
@@ -490,7 +490,7 @@ class TestSPDnet:
                     ),
                 )
                 assert module.current_ref_step == 0
-            if isinstance(module, BatchNormSPDMean or BatchNormSPDMeanScalarVariance):
+            if isinstance(module, (BatchNormSPDMean, BatchNormSPDMeanScalarVariance)):
                 assert not torch.allclose(
                     module.spd_parametrization.reference_point,
                     module.spd_parametrization.initial_reference,
