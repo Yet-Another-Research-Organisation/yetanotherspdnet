@@ -35,7 +35,7 @@ Shared by the three models unless noted.
 | **Batch normalization: which** | `batchnorm`, `batchnorm_type`, `batchnorm_mean_type`, `batchnorm_mean_options` | `batchnorm_type="mean_only"` centres; `"mean_var_scalar"` also rescales (and is GBWBN with `"bures_wasserstein"`). Default mean: GAH for `SPDnet`, affine-invariant for `RResNet`, Bures–Wasserstein for `GBWBNRResNet` ({doc}`batchnorm`). |
 | **Batch normalization: statistics** | `batchnorm_momentum`, `batchnorm_norm_strategy`, `batchnorm_minibatch_mode`, `batchnorm_minibatch_momentum`, `batchnorm_minibatch_maxstep` | Running statistics and smoothing of the batch mean. |
 | **Batch normalization: bias** | `batchnorm_parametrization`, `batchnorm_parametrization_mode`, `batchnorm_n_steps_ref_update` | How the SPD bias stays SPD. |
-| **GBWBN** | `batchnorm_bw_options` | `{"bw_theta": 0.5, "bw_batch_stats_grad": True}` by default ({doc}`batchnorm`). |
+| **GBWBN** | `batchnorm_bw_options` | `{"bw_theta": 0.5, "bw_batch_stats_grad": True, "bw_init_metric": "identity"}` by default ({doc}`batchnorm`). |
 | **Residual blocks** (RResNet, GBWBNRResNet) | `spectrum_type`, `spectrum_hidden_dim`, `spectrum_n_layers`, `spectrum_kernel_size`, `stiefel_parametrization_mode`, `stiefel_n_steps_ref_update`, `residual_metric` | The spectral vector field and the exponential map ({doc}`residual`). |
 | **Head** | `use_logeig`, `vec_type`, `softmax` | `vec_type="vech"` halves the size of the linear layer. |
 | **Numerics** | `use_autograd`, `dtype`, `device`, `generator` | `use_autograd` takes a bool or a dict per layer type (`"bimap"`, `"reeig"`, `"logeig"`, `"batchnorm"`, `"vec"`, `"residual"`) ({doc}`numerics`). |

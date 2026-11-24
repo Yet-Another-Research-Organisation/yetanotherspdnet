@@ -144,7 +144,15 @@ are equal. It appears in:
   of the operator $S \mapsto (GS + SG)/2$, whose derivative solves a Sylvester
   equation between operators with denominators
   $b_{ij} + b_{kj}$, $b_{ij} = \sqrt{(\delta_i + \delta_j)/2} > 0$
-  (`ParallelTransportFromIdentityBW`), finite even at $G = I$.
+  (`ParallelTransportFromIdentityBW`), finite even at $G = I$;
+- **the polar factor** $W = UV^\top$ of $A = U\Sigma V^\top$
+  (`spd_linalg.PolarFactor`), through which every Bures–Wasserstein cross
+  term is computed ([section 3](#3-means-as-iterations)): differentiating
+  $A = WH$ gives $dW = U\hat\Omega V^\top$ with
+  $\hat\Omega_{ij} = (M_{ij} - M_{ji})/(\sigma_i + \sigma_j)$,
+  $M = U^\top dA\,V$, a Sylvester equation with positive denominators, finite
+  at repeated singular values (the SVD's own backward has
+  $1/(\sigma_i^2 - \sigma_j^2)$).
 
 ## 3. Means as iterations
 
@@ -155,7 +163,26 @@ are equal. It appears in:
 | arithmetic / harmonic | $\tfrac1N\sum_i X_i$ / $\big(\tfrac1N\sum_i X_i^{-1}\big)^{-1}$ | inverses through Cholesky |
 | GAH | $H \#_{1/2} A = H^{1/2}\big(H^{-1/2} A H^{-1/2}\big)^{1/2} H^{1/2}$ | closed form, close to the Karcher mean at the cost of two cheap means |
 | adaptive GAH | $H \#_t A$, $t = \operatorname{sigmoid}(\tau)$ learned | $t = 1/2$ at initialization |
-| Bures–Wasserstein | $G_{k+1} = G_k^{-1/2}\big(\tfrac1N\sum_i (G_k^{1/2} X_i G_k^{1/2})^{1/2}\big)^2 G_k^{-1/2}$ | from the arithmetic mean, one iteration by default |
+| Bures–Wasserstein | $G_{k+1} = G_k^{-1/2}\big(\tfrac1N\sum_i (G_k^{1/2} X_i G_k^{1/2})^{1/2}\big)^2 G_k^{-1/2} = C_k C_k^\top$, $C_k = \tfrac1N \sum_i X_i^{1/2} W_i$ | from the arithmetic mean, one iteration by default; $W_i$ polar factor of $X_i^{1/2} G_k^{1/2}$ (below) |
+
+**Bures–Wasserstein cross terms.** Every BW operation needs
+$(B^{1/2} X B^{1/2})^{1/2}$. An eigendecomposition of $B^{1/2} X B^{1/2}$ works
+at the product of the condition numbers of $X$ and $B$: its small eigenvalues
+lose their digits from $\kappa \approx 10^{8}$ in float64 and $10^{4}$ in
+float32. The package takes instead the SVD of $A = X^{1/2} B^{1/2} = U\Sigma
+V^\top$ (condition number at most $\sqrt{\kappa(X)\kappa(B)}$):
+$(B^{1/2} X B^{1/2})^{1/2} = V\Sigma V^\top$, and with the polar factor
+$W = UV^\top$ every formula is written without inverse square root:
+$(BX)^{1/2} = B^{1/2} W^\top X^{1/2}$ (log map), $d_{BW}^2 = \lVert X^{1/2} W
+- B^{1/2}\rVert_F^2$ (distance and std, no cancellation near $X = B$; $W$
+minimizes this over orthogonal matrices, so it does not enter the gradient),
+the geodesic $Y_t Y_t^\top$ with $Y_t = (1-t)X_1^{1/2} + tX_2^{1/2}W$, and the
+mean step above. Against a 60-digit reference ($n = 6$, $\kappa(X), \kappa(B)
+\le 10^9$), the float64 relative error at $\kappa = 10^9$ goes from
+$1.3 \cdot 10^{-9}$ with 75 % failures (log map) and 1.0 (std) to
+$3 \cdot 10^{-13}$ and $10^{-14}$; in float32 the operations no longer fail
+up to $\kappa = 10^{7}$ (error $\le 3.4 \cdot 10^{-5}$), where the
+eigendecomposition failed from $10^{4}$ to $10^{6}$.
 
 The iterations are unrolled, and the gradient flows through each of them with
 the manual spectral backwards. A small, fixed number of iterations is
@@ -234,8 +261,12 @@ point would silently move it at every forward pass.
 - **GBWBN** works in Bures–Wasserstein geometry, whose exponential at the
   identity $\mathrm{Exp}_I(V) = (I + V/2)^2$ is only injective when
   $I + V/2 \succ 0$. Outside that domain, a matrix is folded back and can come
-  out numerically singular. The power $\theta < 1$ compresses the spectrum and
-  keeps most matrices inside the domain.
+  out numerically singular. The BW metric is not scale invariant, so folding
+  is driven by the **scale** of the data, not by their conditioning: at scale
+  $10^2$ with $\theta = 1$, 99.8 % of the matrices fold at the centring step,
+  at any $\kappa$. The power $\theta < 1$ compresses the scale (1.1 % at
+  $\theta = 0.5$), and `bw_init_metric="trace_scale"` absorbs it into $M$ and
+  $G$ (0 %); see {doc}`batchnorm`.
 
 ```{figure} ../_static/diagrams/bw_fold.svg
 :width: 60%

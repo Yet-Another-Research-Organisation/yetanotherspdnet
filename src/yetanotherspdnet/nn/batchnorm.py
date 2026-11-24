@@ -1057,17 +1057,21 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             :math:`X \mapsto M^{-1/2} X^\theta M^{-1/2}` and the variance is
             measured with the deformed metric (divided by :math:`\theta^2`).
             Only used when mean_type="bures_wasserstein". theta=1.0 is the
-            plain BW metric; 0.5 is the best value of the paper's ablation
-            (HDM05: 69.1% vs 62.0% for theta=1) and the reference code's default.
+            plain BW metric. The best value depends on the dataset: 0.5 on
+            HDM05 (69.1% vs 62.0% for theta=1) and 0.75 on NTU in the paper's
+            ablation (Table 10); 0.5 is also the reference code's default.
+            The folding of the BW exponential depends on the scale of the data
+            more than on theta, see ``bw_init_metric``.
             Must be finite and nonzero (ValueError otherwise); a negative theta is
             allowed (the variance is divided by :math:`\theta^2`, the std by
             :math:`|\theta|`).
             Default is 0.5
 
         bw_batch_stats_grad : bool, optional
-            GBWBN only. If True (as in the paper), gradients flow through the
-            batch mean and variance; if False (as in the reference code), they
-            are computed without gradient, as constants.
+            GBWBN only. If True, gradients flow through the batch mean and
+            variance (a choice of this package: the paper does not prescribe
+            it); if False (as in the reference code), they are computed without
+            gradient, as constants.
             Default is True
 
         bw_init_metric : str, optional

@@ -11,9 +11,7 @@ References
 [2] Kobler et al. "Controlling the Fréchet Variance Improves Batch
     Normalization on the Symmetric Positive Definite Manifold." CVPR, 2022.
 
-Cross terms through the polar factor
-------------------------------------
-Every operation of this geometry needs the cross term
+**Cross terms through the polar factor.** Every operation of this geometry needs the cross term
 :math:`(B^{1/2} X B^{1/2})^{1/2}`. It is not computed by an eigendecomposition
 of :math:`B^{1/2} X B^{1/2}`, whose condition number is up to
 :math:`\kappa(X)\kappa(B)` (the small eigenvalues lose all their digits beyond
