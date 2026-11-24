@@ -7,6 +7,7 @@ from torch.autograd import Function
 
 from ..scalar_functions import zero_where_zero_std
 from ..spd_linalg import (
+    inv_SPD,
     symmetrize,
 )
 
@@ -75,7 +76,7 @@ class EuclideanGeodesic(Function):
             Symmetric matrices
         """
         ctx.t = t
-        return symmetrize((1 - t) * point1 + t * point2)
+        return euclidean_geodesic(point1, point2, t)
 
     @staticmethod
     def backward(
@@ -124,7 +125,7 @@ def arithmetic_mean(data: torch.Tensor) -> torch.Tensor:
     """
     if data.ndim == 2:
         return data
-    return symmetrize(torch.real(torch.mean(data, dim=tuple(range(data.ndim - 2)))))
+    return symmetrize(torch.mean(data, dim=tuple(range(data.ndim - 2))))
 
 
 class ArithmeticMean(Function):
@@ -153,7 +154,7 @@ class ArithmeticMean(Function):
         ctx.shape = data.shape
         if data.ndim == 2:
             return symmetrize(data)
-        return symmetrize(torch.mean(data, dim=tuple(range(data.ndim - 2))))
+        return arithmetic_mean(data)
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
@@ -220,6 +221,13 @@ def left_kullback_leibler_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
+    return _left_kullback_leibler_std_scalar(data, reference_point)[0]
+
+
+def _left_kullback_leibler_std_scalar(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Left KL scalar std, the inverse of G and the Cholesky factors of data."""
     n_matrices = math.prod(data.shape[:-2])
     n_features = data.shape[-1]
     L_G = torch.linalg.cholesky(reference_point)
@@ -230,7 +238,7 @@ def left_kullback_leibler_std_scalar(
     logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
     var = (trace - logdet_data) / n_matrices + logdet_G - n_features
     # clamp to avoid small numerical errors yielding small negative variance
-    return torch.sqrt(torch.clamp(var, min=0.0))
+    return torch.sqrt(torch.clamp(var, min=0.0)), G_inv, L_data
 
 
 class LeftKullbackLeiblerStdScalar(Function):
@@ -256,21 +264,10 @@ class LeftKullbackLeiblerStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = math.prod(data.shape[:-2])
-        n_features = data.shape[-1]
-        L_G = torch.linalg.cholesky(reference_point)
-        G_inv = torch.cholesky_inverse(L_G)
-        L_data = torch.linalg.cholesky(data)
-        trace = torch.einsum("ik,...ki->", G_inv, data)
-        logdet_data = 2 * L_data.diagonal(dim1=-2, dim2=-1).log().sum()
-        logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
-        # clamp to avoid small numerical errors yielding small negative variance
-        std_scalar = torch.sqrt(
-            torch.clamp(
-                (trace - logdet_data) / n_matrices + logdet_G - n_features, min=0.0
-            )
+        std_scalar, G_inv, L_data = _left_kullback_leibler_std_scalar(
+            data, reference_point
         )
-        ctx.n_matrices = n_matrices
+        ctx.n_matrices = math.prod(data.shape[:-2])
         ctx.save_for_backward(data, reference_point, G_inv, L_data, std_scalar)
         return std_scalar
 
@@ -346,10 +343,17 @@ def harmonic_curve(
     point : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
     """
-    point1_inv = torch.cholesky_inverse(torch.linalg.cholesky(point1))
-    point2_inv = torch.cholesky_inverse(torch.linalg.cholesky(point2))
+    return _harmonic_curve(point1, point2, t)[0]
+
+
+def _harmonic_curve(
+    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Harmonic curve at t and the inverses of point1 and point2."""
+    point1_inv = inv_SPD(point1)
+    point2_inv = inv_SPD(point2)
     point_inv = euclidean_geodesic(point1_inv, point2_inv, t)
-    return torch.cholesky_inverse(torch.linalg.cholesky(point_inv))
+    return inv_SPD(point_inv), point1_inv, point2_inv
 
 
 class HarmonicCurve(Function):
@@ -383,10 +387,7 @@ class HarmonicCurve(Function):
         point : torch.Tensor of shape (..., n_features, n_features)
             SPD matrices
         """
-        point1_inv = torch.cholesky_inverse(torch.linalg.cholesky(point1))
-        point2_inv = torch.cholesky_inverse(torch.linalg.cholesky(point2))
-        point_inv = euclidean_geodesic(point1_inv, point2_inv, t)
-        point = torch.cholesky_inverse(torch.linalg.cholesky(point_inv))
+        point, point1_inv, point2_inv = _harmonic_curve(point1, point2, t)
         ctx.t = t
         ctx.save_for_backward(point1_inv, point2_inv, point)
         return point
@@ -445,9 +446,13 @@ def harmonic_mean(data: torch.Tensor) -> torch.Tensor:
     """
     if data.ndim == 2:
         return data
-    inv_data = torch.cholesky_inverse(torch.linalg.cholesky(data))
-    inv_mean = arithmetic_mean(inv_data)
-    return torch.cholesky_inverse(torch.linalg.cholesky(inv_mean))
+    return _harmonic_mean(data)[0]
+
+
+def _harmonic_mean(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Harmonic mean of a batch (ndim > 2) and the inverses of the batch."""
+    inv_data = inv_SPD(data)
+    return inv_SPD(arithmetic_mean(inv_data)), inv_data
 
 
 class HarmonicMean(Function):
@@ -476,9 +481,7 @@ class HarmonicMean(Function):
         ctx.shape = data.shape
         if data.ndim == 2:
             return data
-        inv_data = torch.cholesky_inverse(torch.linalg.cholesky(data))
-        inv_mean = arithmetic_mean(inv_data)
-        mean = torch.cholesky_inverse(torch.linalg.cholesky(inv_mean))
+        mean, inv_data = _harmonic_mean(data)
         ctx.save_for_backward(inv_data, mean)
         return mean
 
@@ -544,6 +547,13 @@ def right_kullback_leibler_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
+    return _right_kullback_leibler_std_scalar(data, reference_point)[0]
+
+
+def _right_kullback_leibler_std_scalar(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Right KL scalar std, the Cholesky factor of G and the inverses of data."""
     n_matrices = math.prod(data.shape[:-2])
     n_features = data.shape[-1]
     L_G = torch.linalg.cholesky(reference_point)
@@ -554,7 +564,7 @@ def right_kullback_leibler_std_scalar(
     logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
     var = (trace + logdet_data) / n_matrices - logdet_G - n_features
     # clamp to avoid small numerical errors yielding small negative variance
-    return torch.sqrt(torch.clamp(var, min=0.0))
+    return torch.sqrt(torch.clamp(var, min=0.0)), L_G, data_inv
 
 
 class RightKullbackLeiblerStdScalar(Function):
@@ -580,21 +590,10 @@ class RightKullbackLeiblerStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = math.prod(data.shape[:-2])
-        n_features = data.shape[-1]
-        L_G = torch.linalg.cholesky(reference_point)
-        L_data = torch.linalg.cholesky(data)
-        data_inv = torch.cholesky_inverse(L_data)
-        trace = torch.einsum("...ik,ki->", data_inv, reference_point)
-        logdet_data = 2 * L_data.diagonal(dim1=-2, dim2=-1).log().sum()
-        logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
-        # clamp to avoid small numerical errors yielding small negative variance
-        std_scalar = torch.sqrt(
-            torch.clamp(
-                (trace + logdet_data) / n_matrices - logdet_G - n_features, min=0.0
-            )
+        std_scalar, L_G, data_inv = _right_kullback_leibler_std_scalar(
+            data, reference_point
         )
-        ctx.n_matrices = n_matrices
+        ctx.n_matrices = math.prod(data.shape[:-2])
         ctx.save_for_backward(data, reference_point, L_G, data_inv, std_scalar)
         return std_scalar
 

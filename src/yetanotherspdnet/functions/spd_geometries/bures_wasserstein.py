@@ -23,7 +23,9 @@ from ..spd_linalg import (
     eigh_operation,
     inv_sqrtm_SPD,
     solve_sylvester_SPD,
+    sqrtm_and_inv_sqrtm_SPD,
     sqrtm_SPD,
+    symmetrize,
 )
 from .kullback_leibler import arithmetic_mean
 
@@ -58,8 +60,7 @@ def bures_wasserstein_distance_squared(
     dist_sq : torch.Tensor of shape (...)
         Squared BW distances
     """
-    eigvals1, eigvecs1 = torch.linalg.eigh(point1)
-    p1_sqrt = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
+    p1_sqrt = sqrtm_SPD(point1)[0]
     inner = p1_sqrt @ point2 @ p1_sqrt
     inner_sqrt = sqrtm_SPD(inner)[0]
     trace_p1 = torch.diagonal(point1, dim1=-2, dim2=-1).sum(-1)
@@ -151,9 +152,7 @@ def bures_wasserstein_log(X: torch.Tensor, base: torch.Tensor) -> torch.Tensor:
     tangent : torch.Tensor of shape (..., n_features, n_features)
         Tangent vectors at *base*
     """
-    eigvals_B, eigvecs_B = torch.linalg.eigh(base)
-    B_sqrt = eigh_operation(eigvals_B, eigvecs_B, torch.sqrt)
-    B_inv_sqrt = eigh_operation(eigvals_B, eigvecs_B, inv_sqrt)
+    B_sqrt, B_inv_sqrt, _, _ = sqrtm_and_inv_sqrtm_SPD(base)
     S = B_sqrt @ X @ B_sqrt  # B^{1/2} X B^{1/2}  (SPD)
     S_sqrt = sqrtm_SPD(S)[0]
     BX_sqrt = B_sqrt @ S_sqrt @ B_inv_sqrt  # (BX)^{1/2}
@@ -212,7 +211,7 @@ class LyapunovSolveSPD(Function):
         adjoint = solve_sylvester_SPD(eigvals, eigvecs, grad_output)
         solution_t = solution.transpose(-2, -1)
         grad_base = -(adjoint @ solution_t + solution_t @ adjoint)
-        grad_base = 0.5 * (grad_base + grad_base.transpose(-2, -1))
+        grad_base = symmetrize(grad_base)
         return _sum_to_shape(grad_base, ctx.base_shape), adjoint
 
 
@@ -388,7 +387,7 @@ class ParallelTransportFromIdentityBW(Function):
         second = torch.einsum("bip,biq->pqi", rotated, grad_rot)
         grad_rot_target = 0.5 * ((first + second) * kernel).sum(dim=-1)
         grad_target = eigvecs @ grad_rot_target @ eigvecs.transpose(-2, -1)
-        grad_target = 0.5 * (grad_target + grad_target.transpose(-2, -1))
+        grad_target = symmetrize(grad_target)
         return grad_tangent, grad_target
 
 
@@ -427,9 +426,7 @@ def bures_wasserstein_geodesic(
     point : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices on the geodesic
     """
-    eigvals1, eigvecs1 = torch.linalg.eigh(point1)
-    p1_sqrt = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-    p1_inv_sqrt = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
+    p1_sqrt, p1_inv_sqrt, _, _ = sqrtm_and_inv_sqrtm_SPD(point1)
     M = p1_sqrt @ point2 @ p1_sqrt  # X1^{1/2} X2 X1^{1/2}
     M_sqrt = sqrtm_SPD(M)[0]
     cross = p1_sqrt @ M_sqrt @ p1_inv_sqrt  # (X1 X2)^{1/2}
@@ -471,9 +468,7 @@ def bures_wasserstein_mean(data: torch.Tensor, n_iterations: int = 1) -> torch.T
         return data
     G = arithmetic_mean(data)
     for _ in range(n_iterations):
-        eigvals_G, eigvecs_G = torch.linalg.eigh(G)
-        G_sqrt = eigh_operation(eigvals_G, eigvecs_G, torch.sqrt)
-        G_inv_sqrt = eigh_operation(eigvals_G, eigvecs_G, inv_sqrt)
+        G_sqrt, G_inv_sqrt, _, _ = sqrtm_and_inv_sqrtm_SPD(G)
         whitened = G_sqrt @ data @ G_sqrt
         whitened_sqrt = sqrtm_SPD(whitened)[0]
         T = arithmetic_mean(whitened_sqrt)
@@ -534,18 +529,25 @@ def bures_wasserstein_std_scalar(
     scalar_std : torch.Tensor of shape ()
         Scalar standard deviation
     """
+    return _bures_wasserstein_std_scalar(data, reference_point)[0]
+
+
+def _bures_wasserstein_std_scalar(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> tuple[torch.Tensor, ...]:
+    """BW scalar std, B^{1/2} and the eigendecomposition of B^{1/2} X B^{1/2}."""
     n_matrices = math.prod(data.shape[:-2])
-    eigvals_B, eigvecs_B = torch.linalg.eigh(reference_point)
-    B_sqrt = eigh_operation(eigvals_B, eigvecs_B, torch.sqrt)
+    B_sqrt = sqrtm_SPD(reference_point)[0]
     inner = B_sqrt @ data @ B_sqrt
-    inner_sqrt = sqrtm_SPD(inner)[0]
+    inner_sqrt, eigvals_inner, eigvecs_inner = sqrtm_SPD(inner)
     trace_B = torch.diagonal(reference_point, dim1=-2, dim2=-1).sum(-1)
     trace_X = torch.diagonal(data, dim1=-2, dim2=-1).sum(-1)
     trace_inner = torch.diagonal(inner_sqrt, dim1=-2, dim2=-1).sum(-1)
     dist_sq = trace_B + trace_X - 2 * trace_inner
     variance = dist_sq.sum() / n_matrices
     # clamp: rounding can make the variance slightly negative
-    return torch.sqrt(torch.clamp(variance, min=0.0))
+    scalar_std = torch.sqrt(torch.clamp(variance, min=0.0))
+    return scalar_std, B_sqrt, eigvals_inner, eigvecs_inner
 
 
 class BuresWassersteinStdScalar(Function):
@@ -579,25 +581,10 @@ class BuresWassersteinStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             Scalar standard deviation
         """
-        n_matrices = math.prod(data.shape[:-2])
-
-        eigvals_B, eigvecs_B = torch.linalg.eigh(reference_point)
-        B_sqrt = eigh_operation(eigvals_B, eigvecs_B, torch.sqrt)
-
-        inner = B_sqrt @ data @ B_sqrt
-        eigvals_inner, eigvecs_inner = torch.linalg.eigh(inner)
-        inner_sqrt = eigh_operation(eigvals_inner, eigvecs_inner, torch.sqrt)
-
-        trace_B = torch.diagonal(reference_point, dim1=-2, dim2=-1).sum(-1)
-        trace_X = torch.diagonal(data, dim1=-2, dim2=-1).sum(-1)
-        trace_inner = torch.diagonal(inner_sqrt, dim1=-2, dim2=-1).sum(-1)
-
-        dist_sq = trace_B + trace_X - 2 * trace_inner
-        variance = dist_sq.sum() / n_matrices
-        # clamp: rounding can make the variance slightly negative
-        scalar_std = torch.sqrt(torch.clamp(variance, min=0.0))
-
-        ctx.n_matrices = n_matrices
+        scalar_std, B_sqrt, eigvals_inner, eigvecs_inner = (
+            _bures_wasserstein_std_scalar(data, reference_point)
+        )
+        ctx.n_matrices = math.prod(data.shape[:-2])
         ctx.save_for_backward(
             data,
             reference_point,

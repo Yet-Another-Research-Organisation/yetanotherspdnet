@@ -5,6 +5,7 @@ from collections.abc import Callable
 import torch
 from torch.autograd import Function
 
+from yetanotherspdnet._deprecation import _deprecated
 from yetanotherspdnet.functions.scalar_functions import (
     inv,
     inv_derivative,
@@ -12,6 +13,7 @@ from yetanotherspdnet.functions.scalar_functions import (
     inv_scaled_softplus_derivative,
     inv_sqrt,
     inv_sqrt_derivative,
+    pow_exponent_derivative,
     scaled_softplus,
     scaled_softplus_derivative,
     sqrt_derivative,
@@ -34,7 +36,7 @@ def symmetrize(data: torch.Tensor) -> torch.Tensor:
     sym_data : torch.Tensor of shape (..., n_features, n_features)
         Batch of symmetrized matrices
     """
-    return torch.real(0.5 * (data + data.transpose(-1, -2)))
+    return 0.5 * (data + data.transpose(-1, -2))
 
 
 def skew_symmetrize(data: torch.Tensor) -> torch.Tensor:
@@ -51,7 +53,7 @@ def skew_symmetrize(data: torch.Tensor) -> torch.Tensor:
     skew_data : torch.Tensor of shape (..., n_features, n_features)
         Batch of skew-symmetrized matrices
     """
-    return torch.real(0.5 * (data - data.transpose(-1, -2)))
+    return 0.5 * (data - data.transpose(-1, -2))
 
 
 # -----------------------
@@ -277,10 +279,6 @@ def eigh_operation(
     result : torch.Tensor of shape (..., n_features, n_features)
         Resulting symmetric matrices with operation applied to eigenvalues
     """
-    eigvals, eigvecs = (
-        torch.real(eigvals),
-        torch.real(eigvecs),
-    )  # to correct eventual numerical errors...
     _eigvals = operation(eigvals)
     result = (eigvecs * _eigvals.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)
     return result
@@ -402,11 +400,6 @@ def solve_sylvester_SPD(
     result : torch.Tensor of shape (..., n_features, n_features)
         Symmetric matrices solutions to Sylvester equations
     """
-    # should those corrections be here though ?
-    eigvals, eigvecs = (
-        torch.real(eigvals),
-        torch.real(eigvecs),
-    )  # to correct eventual numerical errors...
     K = 1 / (eigvals.unsqueeze(-1) + eigvals.unsqueeze(-2))
     middle_term = K * (eigvecs.transpose(-1, -2) @ mat @ eigvecs)
     return eigvecs @ middle_term @ eigvecs.transpose(-1, -2)
@@ -475,10 +468,6 @@ def gevd_operation(
     result : torch.Tensor of shape (..., n_features, n_features)
         Batch of resulting symmetric matrices with operation applied to generalized eigenvalues
     """
-    general_eigvals, general_eigvecs = (
-        torch.real(general_eigvals),
-        torch.real(general_eigvecs),
-    )  # to correct eventual numerical errors...
     _Lambda = operation(general_eigvals)
     result = (
         general_eigvecs.transpose(-1, -2) * _Lambda.unsqueeze(-2)
@@ -553,9 +542,26 @@ def gevd_operation_grad(
 # ------------------
 # SPD matrix inverse
 # ------------------
-def invm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def inv_SPD(data: torch.Tensor) -> torch.Tensor:
     """
-    Matrix inverse of a batch of SPD matrices
+    Inverse of a batch of SPD matrices, from their Cholesky factors.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    Returns
+    -------
+    inv_data : torch.Tensor of shape (..., n_features, n_features)
+        Matrix inverses of the input batch of SPD matrices
+    """
+    return torch.cholesky_inverse(torch.linalg.cholesky(data))
+
+
+def _invm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Matrix inverse of a batch of SPD matrices, from their eigendecomposition.
 
     Parameters
     ----------
@@ -565,7 +571,7 @@ def invm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tens
     Returns
     -------
     invm_data : torch.Tensor of shape (..., n_features, n_features)
-        Matrix logarithms of the input batch of SPD matrices
+        Matrix inverses of the input batch of SPD matrices
 
     eigvals : torch.Tensor of shape (..., n_features)
         Eigenvalues of matrices in data
@@ -577,15 +583,13 @@ def invm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tens
     return eigh_operation(eigvals, eigvecs, inv), eigvals, eigvecs
 
 
-class InvmSPD(Function):
-    """
-    Matrix inverse of a batch of SPD matrices
-    """
+class _InvmSPD(Function):
+    """Matrix inverse of a batch of SPD matrices (eigendecomposition)."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the matrix inverse of a batch of SPD matrices
+        Forward pass of the matrix inverse of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -598,16 +602,16 @@ class InvmSPD(Function):
         Returns
         -------
         invm_data : torch.Tensor of shape (..., n_features, n_features)
-            Matrix logarithms of the input batch of SPD matrices
+            Matrix inverses of the input batch of SPD matrices
         """
-        invm_data, eigvals, eigvecs = invm_SPD(data)
+        invm_data, eigvals, eigvecs = _invm_SPD(data)
         ctx.save_for_backward(eigvals, eigvecs)
         return invm_data
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the matrix inverse of a batch of SPD matrices
+        Backward pass of the matrix inverse of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -615,7 +619,7 @@ class InvmSPD(Function):
             Context object to retrieve tensors saved during the forward pass
 
         grad_output : torch.Tensor of shape (..., n_features, n_features)
-            Gradient of the loss with respect to matrix inverse of the input batch of SPD matrices
+            Gradient of the loss with respect to the matrix inverses
 
         Returns
         -------
@@ -624,6 +628,22 @@ class InvmSPD(Function):
         """
         eigvals, eigvecs = ctx.saved_tensors
         return eigh_operation_grad(grad_output, eigvals, eigvecs, inv, inv_derivative)
+
+
+# eigendecomposition-based inverse, unused by the library: kept with its
+# (inverse, eigvals, eigvecs) outputs for backward compatibility
+invm_SPD = _deprecated(
+    "invm_SPD",
+    _invm_SPD,
+    note="inv_SPD returns the inverse only (Cholesky-based).",
+    replacement="yetanotherspdnet.functions.spd_linalg.inv_SPD",
+)
+InvmSPD = _deprecated(
+    "InvmSPD",
+    _InvmSPD,
+    note="inv_SPD is differentiated by autograd through the Cholesky factor.",
+    replacement="yetanotherspdnet.functions.spd_linalg.inv_SPD",
+)
 
 
 # ----------------------
@@ -1007,7 +1027,7 @@ class PowmSPD(Function):
             # the exponent is a scalar shared by the whole batch:
             # d/dp tr(G^T P^p) = tr(G^T U diag(lambda^p log lambda) U^T),
             # summed over the batch
-            exponent_deriv_fun = lambda x: torch.pow(x, exponent) * torch.log(x)
+            exponent_deriv_fun = lambda x: pow_exponent_derivative(x, exponent)
             grad_input_exponent = (
                 (grad_output @ eigh_operation(eigvals, eigvecs, exponent_deriv_fun))
                 .diagonal(offset=0, dim1=-1, dim2=-2)

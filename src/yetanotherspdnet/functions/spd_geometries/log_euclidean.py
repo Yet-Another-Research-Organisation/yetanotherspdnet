@@ -179,11 +179,27 @@ def log_euclidean_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
+    return _log_euclidean_std_scalar(data, reference_point)[0]
+
+
+def _log_euclidean_std_scalar(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> tuple[torch.Tensor, ...]:
+    """Log-Euclidean scalar std and the logarithms / eigendecompositions it uses."""
     n_matrices = math.prod(data.shape[:-2])
-    logm_data = logm_SPD(data)[0]
-    logm_G = logm_SPD(reference_point)[0]
+    logm_data, eigvals_data, eigvecs_data = logm_SPD(data)
+    logm_G, eigvals_G, eigvecs_G = logm_SPD(reference_point)
     variance = torch.sum((logm_data - logm_G) ** 2) / n_matrices
-    return torch.sqrt(torch.clamp(variance, min=0.0))
+    std_scalar = torch.sqrt(torch.clamp(variance, min=0.0))
+    return (
+        std_scalar,
+        logm_data,
+        logm_G,
+        eigvals_data,
+        eigvecs_data,
+        eigvals_G,
+        eigvecs_G,
+    )
 
 
 class LogEuclideanStdScalar(Function):
@@ -212,12 +228,16 @@ class LogEuclideanStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = math.prod(data.shape[:-2])
-        logm_data, eigvals_data, eigvecs_data = logm_SPD(data)
-        logm_G, eigvals_G, eigvecs_G = logm_SPD(reference_point)
-        variance = torch.sum((logm_data - logm_G) ** 2) / n_matrices
-        std_scalar = torch.sqrt(torch.clamp(variance, min=0.0))
-        ctx.n_matrices = n_matrices
+        (
+            std_scalar,
+            logm_data,
+            logm_G,
+            eigvals_data,
+            eigvecs_data,
+            eigvals_G,
+            eigvecs_G,
+        ) = _log_euclidean_std_scalar(data, reference_point)
+        ctx.n_matrices = math.prod(data.shape[:-2])
         ctx.save_for_backward(
             logm_data,
             logm_G,

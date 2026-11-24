@@ -5,8 +5,13 @@ import math
 import torch
 from torch.autograd import Function
 
-from yetanotherspdnet.functions.scalar_functions import inv_sqrt, zero_where_zero_std
-from yetanotherspdnet.functions.spd_linalg import eigh_operation, eigh_operation_grad
+from yetanotherspdnet.functions.scalar_functions import zero_where_zero_std
+from yetanotherspdnet.functions.spd_linalg import (
+    eigh_operation,
+    eigh_operation_grad,
+    inv_SPD,
+    sqrtm_and_inv_sqrtm_SPD,
+)
 
 from .affine_invariant import (
     AffineInvariantGeodesic,
@@ -201,16 +206,24 @@ def symmetrized_kullback_leibler_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
+    return _symmetrized_kullback_leibler_std_scalar(data, reference_point)[0]
+
+
+def _symmetrized_kullback_leibler_std_scalar(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Symmetrized KL scalar std and the inverses of data and G."""
     n_matrices = math.prod(data.shape[:-2])
     n_features = data.shape[-1]
-    G_inv = torch.cholesky_inverse(torch.linalg.cholesky(reference_point))
-    data_inv = torch.cholesky_inverse(torch.linalg.cholesky(data))
+    G_inv = inv_SPD(reference_point)
+    data_inv = inv_SPD(data)
     term1 = torch.einsum("ik,...ki->", G_inv, data)
     term2 = torch.einsum("...ik,ki->", data_inv, reference_point)
     # clamp to avoid small numerical errors yielding small negative variance
-    return torch.sqrt(
+    std_scalar = torch.sqrt(
         torch.clamp((term1 + term2) / 2 / n_matrices - n_features, min=0.0)
     )
+    return std_scalar, data_inv, G_inv
 
 
 class SymmetrizedKullbackLeiblerStdScalar(Function):
@@ -239,17 +252,10 @@ class SymmetrizedKullbackLeiblerStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = math.prod(data.shape[:-2])
-        n_features = data.shape[-1]
-        G_inv = torch.cholesky_inverse(torch.linalg.cholesky(reference_point))
-        data_inv = torch.cholesky_inverse(torch.linalg.cholesky(data))
-        term1 = torch.einsum("ik,...ki->", G_inv, data)
-        term2 = torch.einsum("...ik,ki->", data_inv, reference_point)
-        # clamp to avoid small numerical errors yielding small negative variance
-        std_scalar = torch.sqrt(
-            torch.clamp((term1 + term2) / 2 / n_matrices - n_features, min=0.0)
+        std_scalar, data_inv, G_inv = _symmetrized_kullback_leibler_std_scalar(
+            data, reference_point
         )
-        ctx.n_matrices = n_matrices
+        ctx.n_matrices = math.prod(data.shape[:-2])
         ctx.save_for_backward(data, reference_point, data_inv, G_inv, std_scalar)
         return std_scalar
 
@@ -375,9 +381,7 @@ class AdaptiveGeometricArithmeticHarmonicGeodesic(Function):
         point : torch.Tensor of shape (..., n_features, n_features)
             SPD matrices
         """
-        eigvals1, eigvecs1 = torch.linalg.eigh(point1)
-        point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-        point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
+        point1_sqrtm, point1_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point1)
         eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
             point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
         )
@@ -449,9 +453,7 @@ class AdaptiveGeometricArithmeticHarmonicGeodesic(Function):
         )
 
         # Gradient with respect to point1
-        eigvals2, eigvecs2 = torch.linalg.eigh(point2)
-        point2_sqrtm = eigh_operation(eigvals2, eigvecs2, torch.sqrt)
-        point2_inv_sqrtm = eigh_operation(eigvals2, eigvecs2, inv_sqrt)
+        point2_sqrtm, point2_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point2)
         eigvals_middle_term2, eigvecs_middle_term2 = torch.linalg.eigh(
             point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
         )

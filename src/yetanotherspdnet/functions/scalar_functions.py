@@ -184,6 +184,33 @@ def inv_scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
     return 1 / (1.0 - torch.exp2(-x))
 
 
+def pow_exponent_derivative(
+    x: torch.Tensor, exponent: float | torch.Tensor
+) -> torch.Tensor:
+    r"""
+    Derivative of the power function with respect to its exponent.
+
+    .. math:: \frac{\partial}{\partial t} x^{t} = x^{t} \log x
+
+    Used for the gradient of matrix powers and of the affine-invariant geodesic
+    with respect to the exponent :math:`t` (applied to eigenvalues).
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Scalar or array of positive scalars.
+
+    exponent : float | torch.Tensor
+        Power exponent :math:`t`.
+
+    Returns
+    -------
+    x_pow_deriv : torch.Tensor
+        :math:`x^t \log x`
+    """
+    return torch.pow(x, exponent) * torch.log(x)
+
+
 def zero_where_zero_std(grad: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
     r"""
     Zero a gradient where the scalar standard deviation it was divided by is 0.

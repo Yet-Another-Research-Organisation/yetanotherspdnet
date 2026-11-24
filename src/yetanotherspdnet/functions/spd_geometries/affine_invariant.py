@@ -8,6 +8,8 @@ from torch.autograd import Function
 from yetanotherspdnet.functions.scalar_functions import (
     inv,
     inv_sqrt,
+    pow_exponent_derivative,
+    sqrt_derivative,
     zero_where_zero_std,
 )
 
@@ -66,15 +68,37 @@ def affine_invariant_geodesic(
     point : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
     """
-    eigvals1, eigvecs1 = torch.linalg.eigh(point1)
-    point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-    point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
-    eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
+    return _affine_invariant_geodesic(point1, point2, t)[0]
+
+
+def _affine_invariant_geodesic(
+    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
+) -> tuple[torch.Tensor, ...]:
+    """
+    Affine-invariant geodesic and the intermediate results its backward uses.
+
+    Returns
+    -------
+    point : torch.Tensor of shape (..., n_features, n_features)
+        Point at t on the geodesic
+    point1_sqrtm, point1_inv_sqrtm : torch.Tensor of shape (..., n_features, n_features)
+        Square root and inverse square root of point1
+    eigvals_middle, eigvecs_middle : torch.Tensor
+        Eigendecomposition of point1^{-1/2} point2 point1^{-1/2}
+    """
+    point1_sqrtm, point1_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point1)
+    eigvals_middle, eigvecs_middle = torch.linalg.eigh(
         point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
     )
     pow_t = lambda x: torch.pow(x, t)
-    middle_term1 = eigh_operation(eigvals_middle_term1, eigvecs_middle_term1, pow_t)
-    return point1_sqrtm @ middle_term1 @ point1_sqrtm
+    middle_term = eigh_operation(eigvals_middle, eigvecs_middle, pow_t)
+    return (
+        point1_sqrtm @ middle_term @ point1_sqrtm,
+        point1_sqrtm,
+        point1_inv_sqrtm,
+        eigvals_middle,
+        eigvecs_middle,
+    )
 
 
 class AffineInvariantGeodesic(Function):
@@ -113,24 +137,25 @@ class AffineInvariantGeodesic(Function):
         point : torch.Tensor of shape (..., n_features, n_features)
             SPD matrices
         """
-        eigvals1, eigvecs1 = torch.linalg.eigh(point1)
-        point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-        point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
-        eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
-            point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
+        point, point1_sqrtm, point1_inv_sqrtm, eigvals_middle, eigvecs_middle = (
+            _affine_invariant_geodesic(point1, point2, t)
         )
-        pow_t = lambda x: torch.pow(x, t)
-        middle_term1 = eigh_operation(eigvals_middle_term1, eigvecs_middle_term1, pow_t)
-        ctx.save_for_backward(
+        saved = (
             point1_sqrtm,
             point1_inv_sqrtm,
-            eigvals_middle_term1,
-            eigvecs_middle_term1,
+            eigvals_middle,
+            eigvecs_middle,
             point1,
             point2,
         )
-        ctx.t = t
-        return point1_sqrtm @ middle_term1 @ point1_sqrtm
+        # save_for_backward only accepts tensors: a python t is stored on ctx
+        ctx.t_is_tensor = isinstance(t, torch.Tensor)
+        if ctx.t_is_tensor:
+            ctx.save_for_backward(*saved, t)
+        else:
+            ctx.save_for_backward(*saved)
+            ctx.t = t
+        return point
 
     @staticmethod
     def backward(
@@ -167,8 +192,9 @@ class AffineInvariantGeodesic(Function):
             eigvecs_middle_term1,
             point1,
             point2,
+            *t_saved,
         ) = ctx.saved_tensors
-        t = ctx.t
+        t = t_saved[0] if ctx.t_is_tensor else ctx.t
 
         grad_input1 = None
         grad_input2 = None
@@ -192,9 +218,7 @@ class AffineInvariantGeodesic(Function):
 
         if ctx.needs_input_grad[0]:
             # Gradient with respect to point1
-            eigvals2, eigvecs2 = torch.linalg.eigh(point2)
-            point2_sqrtm = eigh_operation(eigvals2, eigvecs2, torch.sqrt)
-            point2_inv_sqrtm = eigh_operation(eigvals2, eigvecs2, inv_sqrt)
+            point2_sqrtm, point2_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point2)
             eigvals_middle_term2, eigvecs_middle_term2 = torch.linalg.eigh(
                 point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
             )
@@ -215,13 +239,11 @@ class AffineInvariantGeodesic(Function):
         if ctx.needs_input_grad[2]:
             # Gradient with respect to t
             # d/dt [V D^t V^T] = V diag(D^t * log(D)) V^T
-            # Using broadcasting: (V * (D^t * log(D)).unsqueeze(-2)) @ V^T
-            log_eigvals = torch.log(eigvals_middle_term1)
-            pow_t_eigvals = torch.pow(eigvals_middle_term1, t)
-            d_eigvals = pow_t_eigvals * log_eigvals
-            middle_term_deriv = (
-                eigvecs_middle_term1 * d_eigvals.unsqueeze(-2)
-            ) @ eigvecs_middle_term1.transpose(-1, -2)
+            middle_term_deriv = eigh_operation(
+                eigvals_middle_term1,
+                eigvecs_middle_term1,
+                lambda x: pow_exponent_derivative(x, t),
+            )
             deriv_output_t = point1_sqrtm @ middle_term_deriv @ point1_sqrtm
             grad_t = torch.sum(grad_output * deriv_output_t)
 
@@ -261,10 +283,7 @@ def affine_invariant_mean_2points(
     mean : torch.Tensor of shape (..., nfeatures, nfeatures)
         Geometric means of point1 and point2
     """
-    # we don't use sqrtm_SPD and inv_sqrtm_SPD here to avoid an unnecessary evd
-    eigvals1, eigvecs1 = torch.linalg.eigh(point1)
-    point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-    point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
+    point1_sqrtm, point1_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point1)
     middle_term1 = sqrtm_SPD(point1_inv_sqrtm @ point2 @ point1_inv_sqrtm)[0]
     return point1_sqrtm @ middle_term1 @ point1_sqrtm
 
@@ -295,9 +314,7 @@ class AffineInvariantMean2Points(Function):
         mean : torch.Tensor of shape (..., nfeatures, nfeatures)
             Geometric means of point1 and point2
         """
-        eigvals1, eigvecs1 = torch.linalg.eigh(point1)
-        point1_sqrtm = eigh_operation(eigvals1, eigvecs1, torch.sqrt)
-        point1_inv_sqrtm = eigh_operation(eigvals1, eigvecs1, inv_sqrt)
+        point1_sqrtm, point1_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point1)
         eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
             point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
         )
@@ -343,9 +360,7 @@ class AffineInvariantMean2Points(Function):
             point1,
             point2,
         ) = ctx.saved_tensors
-        eigvals2, eigvecs2 = torch.linalg.eigh(point2)
-        point2_sqrtm = eigh_operation(eigvals2, eigvecs2, torch.sqrt)
-        point2_inv_sqrtm = eigh_operation(eigvals2, eigvecs2, inv_sqrt)
+        point2_sqrtm, point2_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point2)
         eigvals_middle_term2, eigvecs_middle_term2 = torch.linalg.eigh(
             point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
         )
@@ -408,10 +423,7 @@ def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Te
         n_features, dtype=data.dtype, device=data.device
     )  # initialize with identity to ensure correct manual backpropagation
     for it in range(n_iterations):
-        # sqrtm and inverse sqrtm of mean
-        eigvals_mean, eigvecs_mean = torch.linalg.eigh(mean)
-        mean_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, torch.sqrt)
-        mean_inv_sqrtm = eigh_operation(eigvals_mean, eigvecs_mean, inv_sqrt)
+        mean_sqrtm, mean_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(mean)
         # transform data
         transformed_data = mean_inv_sqrtm @ data @ mean_inv_sqrtm
         # compute descent direction
@@ -419,7 +431,6 @@ def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Te
         logm_mean = arithmetic_mean(logm_transformed_data)
         # step-size to stabilize algorithm
         stepsize = 0.95**it
-        # stepsize = 1
         # compute new iterate
         expm_logm_mean = expm_symmetric(stepsize * logm_mean)[0]
         mean = mean_sqrtm @ expm_logm_mean @ mean_sqrtm
@@ -457,13 +468,12 @@ class AffineInvariantMeanIteration(Function):
         mean_iterate_new : torch.Tensor of shape (n_features, n_features)
             New iterate of the affine-invariant mean
         """
-        eigvals_mean_iterate, eigvecs_mean_iterate = torch.linalg.eigh(mean_iterate)
-        mean_iterate_sqrtm = eigh_operation(
-            eigvals_mean_iterate, eigvecs_mean_iterate, torch.sqrt
-        )
-        mean_iterate_inv_sqrtm = eigh_operation(
-            eigvals_mean_iterate, eigvecs_mean_iterate, inv_sqrt
-        )
+        (
+            mean_iterate_sqrtm,
+            mean_iterate_inv_sqrtm,
+            eigvals_mean_iterate,
+            eigvecs_mean_iterate,
+        ) = sqrtm_and_inv_sqrtm_SPD(mean_iterate)
         transformed_data = mean_iterate_inv_sqrtm @ data @ mean_iterate_inv_sqrtm
         eigvals_transformed_data, eigvecs_transformed_data = torch.linalg.eigh(
             transformed_data
@@ -594,7 +604,6 @@ def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tens
     mean = torch.eye(n_features, dtype=data.dtype, device=data.device)
     for it in range(n_iterations):
         stepsize = 0.95**it
-        # stepsize = 1
         mean = AffineInvariantMeanIteration.apply(mean, data, stepsize)
     return mean
 
@@ -890,12 +899,40 @@ def affine_invariant_exp(base: torch.Tensor, tangent: torch.Tensor) -> torch.Ten
     result : torch.Tensor of shape (..., n, n)
         Point(s) on the SPD manifold
     """
-    eigvals, eigvecs = torch.linalg.eigh(base)
-    base_sqrtm = eigh_operation(eigvals, eigvecs, torch.sqrt)
-    base_inv_sqrtm = eigh_operation(eigvals, eigvecs, inv_sqrt)
+    return _affine_invariant_exp(base, tangent)[0]
+
+
+def _affine_invariant_exp(
+    base: torch.Tensor, tangent: torch.Tensor
+) -> tuple[torch.Tensor, ...]:
+    """
+    Affine-invariant exponential map and the intermediate results its backward uses.
+
+    Returns
+    -------
+    result : torch.Tensor of shape (..., n, n)
+        Exp_base(tangent)
+    base_sqrtm, base_inv_sqrtm : torch.Tensor of shape (..., n, n)
+        Square root and inverse square root of base
+    eigvals_base, eigvecs_base : torch.Tensor
+        Eigendecomposition of base
+    eigvals_trans, eigvecs_trans : torch.Tensor
+        Eigendecomposition of base^{-1/2} tangent base^{-1/2}
+    """
+    base_sqrtm, base_inv_sqrtm, eigvals_base, eigvecs_base = sqrtm_and_inv_sqrtm_SPD(
+        base
+    )
     transformed = base_inv_sqrtm @ tangent @ base_inv_sqrtm
-    exp_transformed = expm_symmetric(transformed)[0]
-    return base_sqrtm @ exp_transformed @ base_sqrtm
+    exp_transformed, eigvals_trans, eigvecs_trans = expm_symmetric(transformed)
+    return (
+        base_sqrtm @ exp_transformed @ base_sqrtm,
+        base_sqrtm,
+        base_inv_sqrtm,
+        eigvals_base,
+        eigvecs_base,
+        eigvals_trans,
+        eigvecs_trans,
+    )
 
 
 class AffineInvariantExp(Function):
@@ -926,13 +963,15 @@ class AffineInvariantExp(Function):
         result : torch.Tensor of shape (..., n, n)
             Point(s) on the SPD manifold
         """
-        eigvals_base, eigvecs_base = torch.linalg.eigh(base)
-        base_sqrtm = eigh_operation(eigvals_base, eigvecs_base, torch.sqrt)
-        base_inv_sqrtm = eigh_operation(eigvals_base, eigvecs_base, inv_sqrt)
-        transformed = base_inv_sqrtm @ tangent @ base_inv_sqrtm
-        eigvals_trans, eigvecs_trans = torch.linalg.eigh(transformed)
-        exp_transformed = eigh_operation(eigvals_trans, eigvecs_trans, torch.exp)
-        result = base_sqrtm @ exp_transformed @ base_sqrtm
+        (
+            result,
+            base_sqrtm,
+            base_inv_sqrtm,
+            eigvals_base,
+            eigvecs_base,
+            eigvals_trans,
+            eigvecs_trans,
+        ) = _affine_invariant_exp(base, tangent)
         ctx.save_for_backward(
             base_sqrtm,
             base_inv_sqrtm,
@@ -1011,7 +1050,7 @@ class AffineInvariantExp(Function):
                 eigvals_base,
                 eigvecs_base,
                 torch.sqrt,
-                lambda x: 0.5 / torch.sqrt(x),
+                sqrt_derivative,
             )
 
             # d/dR through expm argument T = R V R, where R = base^{-1/2}:
@@ -1068,9 +1107,7 @@ def affine_invariant_log(base: torch.Tensor, point: torch.Tensor) -> torch.Tenso
     tangent : torch.Tensor of shape (..., n, n)
         Tangent vector(s) at base (symmetric matrices)
     """
-    eigvals, eigvecs = torch.linalg.eigh(base)
-    base_sqrtm = eigh_operation(eigvals, eigvecs, torch.sqrt)
-    base_inv_sqrtm = eigh_operation(eigvals, eigvecs, inv_sqrt)
+    base_sqrtm, base_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(base)
     transformed = base_inv_sqrtm @ point @ base_inv_sqrtm
     log_transformed = logm_SPD(transformed)[0]
     return base_sqrtm @ log_transformed @ base_sqrtm

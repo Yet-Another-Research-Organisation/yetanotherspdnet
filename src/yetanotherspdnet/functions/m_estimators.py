@@ -34,6 +34,8 @@ from functools import partial
 import torch
 from torch.autograd import Function
 
+from .spd_linalg import symmetrize
+
 
 # ----------------
 # Weight functions
@@ -202,7 +204,7 @@ def sample_covariance(
         data = data - data.mean(dim=-2, keepdim=True)
         n_samples = n_samples - 1
     covariance = data.transpose(-2, -1) @ data / n_samples
-    return 0.5 * (covariance + covariance.transpose(-2, -1))
+    return symmetrize(covariance)
 
 
 # -------------
@@ -260,7 +262,7 @@ def m_estimator_step(
     weights = weight_function(quadratic)
     weighted = data * weights.unsqueeze(-1)
     updated = weighted.transpose(-2, -1) @ data / data.shape[-2]
-    updated = 0.5 * (updated + updated.transpose(-2, -1))
+    updated = symmetrize(updated)
     if shrinkage is not None:
         eye = torch.eye(data.shape[-1], dtype=data.dtype, device=data.device)
         updated = shrinkage * updated + (1 - shrinkage) * eye
@@ -454,7 +456,7 @@ class MEstimator(Function):
                 ctx.shrinkage,
                 ctx.normalization,
             )
-        grad_output = 0.5 * (grad_output + grad_output.transpose(-2, -1))
+        grad_output = symmetrize(grad_output)
         adjoint = grad_output
         for _ in range(ctx.n_iterations):
             (vjp_covariance,) = torch.autograd.grad(
