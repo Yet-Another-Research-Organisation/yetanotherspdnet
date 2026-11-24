@@ -2381,3 +2381,30 @@ class TestParallelTransportAutograd:
         layer(data).sum().backward()
         grad = layer.parametrizations.Covbias.original.grad
         assert grad is not None and torch.isfinite(grad).all()
+
+
+class TestGBWBNTheta:
+    """bw_theta must be finite and nonzero; a negative theta divides the std by |theta|."""
+
+    @pytest.mark.parametrize("theta", [0, 0.0, float("nan"), float("inf"), "a", None])
+    def test_invalid_theta_raises(self, theta):
+        with pytest.raises(ValueError, match="bw_theta"):
+            batchnorm.BatchNormSPDMeanScalarVariance(
+                4, mean_type="bures_wasserstein", bw_theta=theta
+            )
+
+    def test_negative_theta(self, generator):
+        dtype = torch.float64
+        data = random_SPD(4, 8, cond=10, dtype=dtype, generator=generator)
+        layers = {
+            theta: batchnorm.BatchNormSPDMeanScalarVariance(
+                4, mean_type="bures_wasserstein", bw_theta=theta, dtype=dtype
+            )
+            for theta in (0.5, -0.5)
+        }
+        for layer in layers.values():
+            out = layer(data)
+            assert torch.isfinite(out).all() and is_spd(out)
+        # X^-theta = (X^theta)^-1 and the BW distance between inverses differs,
+        # but the std is positive in both cases
+        assert layers[-0.5].running_std_scalar > 0

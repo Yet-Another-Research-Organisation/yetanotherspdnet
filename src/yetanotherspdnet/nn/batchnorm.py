@@ -1,5 +1,6 @@
 """SPD batch normalization layers with configurable Riemannian geometry."""
 
+import math
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -74,6 +75,38 @@ def _use_batch_statistics(module: nn.Module, data: torch.Tensor) -> bool:
         )
         return False
     return True
+
+
+def _check_bw_theta(theta: float) -> float:
+    r"""
+    Validate the GBWBN power deformation theta.
+
+    Parameters
+    ----------
+    theta : float
+        Power of the deformation :math:`X \mapsto X^\theta`
+
+    Returns
+    -------
+    float
+        theta as a float
+
+    Raises
+    ------
+    ValueError
+        If theta is not a finite, nonzero real number: :math:`X^0 = I` erases
+        the data and the variance is divided by :math:`\theta^2`.
+    """
+    try:
+        value = float(theta)
+    except (TypeError, ValueError):
+        raise ValueError(f"bw_theta must be a real number, got {theta!r}") from None
+    if not math.isfinite(value) or value == 0.0:
+        raise ValueError(
+            f"bw_theta must be finite and nonzero (X^0 = I erases the data and the "
+            f"variance is divided by theta^2), got {theta!r}"
+        )
+    return value
 
 
 class BatchNormSPDBase(ABC, nn.Module):
@@ -1020,6 +1053,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             Only used when mean_type="bures_wasserstein". theta=1.0 is the
             plain BW metric; 0.5 is the best value of the paper's ablation
             (HDM05: 69.1% vs 62.0% for theta=1) and the reference code's default.
+            Must be finite and nonzero (ValueError otherwise); a negative theta is
+            allowed (the variance is divided by :math:`\theta^2`, the std by
+            :math:`|\theta|`).
             Default is 0.5
 
         bw_batch_stats_grad : bool, optional
@@ -1075,7 +1111,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
 
         # Bures-Wasserstein specific parameters
         if self.mean_type == "bures_wasserstein":
-            self.bw_theta = bw_theta
+            self.bw_theta = _check_bw_theta(bw_theta)
             self.bw_batch_stats_grad = bw_batch_stats_grad
             # M: learnable SPD metric (n x n)
             self.bw_M = torch.nn.Parameter(
@@ -1385,7 +1421,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             ):
                 mean_batch = self.mean_fun(data_hat)
                 mean = self.get_norm_mean(mean_batch)
-                std_batch = self.std_fun(data_hat, mean) / theta
+                std_batch = self.std_fun(data_hat, mean) / abs(theta)
                 std = self.get_norm_std(std_batch)
             with torch.no_grad():
                 self.running_mean = self.adaptive_mean_fun(
