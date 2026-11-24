@@ -2188,11 +2188,14 @@ def _spectral(matrix: torch.Tensor, fun) -> torch.Tensor:
     return (eigvecs * fun(eigvals).unsqueeze(-2)) @ eigvecs.mT
 
 
-def _gbwbn_reference(data, M, G, theta, shift, eps=1e-5):
-    """Algorithm 1 of the GBWBN paper, written independently of the library
-    in the style of the reference code (jjscc/GBWBN): pal1, scale1, pal2, ExpG.
-    Batch statistics: one fixed-point iteration from the arithmetic mean and
-    the Frechet variance of the theta-deformed metric."""
+def _gbwbn_paper_formula(data, M, G, theta, shift, eps=1e-5):
+    """Algorithm 1 of the GBWBN paper (Wang et al., 2025), written independently
+    of the library with eigendecompositions and the paper's formulas. The step
+    names (pal1, scale1, pal2, ExpG) follow the reference code (jjscc/GBWBN),
+    but this is the paper's formula, not the reference code: the variance is
+    measured to the batch mean (the reference code measures it to the identity)
+    and the batch mean is one fixed-point iteration from the arithmetic mean.
+    The variance is the Frechet variance of the theta-deformed metric."""
     eye = torch.eye(data.shape[-1], dtype=data.dtype, device=data.device)
     M_isqrt = _spectral(M, lambda s: s.rsqrt())
     M_sqrt = _spectral(M, torch.sqrt)
@@ -2227,11 +2230,12 @@ def _gbwbn_reference(data, M, G, theta, shift, eps=1e-5):
 
 
 class TestGBWBNConformity:
-    """GBWBN against the paper's Algorithm 1 (Wang et al., 2025)."""
+    """GBWBN against the paper's Algorithm 1 (Wang et al., 2025): the paper's
+    formula, not the reference code (see _gbwbn_paper_formula)."""
 
     @pytest.mark.parametrize("bw_theta", [1.0, 0.75, 0.5, 0.25])
     @pytest.mark.parametrize("use_autograd", [False, True])
-    def test_matches_algorithm_1(self, bw_theta, use_autograd, generator):
+    def test_matches_paper_algorithm_1(self, bw_theta, use_autograd, generator):
         n_features, dtype = 5, torch.float64
         layer = batchnorm.BatchNormSPDMeanScalarVariance(
             n_features,
@@ -2247,7 +2251,7 @@ class TestGBWBNConformity:
             layer.bw_G = G
             layer.stdScalarbias = torch.tensor(1.7, dtype=dtype)
         data = random_SPD(n_features, 8, cond=20, dtype=dtype, generator=generator)
-        expected = _gbwbn_reference(data, M, G, bw_theta, shift=1.7)
+        expected = _gbwbn_paper_formula(data, M, G, bw_theta, shift=1.7)
         assert_close(layer(data), expected, rtol=1e-8, atol=1e-10)
 
     def test_default_theta_is_paper_best(self):
@@ -2649,3 +2653,35 @@ class TestGBWBNInitMetric:
             folded[init] = (torch.linalg.eigvalsh(eye + tangent / 2)[..., 0] <= 0).sum()
         assert folded["identity"] >= 12
         assert folded["trace_scale"] == 0
+
+
+class TestGBWBNNumerics:
+    """GBWBN on degenerate and ill-conditioned batches (float64, default options)."""
+
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_scalar_batch_finite(self, bw_theta):
+        """A batch of scalar matrices c_i I: every eigenvalue and singular value
+        is repeated, the parameters start at I."""
+        dtype = torch.float64
+        eye = torch.eye(4, dtype=dtype)
+        data = torch.stack([c * eye for c in (0.5, 1.0, 2.0, 4.0)]).requires_grad_()
+        layer = _gbwbn(bw_theta=bw_theta)
+        out = layer(data)
+        out.square().sum().backward()
+        assert torch.isfinite(out).all() and torch.isfinite(data.grad).all()
+        for name in ("bw_M", "bw_G"):
+            grad = layer.parametrizations[name].original.grad
+            assert torch.isfinite(grad).all()
+
+    @pytest.mark.parametrize("kappa", [1e6, 1e9])
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_ill_conditioned_batch(self, kappa, bw_theta, generator):
+        dtype = torch.float64
+        data = random_SPD(4, 8, cond=kappa, dtype=dtype, generator=generator)
+        data.requires_grad_()
+        layer = _gbwbn(bw_theta=bw_theta)
+        out = layer(data)
+        out.square().sum().backward()
+        assert torch.isfinite(out).all() and torch.isfinite(data.grad).all()
+        layer.eval()
+        assert torch.isfinite(layer(data)).all()

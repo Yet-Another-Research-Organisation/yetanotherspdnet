@@ -1,5 +1,7 @@
 """Tests for Bures-Wasserstein geometry functions."""
 
+import itertools
+
 import pytest
 import torch
 from torch.testing import assert_close
@@ -675,3 +677,142 @@ class TestPolarCrossTerm:
         # the BW mean of scalar matrices c_i I is (mean sqrt(c_i))^2 I
         expected = torch.tensor([0.5, 1.0, 2.0, 4.0], dtype=dtype).sqrt().mean() ** 2
         assert_close(mean, expected * eye)
+
+
+def _lyapunov(P, R):
+    """Solve P L + L P = R (P SPD)."""
+    eigvals, eigvecs = torch.linalg.eigh(P)
+    rotated = eigvecs.transpose(-2, -1) @ R @ eigvecs
+    middle = rotated / (eigvals.unsqueeze(-1) + eigvals.unsqueeze(-2))
+    return eigvecs @ middle @ eigvecs.transpose(-2, -1)
+
+
+def _bw_metric(base, tangent):
+    """g_B(S, S) = tr(L S) / 2 with B L + L B = S."""
+    return _trace(_lyapunov(base, tangent) @ tangent) / 2
+
+
+def _transport_to_identity_ode(tangent, base, n_steps):
+    """Levi-Civita transport along the geodesic B -> I by the horizontal lift.
+
+    BW is the quotient of GL(n) (Euclidean metric) by O(n), pi(A) = A A^T. The
+    geodesic B -> I lifts to A(t) = (1 - t) B^1/2 + t I (its velocity
+    (B^-1/2 - I) A is horizontal), and a parallel field lifts to a horizontal
+    field Z(t) = L(t) A(t) (L symmetric) whose derivative is vertical: each
+    explicit Euler step projects Z onto the horizontal space at the next A
+    (first order, error O(1/n_steps)). Tangent vectors map as V = Z A^T + A Z^T.
+    """
+    eye = torch.eye(base.shape[-1], dtype=base.dtype, device=base.device)
+    base_sqrt = _spectral(base, torch.sqrt)
+    A = base_sqrt
+    Z = _lyapunov(base, tangent) @ A
+    for k in range(1, n_steps + 1):
+        t = k / n_steps
+        A = (1 - t) * base_sqrt + t * eye
+        Z = (
+            _lyapunov(
+                A @ A.transpose(-2, -1),
+                Z @ A.transpose(-2, -1) + A @ Z.transpose(-2, -1),
+            )
+            @ A
+        )
+    return Z @ A.transpose(-2, -1) + A @ Z.transpose(-2, -1)
+
+
+class TestBuresWassersteinTransportGeometry:
+    """Parallel transport and barycenter properties of the BW geometry."""
+
+    @pytest.fixture
+    def base_and_tangents(self, device, dtype, generator):
+        B = random_SPD(4, 1, cond=20, device=device, dtype=dtype, generator=generator)
+        S = _symmetrize(
+            torch.randn(5, 4, 4, device=device, dtype=dtype, generator=generator)
+        )
+        return B, S
+
+    @pytest.mark.parametrize("manual", [False, True])
+    def test_transport_is_isometry(self, manual, base_and_tangents):
+        """g_B(S, S) = g_I(Gamma S, Gamma S), and g_I(S, S) = tr(S^2) / 4."""
+        B, S = base_and_tangents
+        to_identity = (
+            bw.ParallelTransportToIdentityBW.apply
+            if manual
+            else bw.bures_wasserstein_parallel_transport_to_identity
+        )
+        transported = to_identity(S, B)
+        eye = torch.eye(4, dtype=B.dtype, device=B.device)
+        assert_close(
+            _bw_metric(eye, transported), _trace(transported @ transported) / 4
+        )
+        assert_close(_bw_metric(B, S), _bw_metric(eye, transported))
+        # polarization: inner products are preserved too
+        cross = lambda base, u, v: _trace(_lyapunov(base, u) @ v) / 2
+        assert_close(cross(B, S[0], S[1]), cross(eye, transported[0], transported[1]))
+
+    @pytest.mark.parametrize("manual", [False, True])
+    def test_transport_round_trip(self, manual, base_and_tangents):
+        B, S = base_and_tangents
+        if manual:
+            to_identity = bw.ParallelTransportToIdentityBW.apply
+            from_identity = bw.ParallelTransportFromIdentityBW.apply
+        else:
+            to_identity = bw.bures_wasserstein_parallel_transport_to_identity
+            from_identity = bw.bures_wasserstein_parallel_transport_from_identity
+        assert_close(from_identity(to_identity(S, B), B), S)
+        assert_close(to_identity(from_identity(S, B), B), S)
+
+    def test_transport_matches_integrated_levi_civita(self, base_and_tangents):
+        """The closed-form transport agrees with the integrated Levi-Civita
+        transport along the geodesic, and the integration error is O(1/K)."""
+        B, S = base_and_tangents
+        exact = bw.bures_wasserstein_parallel_transport_to_identity(S, B)
+        errors = [
+            float(
+                (_transport_to_identity_ode(S, B, n_steps) - exact).norm()
+                / exact.norm()
+            )
+            for n_steps in (25, 50, 100, 200)
+        ]
+        ratios = [a / b for a, b in itertools.pairwise(errors)]
+        assert all(1.7 < r < 2.3 for r in ratios), (errors, ratios)
+        assert errors[-1] < 2e-2
+        # first-order extrapolation removes the leading term
+        assert 2 * errors[-1] - errors[-2] < errors[-1] / 10
+
+    @pytest.mark.parametrize("weights", [(1, 1), (1, 3), (3, 2)])
+    def test_weighted_barycenter_is_geodesic_point(
+        self, weights, device, dtype, generator
+    ):
+        """The barycenter of X1 (weight k) and X2 (weight m) is the geodesic point
+        at t = m / (k + m); weights are given as multiplicities."""
+        k, m = weights
+        X = random_SPD(4, 2, cond=20, device=device, dtype=dtype, generator=generator)
+        data = torch.cat([X[0].expand(k, 4, 4), X[1].expand(m, 4, 4)])
+        t = m / (k + m)
+        expected = bw.bures_wasserstein_geodesic(X[0], X[1], t)
+        for mean in (bw.bures_wasserstein_mean, bw.BuresWassersteinMean):
+            assert_close(mean(data, n_iterations=100), expected, rtol=1e-9, atol=1e-11)
+
+    @pytest.mark.parametrize("manual", [False, True])
+    def test_scaling_sets_dispersion(self, manual, device, dtype, generator):
+        """GBWBN Prop. 3.1: inside the injectivity domain, the scaling step
+        multiplies each BW distance to I by s / sigma, so centred data of
+        dispersion sigma around I get dispersion s."""
+        n = 4
+        eye = torch.eye(n, device=device, dtype=dtype)
+        tangent = 0.3 * _symmetrize(
+            torch.randn(16, n, n, device=device, dtype=dtype, generator=generator)
+        )
+        data = bw.bures_wasserstein_exp_identity(tangent)
+        sigma = bw.bures_wasserstein_std_scalar(data, eye)
+        shift = torch.tensor(0.5, device=device, dtype=dtype)
+        scale = bw.BuresWassersteinScale if manual else bw.bures_wasserstein_scale
+        scaled = scale(data, sigma**2, shift, eps=0.0)
+        factor = shift / sigma
+        root = _spectral(data, torch.sqrt)
+        assert (torch.linalg.eigvalsh(eye + factor * (root - eye)) > 0).all()
+        assert_close(
+            bw.bures_wasserstein_distance_squared(eye, scaled).sqrt(),
+            factor * bw.bures_wasserstein_distance_squared(eye, data).sqrt(),
+        )
+        assert_close(bw.bures_wasserstein_std_scalar(scaled, eye), shift)

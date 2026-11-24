@@ -101,12 +101,11 @@ for _mt in MEAN_TYPES:
     )
 
 
-# the precision benchmark rates these unsafe in float32 from kappa = 1e4 (float32
-# eigh convergence failures, BW cross term at kappa^2): tested up to 1e2 only
-MAX_KAPPA = {
-    "BatchNormSPDMeanScalarVariance[bures_wasserstein]": 1e2,
-    "GBWBNRResNet": 1e2,
-}
+# largest kappa tested per layer (default 1e4). The Bures-Wasserstein layers
+# were limited to 1e2 while their cross term went through an eigendecomposition
+# at kappa^2; the SVD cross term (polar factor) brings them to 1e4, in float32
+# and in mixed precision.
+MAX_KAPPA: dict[str, float] = {}
 
 
 def _spd(kappa: float, seed: int) -> torch.Tensor:
