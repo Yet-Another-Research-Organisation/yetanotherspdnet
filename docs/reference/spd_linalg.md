@@ -7,7 +7,7 @@ and vectorizations. Every operation exists twice: a function differentiated
 by autograd, and a `torch.autograd.Function` whose backward is written by
 hand (Daleckii–Krein formula), which stays exact and finite when eigenvalues
 are close or repeated. Layers pick one with `use_autograd` (manual by
-default); see {doc}`../user_guide/numerics`.
+default); see {doc}`../numerics/manual_backward`.
 
 Functions returning a matrix built from an eigendecomposition
 (`sqrtm_SPD`, `logm_SPD`, …) return the tuple `(result, eigvals, eigvecs)`:
