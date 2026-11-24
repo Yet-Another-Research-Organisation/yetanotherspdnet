@@ -114,7 +114,7 @@ explicit list below (`functions.dispatch.AUTOGRAD_ONLY`).
 |---|---|
 | `BiMap(parametrization_mode="static")` | torch's `parametrizations.orthogonal` (Householder product); its backward has no eigenvalue gap. `parametrization_mode="dynamic"` uses the manual QR / polar retractions. |
 | `spd_linalg.inv_SPD` | Cholesky inverse, differentiated by autograd (stable); only used inside manual backwards. |
-| `bures_wasserstein_distance_squared`, `affine_invariant_log` | metrics, not differentiated by any layer. |
+| `bures_wasserstein_distance_squared`, `affine_invariant_log`, `log_euclidean_exp`, `log_euclidean_log` | metrics, not differentiated by any layer. |
 
 Reaching one of them with `use_autograd=False` emits a single
 `AutogradOnlyWarning` per process (raising would break the default
@@ -250,33 +250,39 @@ singular matrix.
 - **Unit step.** The affine-invariant norm of the spectral vector field,
   $\lVert V\rVert_X = \lVert X^{-1/2} V X^{-1/2} \rVert_F$, grows like
   $1/\lambda_{\min}(X)$; an unnormalized step overflows on real covariances.
-  The step is normalized to unit length, as in the reference implementation.
-- **Cholesky instead of eigendecomposition** for the norm:
-  $\lVert V \rVert_X = \lVert L^{-1} V L^{-\top} \rVert_F$ with $X = LL^\top$
-  (two triangular solves), with a manual backward (`AffineInvariantNorm`):
-  $\bar V = \frac{\bar\nu}{\nu} L^{-\top} W L^{-1}$,
-  $\bar X = -\frac{\bar\nu}{\nu} L^{-\top} W^2 L^{-1}$, $W = L^{-1} V L^{-\top}$.
-- **Eigenvalue floor and projection.** The block floors the eigenvalues of its
-  input (with the manually differentiated ReEig, the identity on
-  well-conditioned inputs) and clamps those of its output to
-  $[\lambda_-, 10^{8}]$ with `EighClamp` (Daleckii–Krein backward; the
-  reference implementation's `projx`, `affine_invariant_projx` is now a
-  deprecated alias). The lower bound is
-  `spd_floor(λ) = max(1e-8, ε max λ)` per matrix: $10^{-8}$ in float64
-  unless $\max\lambda > 4.5 \cdot 10^7$, and the rounding level of the
-  matrix itself in float32 (condition number capped at $8 \cdot 10^6$).
-- **Other geometries.** A residual step can use any retraction
-  $X_+ = L\,\varphi(a\hat W)\,L^\top$ that agrees with $\exp$ to first order:
-  arithmetic $1 + x$, harmonic $1/(1-x)$, GAH $e^{\operatorname{artanh} x}$
-  (see {doc}`residual`).
-
-```{figure} ../_static/diagrams/retractions.svg
-:width: 95%
-
-Left: retractions of the residual step in whitened coordinates; all agree with
-$e^x$ near 0 and are valid for $|x| < 1$. Right: every matrix moves by one unit
-of affine-invariant distance.
-```
+  The step is normalized to unit length, as in the reference implementation
+  (`step="clip"` and `step="learned_scale"` bound or learn the length, see
+  {doc}`residual`).
+- **Two eigendecompositions per block.** One decomposition
+  $X = U\Lambda U^\top$ gives the floored spectrum of the field,
+  $X^{\pm 1/2}$ and $\log X$ (`FlooredEighFunctions`, one Daleckii–Krein
+  backward for all outputs: since they share $U$, the chain rule through the
+  floor and through each matrix function collapses to
+  $\bar X = U\big(L^{c} \circ [\operatorname{diag}(\bar{\tilde\lambda}) +
+  \sum_k L^{f_k} \circ U^\top \bar F_k U]\big)U^\top$, with the closed-form
+  divided differences of section 1). The norm is
+  $\lVert W \rVert_F$, $W = X^{-1/2} V X^{-1/2}$ (no Cholesky
+  factorization), and the exponential $X^{1/2} e^{W/\nu} X^{1/2}$ is the
+  second decomposition. Before: ReEig, `eigvalsh`, Cholesky, $X^{\pm1/2}$,
+  $\exp$ and the output clamp (5 decompositions and a Cholesky); the floored
+  matrix was formed and decomposed again, so its eigenvalues near the floor
+  carried an error $\varepsilon\lVert X\rVert$ (relative $2\cdot 10^{-8}$ at
+  the $10^{-8}$ floor in float64).
+- **Floor, no output clamp.** The input eigenvalues are floored at
+  `spd_floor(λ) = max(1e-8, ε max λ)` per matrix: $10^{-8}$ in float64 unless
+  $\max\lambda > 4.5 \cdot 10^7$, the rounding level of the matrix itself in
+  float32 (condition number capped at $8 \cdot 10^6$). The reference clamps
+  the output eigenvalues to $[10^{-8}, 10^8]$ (`projx`); the unit step keeps
+  them in $[e^{-1}\lambda_{\min}(X), e\,\lambda_{\max}(X)]$ (the
+  eigenvalues of $e^{W/\nu}$ are in $[e^{-1}, e]$), so the clamp is only
+  applied with `output_clamp=True` or for the unbounded steps (`"none"`,
+  `"learned_scale"`), with `EighClamp` (Daleckii–Krein backward;
+  `affine_invariant_projx` is a deprecated alias).
+- **Branch with transport.** `residual="branch_pt"` whitens the branch output
+  by the input, $N = X^{-1/2} Z X^{-1/2}$, whose condition number reaches
+  $\kappa(X)\kappa(Z)$: float32 fails from $\kappa \approx 10^4$, even
+  with `eigh_dtype=torch.float64` (the matrix $N$ itself is formed in
+  float32).
 
 ## 8. ReEig and its variants
 
