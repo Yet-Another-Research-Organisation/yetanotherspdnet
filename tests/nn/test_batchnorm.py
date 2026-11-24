@@ -2571,3 +2571,81 @@ class TestGBWBNRunningStatistics:
         loaded = _gbwbn()
         loaded.load_state_dict(layer.state_dict())
         assert_close(loaded.running_mean, layer.running_mean)
+
+
+class TestGBWBNInitMetric:
+    """bw_init_metric="trace_scale" absorbs the data scale into M and G."""
+
+    def test_invalid_option(self):
+        with pytest.raises(ValueError, match="bw_init_metric"):
+            _gbwbn(bw_init_metric="bad")
+
+    def test_default_state_dict_unchanged(self):
+        assert "bw_metric_initialized" not in _gbwbn().state_dict()
+        assert "bw_init_metric" not in repr(_gbwbn())
+        assert "bw_init_metric=trace_scale" in repr(
+            _gbwbn(bw_init_metric="trace_scale")
+        )
+
+    @pytest.mark.parametrize("mode", ["static", "dynamic"])
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_trace_scale_initialization(self, mode, bw_theta, generator):
+        from yetanotherspdnet.functions.spd_geometries.bures_wasserstein import (
+            bures_wasserstein_mean,
+        )
+        from yetanotherspdnet.functions.spd_linalg import powm_SPD
+
+        dtype = torch.float64
+        layer = _gbwbn(
+            bw_theta=bw_theta, bw_init_metric="trace_scale", parametrization_mode=mode
+        )
+        data = 100.0 * random_SPD(4, 8, cond=100, dtype=dtype, generator=generator)
+        out = layer(data)
+        assert torch.isfinite(out).all()
+        c = torch.trace(bures_wasserstein_mean(powm_SPD(data, bw_theta)[0])) / 4
+        eye = torch.eye(4, dtype=dtype)
+        assert_close(layer.bw_M, c * eye)
+        assert_close(layer.bw_G, c ** (1 / bw_theta) * eye)
+        assert bool(layer.bw_metric_initialized)
+        # not initialized again by later batches, nor after a reload
+        layer(2.0 * data)
+        assert_close(layer.bw_M, c * eye)
+        reloaded = _gbwbn(
+            bw_theta=bw_theta, bw_init_metric="trace_scale", parametrization_mode=mode
+        )
+        reloaded.load_state_dict(layer.state_dict())
+        reloaded(3.0 * data)
+        assert_close(reloaded.bw_M, c * eye)
+
+    def test_trace_scale_is_scale_equivariant(self, generator):
+        """With the metric fitted to the first batch, the layer commutes with a
+        rescaling of the data at initialization: f(sX) = s f(X) (theta = 1)."""
+        dtype = torch.float64
+        data = random_SPD(4, 8, cond=100, dtype=dtype, generator=generator)
+        outputs = [
+            _gbwbn(bw_theta=1.0, bw_init_metric="trace_scale")(scale * data) / scale
+            for scale in (1.0, 100.0)
+        ]
+        assert_close(outputs[0], outputs[1])
+
+    def test_no_folding_on_scaled_data(self, generator):
+        """Data of scale 1e2 with theta = 1: with M = G = I, the centring step
+        folds (lambda_min(I + V/2) <= 0) for almost every matrix; with
+        trace_scale none folds."""
+        from yetanotherspdnet.functions.spd_geometries import bures_wasserstein as bw
+
+        dtype = torch.float64
+        eye = torch.eye(4, dtype=dtype)
+        data = 100.0 * random_SPD(4, 16, cond=100, dtype=dtype, generator=generator)
+        folded = {}
+        for init in ("identity", "trace_scale"):
+            layer = _gbwbn(bw_theta=1.0, bw_init_metric=init)
+            layer(data)
+            data_hat = data / layer.bw_M[0, 0]
+            mean = bw.bures_wasserstein_mean(data_hat)
+            tangent = bw.bures_wasserstein_parallel_transport_to_identity(
+                bw.bures_wasserstein_log(data_hat, mean), mean
+            )
+            folded[init] = (torch.linalg.eigvalsh(eye + tangent / 2)[..., 0] <= 0).sum()
+        assert folded["identity"] >= 12
+        assert folded["trace_scale"] == 0

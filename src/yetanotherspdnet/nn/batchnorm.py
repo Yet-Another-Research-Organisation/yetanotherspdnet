@@ -947,6 +947,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
     # buffers registered in __init__ (declared for type checkers)
     running_std_scalar: torch.Tensor
     std_regularizer: torch.Tensor
+    bw_metric_initialized: torch.Tensor
 
     # version 2: the GBWBN running mean is stored in the input space (version 1
     # stored it in the transformed space of M, see _load_from_state_dict)
@@ -968,6 +969,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         use_autograd: bool = False,
         bw_theta: float = 0.5,
         bw_batch_stats_grad: bool = True,
+        bw_init_metric: str = "identity",
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         eigh_dtype: torch.dtype | None = None,
@@ -1068,6 +1070,19 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             are computed without gradient, as constants.
             Default is True
 
+        bw_init_metric : str, optional
+            GBWBN only. Initialization of :math:`M` and :math:`G`.
+            ``"identity"``: :math:`M = G = I`. ``"trace_scale"``: on the first
+            training batch, :math:`M = cI` and :math:`G = c^{1/\theta} I` with
+            :math:`c = \operatorname{tr}(\bar B) / n`, :math:`\bar B` the BW
+            mean of the :math:`X_i^\theta` (and the running mean is set to
+            :math:`c^{1/\theta} I`, the identity of the transformed space).
+            The transformed batch then has unit scale, which removes the
+            folding of :math:`\mathrm{Exp}_I` caused by the data scale (the BW
+            metric is not scale invariant), and the layer outputs keep the
+            scale of the data instead of being centred at :math:`I`.
+            Default is "identity"
+
         device: torch.device, optional
             Device on which to store the parameters.
             Default is torch.device("cpu")
@@ -1122,6 +1137,17 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         if self.mean_type == "bures_wasserstein":
             self.bw_theta = _check_bw_theta(bw_theta)
             self.bw_batch_stats_grad = bw_batch_stats_grad
+            if bw_init_metric not in ("identity", "trace_scale"):
+                raise ValueError(
+                    "bw_init_metric must be in ['identity', 'trace_scale'], "
+                    f"got {bw_init_metric!r}"
+                )
+            self.bw_init_metric = bw_init_metric
+            if bw_init_metric == "trace_scale":
+                # persistent: a resumed or loaded layer is not initialized again
+                self.register_buffer(
+                    "bw_metric_initialized", torch.tensor(False, device=self.device)
+                )
             # M: learnable SPD metric (n x n); G: learnable bias on the input
             # manifold (n x n), mapped to the transformed space as
             # M^{-1/2} G^theta M^{-1/2} like the data. Both start at I, with the
@@ -1326,6 +1352,27 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
                 self._move_reference_point(name, getattr(self, name))
             self.current_ref_step = 0
 
+    def _init_metric_trace_scale(self, data: torch.Tensor) -> None:
+        r"""
+        Set M = cI and G = c^(1/theta) I from a batch (``bw_init_metric="trace_scale"``).
+
+        :math:`c = \operatorname{tr}(\bar B) / n` with :math:`\bar B` the BW mean
+        of the :math:`X_i^\theta`: the transformed data
+        :math:`X_i^\theta / c` have unit scale and the transformed bias
+        :math:`\hat G = G^\theta / c` is the identity. The running mean is set
+        to :math:`c^{1/\theta} I` (the identity of the transformed space).
+        """
+        theta = self.bw_theta
+        with torch.no_grad():
+            data_pow = powm_SPD(data, theta)[0] if theta != 1.0 else data
+            mean = self.mean_fun(data_pow.detach())
+            scale = torch.diagonal(mean, dim1=-2, dim2=-1).sum() / self.n_features
+            eye = torch.eye(self.n_features, dtype=self.dtype, device=data.device)
+            self._move_reference_point("bw_M", scale * eye)
+            self._move_reference_point("bw_G", scale ** (1.0 / theta) * eye)
+            self.running_mean = scale ** (1.0 / theta) * eye
+            self.bw_metric_initialized.fill_(True)
+
     def _move_reference_point(self, name: str, value: torch.Tensor) -> None:
         """
         Set the GBWBN SPD parameter *name* to *value*, as the reference point if dynamic.
@@ -1480,6 +1527,13 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         the theta-deformed metric, d_BW^2(X^theta, Y^theta) / theta^2.
         """
         theta = self.bw_theta
+        if (
+            self.bw_init_metric == "trace_scale"
+            and not bool(self.bw_metric_initialized)
+            and self.training
+            and data.shape[:-2].numel() >= 2
+        ):
+            self._init_metric_trace_scale(data)
         M = self.bw_M
 
         # Pre-transform: X_hat = M^{-1/2} X^theta M^{-1/2}
@@ -1575,6 +1629,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
                 f"  bw_theta={self.bw_theta},\n"
                 f"  bw_batch_stats_grad={self.bw_batch_stats_grad},\n"
             )
+            # shown only when not the default, so that the model hashes of
+            # default configurations are unchanged
+            if self.bw_init_metric != "identity":
+                bw_info += f"  bw_init_metric={self.bw_init_metric},\n"
         return (
             f"BatchNormSPDMeanScalarVariance(\n"
             f"  n_features={self.n_features},\n"
