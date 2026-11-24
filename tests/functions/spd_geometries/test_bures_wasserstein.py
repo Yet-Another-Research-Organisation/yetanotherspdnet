@@ -482,3 +482,196 @@ class TestDegenerateSafeGradients:
         bias_point = torch.eye(n, device=device, dtype=dtype, requires_grad=True)
         bw.bures_wasserstein_bias(data, bias_point).sum().backward()
         assert torch.isfinite(bias_point.grad).all()
+
+
+def _spectral(matrix, fun):
+    eigvals, eigvecs = torch.linalg.eigh(matrix)
+    return (eigvecs * fun(eigvals).unsqueeze(-2)) @ eigvecs.transpose(-2, -1)
+
+
+def _trace(matrix):
+    return torch.diagonal(matrix, dim1=-2, dim2=-1).sum(-1)
+
+
+class TestPolarCrossTerm:
+    """
+    The cross term (B^1/2 X B^1/2)^1/2 is computed from the SVD of X^1/2 B^1/2
+    (polar factor W). These tests check it against the eigendecomposition
+    formulas at moderate conditioning, against exact values at kappa up to 1e9,
+    and the manual backwards (gradcheck, including repeated singular values).
+    """
+
+    @pytest.fixture
+    def pair(self, device, dtype, generator):
+        X = random_SPD(5, 6, cond=50, device=device, dtype=dtype, generator=generator)
+        B = random_SPD(5, 1, cond=50, device=device, dtype=dtype, generator=generator)
+        return X, B
+
+    def test_matches_eigh_formulas(self, pair):
+        X, B = pair
+        B_sqrt, B_isqrt = _spectral(B, torch.sqrt), _spectral(B, torch.rsqrt)
+        C = _spectral(B_sqrt @ X @ B_sqrt, torch.sqrt)
+        dist_sq = _trace(B) + _trace(X) - 2 * _trace(C)
+        BX_sqrt = B_sqrt @ C @ B_isqrt
+        log = BX_sqrt + BX_sqrt.transpose(-2, -1) - 2 * B
+        assert_close(bw.bures_wasserstein_distance_squared(B, X), dist_sq)
+        assert_close(bw.bures_wasserstein_distance_squared(X, B), dist_sq)
+        for fun in (bw.bures_wasserstein_log, bw.BuresWassersteinLog):
+            assert_close(fun(X, B), log)
+        std = dist_sq.mean().sqrt()
+        for fun in (
+            bw.bures_wasserstein_std_scalar,
+            bw.BuresWassersteinStdScalar.apply,
+        ):
+            assert_close(fun(X, B), std)
+        t = 0.3
+        geodesic = (1 - t) ** 2 * B + t**2 * X + t * (1 - t) * log.add(2 * B)
+        for fun in (bw.bures_wasserstein_geodesic, bw.BuresWassersteinGeodesic):
+            assert_close(fun(B.expand_as(X), X, t), geodesic)
+        # three fixed-point iterations of the inverse-square-root form
+        G = X.mean(0)
+        for _ in range(3):
+            G_sqrt, G_isqrt = _spectral(G, torch.sqrt), _spectral(G, torch.rsqrt)
+            T = _spectral(G_sqrt @ X @ G_sqrt, torch.sqrt).mean(0)
+            G = G_isqrt @ T @ T @ G_isqrt
+        for fun in (bw.bures_wasserstein_mean, bw.BuresWassersteinMean):
+            assert_close(fun(X, n_iterations=3), G)
+
+    @pytest.mark.parametrize("kappa", [1e6, 1e9])
+    def test_ill_conditioned_exact(self, kappa, device, dtype, generator):
+        """X = T B T with T SPD: T is the optimal transport map from B to X, so
+        (B^1/2 X B^1/2)^1/2 = B^1/2 T B^1/2 and Log_B(X) = TB + BT - 2B exactly.
+        The eigendecomposition of B^1/2 X B^1/2 (condition number ~kappa^2)
+        misses these by 5e-10 at kappa = 1e6 and fails at kappa = 1e9."""
+        n = 6
+        B = random_SPD(
+            n, 1, cond=kappa, device=device, dtype=dtype, generator=generator
+        )
+        T = random_SPD(n, 4, cond=10, device=device, dtype=dtype, generator=generator)
+        X = _symmetrize(T @ B @ T)
+        dist_sq = _trace(B) + _trace(X) - 2 * _trace(T @ B)
+        log = T @ B + B @ T - 2 * B
+        eye = torch.eye(n, device=device, dtype=dtype)
+        E = 0.7 * eye + 0.3 * T
+        geodesic = E @ B @ E
+        rtol = 1e-11
+        assert_close(
+            bw.bures_wasserstein_distance_squared(B, X), dist_sq, rtol=rtol, atol=0
+        )
+        for fun in (bw.bures_wasserstein_log, bw.BuresWassersteinLog):
+            assert_close(fun(X, B), log, rtol=rtol, atol=rtol * log.abs().max())
+        for fun in (bw.bures_wasserstein_geodesic, bw.BuresWassersteinGeodesic):
+            result = fun(B.expand_as(X), X, 0.3)
+            assert_close(result, geodesic, rtol=rtol, atol=rtol * geodesic.abs().max())
+        for fun in (
+            bw.bures_wasserstein_std_scalar,
+            bw.BuresWassersteinStdScalar.apply,
+        ):
+            assert_close(fun(X, B), dist_sq.mean().sqrt(), rtol=rtol, atol=0)
+
+    def test_distance_nonnegative_when_close(self, device, dtype, generator):
+        """The Procrustes form has no cancellation: d^2(X, X + dX) ~ |dX|^2."""
+        X = random_SPD(5, 4, cond=1e4, device=device, dtype=dtype, generator=generator)
+        assert (bw.bures_wasserstein_distance_squared(X, X) >= 0).all()
+        assert bw.bures_wasserstein_distance_squared(X, X).max() < 1e-24
+
+    @pytest.mark.parametrize("case", ["random", "scalar", "equal", "kappa_1e3"])
+    def test_manual_gradcheck(self, case, device, dtype, generator):
+        n = 4
+        eye = torch.eye(n, device=device, dtype=dtype)
+        if case == "random":
+            X = random_SPD(
+                n, 3, cond=20, device=device, dtype=dtype, generator=generator
+            )
+            B = random_SPD(
+                n, 1, cond=20, device=device, dtype=dtype, generator=generator
+            )
+        elif case == "scalar":  # all singular values of X^1/2 B^1/2 equal
+            X = torch.stack([2.0 * eye, 3.0 * eye, 0.5 * eye])
+            B = eye.clone()
+        elif case == "equal":  # X = B: W = I, std = 0 is avoided by a second point
+            B = random_SPD(
+                n, 1, cond=20, device=device, dtype=dtype, generator=generator
+            )
+            X = torch.stack([B, 2.0 * B])
+        else:
+            X = random_SPD(
+                n, 3, cond=1e3, device=device, dtype=dtype, generator=generator
+            )
+            B = random_SPD(
+                n, 1, cond=1e3, device=device, dtype=dtype, generator=generator
+            )
+        inputs = (X.clone().requires_grad_(), B.clone().requires_grad_())
+
+        def sym(fun):
+            return lambda x, b: fun(_symmetrize(x), _symmetrize(b))
+
+        functions = {
+            "log": bw.BuresWassersteinLog,
+            "std": bw.BuresWassersteinStdScalar.apply,
+            "geodesic": lambda x, b: bw.BuresWassersteinGeodesic(
+                b.expand_as(x), x, 0.3
+            ),
+            "mean": lambda x, b: bw.BuresWassersteinMean(x, n_iterations=2) @ b,
+        }
+        for name, fun in functions.items():
+            assert torch.autograd.gradcheck(sym(fun), inputs, rtol=1e-5), name
+
+    def test_manual_matches_autograd_ill_conditioned(self, device, dtype, generator):
+        """kappa = 1e6 (beyond the finite differences of gradcheck)."""
+        n = 5
+        X = random_SPD(n, 4, cond=1e6, device=device, dtype=dtype, generator=generator)
+        B = random_SPD(n, 1, cond=1e6, device=device, dtype=dtype, generator=generator)
+        pairs = {
+            "log": (bw.bures_wasserstein_log, bw.BuresWassersteinLog),
+            "std": (
+                bw.bures_wasserstein_std_scalar,
+                bw.BuresWassersteinStdScalar.apply,
+            ),
+            "geodesic": (
+                lambda x, b: bw.bures_wasserstein_geodesic(b.expand_as(x), x, 0.3),
+                lambda x, b: bw.BuresWassersteinGeodesic(b.expand_as(x), x, 0.3),
+            ),
+        }
+        for name, functions in pairs.items():
+            grads = []
+            for fun in functions:
+                x, b = X.clone().requires_grad_(), B.clone().requires_grad_()
+                out = fun(x, b)
+                cotangent = (
+                    torch.ones_like(out)
+                    + torch.arange(out.numel(), device=device, dtype=dtype).reshape(
+                        out.shape
+                    )
+                    / out.numel()
+                )
+                (out * cotangent).sum().backward()
+                grads.append((x.grad, b.grad))
+            assert_close(grads[0][0], grads[1][0], rtol=1e-6, atol=1e-8), name
+            assert_close(grads[0][1], grads[1][1], rtol=1e-6, atol=1e-8), name
+
+    def test_std_manual_matches_autograd(self, pair):
+        grads = []
+        for fun in (
+            bw.bures_wasserstein_std_scalar,
+            bw.BuresWassersteinStdScalar.apply,
+        ):
+            X, B = (p.clone().requires_grad_() for p in pair)
+            fun(X, B).backward()
+            grads.append((X.grad, B.grad))
+        assert_close(grads[0][0], grads[1][0])
+        assert_close(grads[0][1], grads[1][1])
+
+    def test_scalar_batch_finite(self, device, dtype):
+        """A batch of scalar matrices cI: repeated singular values everywhere."""
+        n = 4
+        eye = torch.eye(n, device=device, dtype=dtype)
+        X = torch.stack([c * eye for c in (0.5, 1.0, 2.0, 4.0)]).requires_grad_()
+        mean = bw.BuresWassersteinMean(X)
+        log = bw.BuresWassersteinLog(X, mean)
+        std = bw.BuresWassersteinStdScalar.apply(X, mean)
+        (log.sum() + std).backward()
+        assert torch.isfinite(X.grad).all()
+        # the BW mean of scalar matrices c_i I is (mean sqrt(c_i))^2 I
+        expected = torch.tensor([0.5, 1.0, 2.0, 4.0], dtype=dtype).sqrt().mean() ** 2
+        assert_close(mean, expected * eye)

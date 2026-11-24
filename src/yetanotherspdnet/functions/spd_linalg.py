@@ -383,6 +383,141 @@ def symmetric_eigvalsh(data: torch.Tensor) -> torch.Tensor:
     return torch.linalg.eigvalsh(data.to(dtype)).to(data.dtype)
 
 
+def square_svd(
+    data: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    SVD of square matrices, in the precision of :func:`eigh_precision`.
+
+    ``torch.linalg.svd`` (descending singular values), computed in the dtype
+    set by :func:`eigh_precision` when there is one and cast back to the dtype
+    of *data*, like :func:`symmetric_eigh`.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of square matrices
+
+    Returns
+    -------
+    U : torch.Tensor of shape (..., n_features, n_features)
+        Left singular vectors
+    S : torch.Tensor of shape (..., n_features)
+        Singular values
+    Vh : torch.Tensor of shape (..., n_features, n_features)
+        Transposed right singular vectors
+    """
+    dtype = _EIGH_DTYPE.get()
+    if dtype is None or dtype == data.dtype:
+        return torch.linalg.svd(data, full_matrices=False)
+    U, S, Vh = torch.linalg.svd(data.to(dtype), full_matrices=False)
+    return U.to(data.dtype), S.to(data.dtype), Vh.to(data.dtype)
+
+
+# --------------------------------------
+# Polar decomposition of square matrices
+# --------------------------------------
+def polar_factor(
+    data: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    r"""
+    Orthogonal polar factor of nonsingular square matrices.
+
+    With the SVD :math:`A = U \Sigma V^\top`, :math:`A = W H` where
+    :math:`W = U V^\top` is orthogonal and :math:`H = V \Sigma V^\top =
+    (A^\top A)^{1/2}` is SPD. :math:`W` is unique for a nonsingular :math:`A`,
+    even when singular values are repeated (then :math:`U` and :math:`V` are
+    not). The Bures-Wasserstein cross terms are written with it (see
+    :mod:`~yetanotherspdnet.functions.spd_geometries.bures_wasserstein`).
+    Differentiated by autograd through ``torch.linalg.svd``, whose backward is
+    not defined at repeated singular values; see :class:`PolarFactor`.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of nonsingular square matrices
+
+    Returns
+    -------
+    orthogonal : torch.Tensor of shape (..., n_features, n_features)
+        Polar factors :math:`W`
+    U : torch.Tensor of shape (..., n_features, n_features)
+        Left singular vectors
+    S : torch.Tensor of shape (..., n_features)
+        Singular values
+    Vh : torch.Tensor of shape (..., n_features, n_features)
+        Transposed right singular vectors
+    """
+    U, S, Vh = square_svd(data)
+    return U @ Vh, U, S, Vh
+
+
+class PolarFactor(Function):
+    r"""
+    Orthogonal polar factor :math:`W = UV^\top` of :math:`A = U\Sigma V^\top` (manual backward).
+
+    Differentiating :math:`A = WH` (:math:`H = V \Sigma V^\top`) gives
+    :math:`dW = U \hat\Omega V^\top` with
+
+    .. math::
+
+        \hat\Omega_{ij} = \frac{M_{ij} - M_{ji}}{\sigma_i + \sigma_j},
+        \qquad M = U^\top dA\, V,
+
+    so the backward is :math:`\bar A = U \big[(\tilde G - \tilde G^\top)_{ij} /
+    (\sigma_i + \sigma_j)\big] V^\top` with :math:`\tilde G = U^\top \bar W V`.
+    Its denominators are sums of singular values, positive for a nonsingular
+    :math:`A`: the gradient is finite at repeated singular values, unlike the
+    :math:`1/(\sigma_i^2 - \sigma_j^2)` terms of the SVD's own backward.
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the polar factor.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of nonsingular square matrices
+
+        Returns
+        -------
+        orthogonal : torch.Tensor of shape (..., n_features, n_features)
+            Polar factors
+        """
+        orthogonal, U, S, Vh = polar_factor(data)
+        ctx.save_for_backward(U, S, Vh)
+        return orthogonal
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
+        """
+        Backward pass of the polar factor.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the polar factors
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input matrices
+        """
+        U, S, Vh = ctx.saved_tensors
+        rotated = U.transpose(-2, -1) @ grad_output @ Vh.transpose(-2, -1)
+        sums = S.unsqueeze(-1) + S.unsqueeze(-2)
+        sums = sums.clamp_min(torch.finfo(S.dtype).tiny)
+        return U @ ((rotated - rotated.transpose(-2, -1)) / sums) @ Vh
+
+
 # -------------------------
 # Operations on eigenvalues
 # -------------------------

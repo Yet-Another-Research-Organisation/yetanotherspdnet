@@ -1,4 +1,4 @@
-"""Bures-Wasserstein geometry: geodesic, mean, standard deviation, and transport maps.
+r"""Bures-Wasserstein geometry: geodesic, mean, standard deviation, and transport maps.
 
 Implements the Bures-Wasserstein (BW) metric, geodesic, Frechet mean (barycenter),
 scalar standard deviation, and related operations (log/exp maps, parallel transport)
@@ -10,26 +10,54 @@ References
     definite matrices." Expositiones Mathematicae, 2019.
 [2] Kobler et al. "Controlling the Fréchet Variance Improves Batch
     Normalization on the Symmetric Positive Definite Manifold." CVPR, 2022.
+
+Cross terms through the polar factor
+------------------------------------
+Every operation of this geometry needs the cross term
+:math:`(B^{1/2} X B^{1/2})^{1/2}`. It is not computed by an eigendecomposition
+of :math:`B^{1/2} X B^{1/2}`, whose condition number is up to
+:math:`\kappa(X)\kappa(B)` (the small eigenvalues lose all their digits beyond
+:math:`\kappa \approx 10^{8}` in float64 and :math:`10^{4}` in float32), but
+from the SVD of :math:`A = X^{1/2} B^{1/2} = U \Sigma V^\top`, whose condition
+number is at most :math:`\sqrt{\kappa(X)\kappa(B)}`:
+:math:`(B^{1/2} X B^{1/2})^{1/2} = V \Sigma V^\top = W^\top A` and
+:math:`\operatorname{tr}\big((B^{1/2} X B^{1/2})^{1/2}\big) = \sum_i \sigma_i`,
+with :math:`W = U V^\top` the orthogonal polar factor of :math:`A`
+(:func:`~yetanotherspdnet.functions.spd_linalg.polar_factor`). The formulas
+are then written without any inverse square root:
+
+- :math:`(BX)^{1/2} = B^{1/2} W^\top X^{1/2}` (so
+  :math:`\mathrm{Log}_B(X) = B^{1/2} W^\top X^{1/2} + X^{1/2} W B^{1/2} - 2B`);
+- :math:`d_{BW}^2(X, B) = \lVert X^{1/2} W - B^{1/2} \rVert_F^2` (the
+  Procrustes form: no cancellation when :math:`X \approx B`);
+- the geodesic is :math:`Y_t Y_t^\top` with
+  :math:`Y_t = (1 - t) X_1^{1/2} + t X_2^{1/2} W`;
+- the fixed-point step of the mean is :math:`G \leftarrow C C^\top` with
+  :math:`C = \frac1N \sum_i X_i^{1/2} W_i`.
+
+The manual backward of :math:`W` (:class:`~yetanotherspdnet.functions.spd_linalg.PolarFactor`)
+divides by sums of singular values, so it stays finite at repeated singular values.
 """
 
 import math
+from collections.abc import Callable
 
 import torch
 from torch.autograd import Function
 
 from yetanotherspdnet.functions._constants import BW_SCALE_EPS
 from yetanotherspdnet.functions.scalar_functions import (
-    inv_sqrt,
+    sqrt_derivative,
     std_from_variance,
     zero_where_zero_std,
 )
 
 from ..spd_linalg import (
-    SqrtmAndInvSqrtmSPD,
+    PolarFactor,
     SqrtmSPD,
-    eigh_operation,
+    eigh_operation_grad,
+    polar_factor,
     solve_sylvester_SPD,
-    sqrtm_and_inv_sqrtm_SPD,
     sqrtm_SPD,
     symmetric_eigh,
     symmetrize,
@@ -66,14 +94,24 @@ def bures_wasserstein_distance_squared(
     -------
     dist_sq : torch.Tensor of shape (...)
         Squared BW distances
+
+    Notes
+    -----
+    Computed in the Procrustes form
+    :math:`\lVert X_2^{1/2} W - X_1^{1/2} \rVert_F^2`, with :math:`W` the
+    polar factor of :math:`X_2^{1/2} X_1^{1/2}` (see the module docstring):
+    nonnegative by construction and free of the cancellation of the trace
+    form when the points are close. :math:`W` minimizes
+    :math:`\lVert X_2^{1/2} Q - X_1^{1/2} \rVert_F` over orthogonal
+    :math:`Q`, so its derivative does not contribute to the gradient
+    (envelope theorem): it is computed without gradient.
     """
     p1_sqrt = sqrtm_SPD(point1)[0]
-    inner = p1_sqrt @ point2 @ p1_sqrt
-    inner_sqrt = sqrtm_SPD(inner)[0]
-    trace_p1 = torch.diagonal(point1, dim1=-2, dim2=-1).sum(-1)
-    trace_p2 = torch.diagonal(point2, dim1=-2, dim2=-1).sum(-1)
-    trace_inner = torch.diagonal(inner_sqrt, dim1=-2, dim2=-1).sum(-1)
-    return trace_p1 + trace_p2 - 2 * trace_inner
+    p2_sqrt = sqrtm_SPD(point2)[0]
+    with torch.no_grad():
+        orthogonal = polar_factor(p2_sqrt @ p1_sqrt)[0]
+    residual = p2_sqrt @ orthogonal - p1_sqrt
+    return (residual**2).sum(dim=(-2, -1))
 
 
 # ----------------------------------------
@@ -142,9 +180,9 @@ def bures_wasserstein_log(X: torch.Tensor, base: torch.Tensor) -> torch.Tensor:
 
         \mathrm{Log}_B(X) = (XB)^{1/2} + (BX)^{1/2} - 2B
 
-    computed via the identity :math:`(BX)^{1/2} = B^{1/2}
-    (B^{1/2} X B^{1/2})^{1/2} B^{-1/2}` and
-    :math:`(XB)^{1/2} = \big[(BX)^{1/2}\big]^\top`.
+    computed as :math:`(BX)^{1/2} = B^{1/2} W^\top X^{1/2}` with :math:`W`
+    the polar factor of :math:`X^{1/2} B^{1/2}` (see the module docstring),
+    and :math:`(XB)^{1/2} = \big[(BX)^{1/2}\big]^\top`.
 
     Parameters
     ----------
@@ -159,12 +197,24 @@ def bures_wasserstein_log(X: torch.Tensor, base: torch.Tensor) -> torch.Tensor:
     tangent : torch.Tensor of shape (..., n_features, n_features)
         Tangent vectors at *base*
     """
-    B_sqrt, B_inv_sqrt, _, _ = sqrtm_and_inv_sqrtm_SPD(base)
-    S = B_sqrt @ X @ B_sqrt  # B^{1/2} X B^{1/2}  (SPD)
-    S_sqrt = sqrtm_SPD(S)[0]
-    BX_sqrt = B_sqrt @ S_sqrt @ B_inv_sqrt  # (BX)^{1/2}
-    XB_sqrt = BX_sqrt.transpose(-2, -1)  # (XB)^{1/2}
-    return XB_sqrt + BX_sqrt - 2 * base
+    return _log_from_roots(sqrtm_SPD(X)[0], sqrtm_SPD(base)[0], base, polar_factor)
+
+
+def _log_from_roots(
+    X_sqrt: torch.Tensor,
+    B_sqrt: torch.Tensor,
+    base: torch.Tensor,
+    polar: Callable,
+) -> torch.Tensor:
+    """Log_B(X) = B^{1/2} W^T X^{1/2} + transpose - 2B, W = polar(X^{1/2} B^{1/2})."""
+    orthogonal = _first(polar(X_sqrt @ B_sqrt))
+    BX_sqrt = B_sqrt @ orthogonal.transpose(-2, -1) @ X_sqrt  # (BX)^{1/2}
+    return BX_sqrt + BX_sqrt.transpose(-2, -1) - 2 * base
+
+
+def _first(output: torch.Tensor | tuple[torch.Tensor, ...]) -> torch.Tensor:
+    """First output of polar_factor (a tuple) or PolarFactor.apply (a tensor)."""
+    return output[0] if isinstance(output, tuple) else output
 
 
 def _sum_to_shape(grad: torch.Tensor, shape: torch.Size) -> torch.Tensor:
@@ -519,8 +569,11 @@ def bures_wasserstein_geodesic(
         E_2(X_1, X_2; t) = (1-t)^2 X_1 + t^2 X_2
             + t(1-t)\Big[(X_2 X_1)^{1/2} + (X_1 X_2)^{1/2}\Big]
 
-    where :math:`(X_1 X_2)^{1/2} = X_1^{1/2}
-    (X_1^{1/2} X_2 X_1^{1/2})^{1/2} X_1^{-1/2}` and :math:`t \in [0, 1]`.
+    where :math:`(X_1 X_2)^{1/2} = X_1^{1/2} W^\top X_2^{1/2}` and
+    :math:`t \in [0, 1]`, :math:`W` the polar factor of
+    :math:`X_2^{1/2} X_1^{1/2}`. Computed as :math:`Y_t Y_t^\top` with
+    :math:`Y_t = (1 - t) X_1^{1/2} + t X_2^{1/2} W` (positive semidefinite by
+    construction).
 
     Parameters
     ----------
@@ -538,12 +591,21 @@ def bures_wasserstein_geodesic(
     point : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices on the geodesic
     """
-    p1_sqrt, p1_inv_sqrt, _, _ = sqrtm_and_inv_sqrtm_SPD(point1)
-    M = p1_sqrt @ point2 @ p1_sqrt  # X1^{1/2} X2 X1^{1/2}
-    M_sqrt = sqrtm_SPD(M)[0]
-    cross = p1_sqrt @ M_sqrt @ p1_inv_sqrt  # (X1 X2)^{1/2}
-    cross_T = cross.transpose(-2, -1)  # (X2 X1)^{1/2}
-    return (1 - t) ** 2 * point1 + t**2 * point2 + t * (1 - t) * (cross + cross_T)
+    return _geodesic_from_roots(
+        sqrtm_SPD(point1)[0], sqrtm_SPD(point2)[0], t, polar_factor
+    )
+
+
+def _geodesic_from_roots(
+    p1_sqrt: torch.Tensor,
+    p2_sqrt: torch.Tensor,
+    t: float | torch.Tensor,
+    polar: Callable,
+) -> torch.Tensor:
+    """Y_t Y_t^T, Y_t = (1 - t) X1^{1/2} + t X2^{1/2} W, W = polar(X2^{1/2} X1^{1/2})."""
+    orthogonal = _first(polar(p2_sqrt @ p1_sqrt))
+    factor = (1 - t) * p1_sqrt + t * (p2_sqrt @ orthogonal)
+    return symmetrize(factor @ factor.transpose(-2, -1))
 
 
 # ----------------------------------------
@@ -557,8 +619,12 @@ def bures_wasserstein_mean(data: torch.Tensor, n_iterations: int = 1) -> torch.T
 
         G_{k+1} = G_k^{-1/2}\left(\frac{1}{N}\sum_{i=1}^{N}
             \big(G_k^{1/2} X_i G_k^{1/2}\big)^{1/2}\right)^2 G_k^{-1/2}
+            = C_k C_k^\top, \qquad
+            C_k = \frac{1}{N}\sum_{i=1}^{N} X_i^{1/2} W_i
 
-    the unique fixed point of this map is the barycenter minimizing
+    with :math:`W_i` the polar factor of :math:`X_i^{1/2} G_k^{1/2}` (see the
+    module docstring; the second form needs no inverse square root). The
+    unique fixed point of this map is the barycenter minimizing
     :math:`\sum_i d_{BW}(G, X_i)^2` (see
     :func:`bures_wasserstein_distance_squared`). The initial estimate
     :math:`G_0` is the arithmetic mean of *data*.
@@ -578,13 +644,29 @@ def bures_wasserstein_mean(data: torch.Tensor, n_iterations: int = 1) -> torch.T
     """
     if data.ndim == 2:
         return data
+    return _mean_fixed_point(
+        data,
+        sqrtm_SPD(data)[0],
+        n_iterations,
+        lambda x: sqrtm_SPD(x)[0],
+        polar_factor,
+    )
+
+
+def _mean_fixed_point(
+    data: torch.Tensor,
+    data_sqrt: torch.Tensor,
+    n_iterations: int,
+    sqrtm: Callable,
+    polar: Callable,
+) -> torch.Tensor:
+    """Fixed-point iterations G <- C C^T, C = mean_i X_i^{1/2} W_i, from the arithmetic mean."""
     G = arithmetic_mean(data)
     for _ in range(n_iterations):
-        G_sqrt, G_inv_sqrt, _, _ = sqrtm_and_inv_sqrtm_SPD(G)
-        whitened = G_sqrt @ data @ G_sqrt
-        whitened_sqrt = sqrtm_SPD(whitened)[0]
-        T = arithmetic_mean(whitened_sqrt)
-        G = G_inv_sqrt @ (T @ T) @ G_inv_sqrt
+        orthogonal = _first(polar(data_sqrt @ sqrtm(G)))
+        # not arithmetic_mean, which symmetrizes: C is not symmetric
+        C = torch.mean(data_sqrt @ orthogonal, dim=tuple(range(data.ndim - 2)))
+        G = symmetrize(C @ C.transpose(-2, -1))
     return G
 
 
@@ -602,8 +684,8 @@ def bures_wasserstein_std_scalar(
         \sigma = \sqrt{\frac{1}{N}\sum_{i=1}^{N} d_{BW}^2(G, X_i)}
 
     where :math:`G` is the reference point (typically the BW barycenter)
-    and :math:`d_{BW}` is the Bures-Wasserstein distance (see
-    :func:`bures_wasserstein_distance_squared`).
+    and :math:`d_{BW}` is the Bures-Wasserstein distance, computed in the
+    Procrustes form of :func:`bures_wasserstein_distance_squared`.
 
     Parameters
     ----------
@@ -618,29 +700,33 @@ def bures_wasserstein_std_scalar(
     scalar_std : torch.Tensor of shape ()
         Scalar standard deviation
     """
-    return _bures_wasserstein_std_scalar(data, reference_point)[0]
-
-
-def _bures_wasserstein_std_scalar(
-    data: torch.Tensor, reference_point: torch.Tensor
-) -> tuple[torch.Tensor, ...]:
-    """BW scalar std, B^{1/2}, B^{-1/2}, C^{1/2} and the eigendecomposition of C = B^{1/2} X B^{1/2}."""
     n_matrices = math.prod(data.shape[:-2])
-    B_sqrt, B_inv_sqrt, _, _ = sqrtm_and_inv_sqrtm_SPD(reference_point)
-    inner = B_sqrt @ data @ B_sqrt
-    inner_sqrt, eigvals_inner, eigvecs_inner = sqrtm_SPD(inner)
-    trace_B = torch.diagonal(reference_point, dim1=-2, dim2=-1).sum(-1)
-    trace_X = torch.diagonal(data, dim1=-2, dim2=-1).sum(-1)
-    trace_inner = torch.diagonal(inner_sqrt, dim1=-2, dim2=-1).sum(-1)
-    dist_sq = trace_B + trace_X - 2 * trace_inner
-    variance = dist_sq.sum() / n_matrices
-    # clamp: rounding can make the variance slightly negative
-    scalar_std = std_from_variance(variance)
-    return scalar_std, B_sqrt, B_inv_sqrt, inner_sqrt, eigvals_inner, eigvecs_inner
+    dist_sq = bures_wasserstein_distance_squared(reference_point, data)
+    return std_from_variance(dist_sq.sum() / n_matrices)
 
 
 class BuresWassersteinStdScalar(Function):
-    """Scalar standard deviation under the Bures-Wasserstein distance (manual backward)."""
+    r"""
+    Scalar standard deviation under the Bures-Wasserstein distance (manual backward).
+
+    Forward as :func:`bures_wasserstein_std_scalar`:
+    :math:`\sigma^2 = \frac1N \sum_i \lVert R_i \rVert_F^2`, with
+    :math:`R_i = X_i^{1/2} W_i - B^{1/2}` and :math:`W_i` the polar factor of
+    :math:`X_i^{1/2} B^{1/2}`. Since :math:`W_i` minimizes
+    :math:`\lVert X_i^{1/2} Q - B^{1/2} \rVert_F` over orthogonal :math:`Q`, its
+    variation does not contribute (envelope theorem), and
+
+    .. math::
+
+        \frac{\partial \sigma}{\partial X_i^{1/2}} = \frac{R_i W_i^\top}{N\sigma},
+        \qquad
+        \frac{\partial \sigma}{\partial B^{1/2}} = -\frac{\sum_i R_i}{N\sigma},
+
+    pulled back through the square roots with the Daleckii-Krein formula
+    (divided differences :math:`1 / (\sqrt{\lambda_i} + \sqrt{\lambda_j})`).
+    This equals the closed form :math:`\partial d^2 / \partial X = I -
+    B^{1/2} (B^{1/2} X B^{1/2})^{-1/2} B^{1/2}` without inverting anything.
+    """
 
     @staticmethod
     def forward(
@@ -667,17 +753,15 @@ class BuresWassersteinStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             Scalar standard deviation
         """
-        scalar_std, B_sqrt, B_inv_sqrt, inner_sqrt, eigvals_inner, eigvecs_inner = (
-            _bures_wasserstein_std_scalar(data, reference_point)
-        )
-        ctx.n_matrices = math.prod(data.shape[:-2])
+        n_matrices = math.prod(data.shape[:-2])
+        X_sqrt, eigvals_X, eigvecs_X = sqrtm_SPD(data)
+        B_sqrt, eigvals_B, eigvecs_B = sqrtm_SPD(reference_point)
+        orthogonal = polar_factor(X_sqrt @ B_sqrt)[0]
+        residual = X_sqrt @ orthogonal - B_sqrt
+        scalar_std = std_from_variance((residual**2).sum() / n_matrices)
+        ctx.n_matrices = n_matrices
         ctx.save_for_backward(
-            B_sqrt,
-            B_inv_sqrt,
-            inner_sqrt,
-            eigvals_inner,
-            eigvecs_inner,
-            scalar_std,
+            eigvals_X, eigvecs_X, eigvals_B, eigvecs_B, orthogonal, residual, scalar_std
         )
         return scalar_std
 
@@ -685,10 +769,6 @@ class BuresWassersteinStdScalar(Function):
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Backward pass of the BW scalar standard deviation.
-
-        Uses:
-            d(d_BW^2(B,X)) / dX = I - B^{1/2} (B^{1/2} X B^{1/2})^{-1/2} B^{1/2}
-            d(d_BW^2(B,X)) / dB = I - X^{1/2} (X^{1/2} B X^{1/2})^{-1/2} X^{1/2}
 
         Parameters
         ----------
@@ -706,32 +786,29 @@ class BuresWassersteinStdScalar(Function):
         grad_input_reference_point : torch.Tensor of shape (n_features, n_features)
             Gradient of the loss with respect to the reference point
         """
-        n_matrices = ctx.n_matrices
         (
-            B_sqrt,
-            B_inv_sqrt,
-            inner_sqrt,
-            eigvals_inner,
-            eigvecs_inner,
+            eigvals_X,
+            eigvecs_X,
+            eigvals_B,
+            eigvecs_B,
+            orthogonal,
+            residual,
             scalar_std,
         ) = ctx.saved_tensors
-        eye = torch.eye(B_sqrt.shape[-1], dtype=B_sqrt.dtype, device=B_sqrt.device)
-
-        # with C = B^{1/2} X B^{1/2} (decomposed in the forward):
-        # d(d^2)/dX = I - B^{1/2} C^{-1/2} B^{1/2}
-        # d(d^2)/dB = I - B^{-1/2} C^{1/2} B^{-1/2} (optimal transport map B -> X)
-        inner_inv_sqrt = eigh_operation(eigvals_inner, eigvecs_inner, inv_sqrt)
-        grad_dist_sq_data = eye - B_sqrt @ inner_inv_sqrt @ B_sqrt
-        grad_input_data = (
-            grad_output * grad_dist_sq_data / (2 * n_matrices * scalar_std)
+        n_features = residual.shape[-1]
+        factor = grad_output / (ctx.n_matrices * scalar_std)
+        grad_X_sqrt = factor * residual @ orthogonal.transpose(-2, -1)
+        grad_B_sqrt = -factor * residual.reshape(-1, n_features, n_features).sum(0)
+        grad_input_data = eigh_operation_grad(
+            grad_X_sqrt, eigvals_X, eigvecs_X, torch.sqrt, sqrt_derivative
         )
-        grad_dist_sq_B = eye - B_inv_sqrt @ arithmetic_mean(inner_sqrt) @ B_inv_sqrt
-        grad_input_G = grad_output * grad_dist_sq_B / (2 * scalar_std)
-
+        grad_input_B = eigh_operation_grad(
+            grad_B_sqrt, eigvals_B, eigvecs_B, torch.sqrt, sqrt_derivative
+        )
         # std = 0: zero subgradient instead of 0/0
         return (
             zero_where_zero_std(grad_input_data, scalar_std),
-            zero_where_zero_std(grad_input_G, scalar_std),
+            zero_where_zero_std(grad_input_B, scalar_std),
         )
 
 
@@ -853,9 +930,9 @@ def bures_wasserstein_bias(
 # ----------------------------------------------------------------
 # Manual-backward data path (use_autograd=False)
 # ----------------------------------------------------------------
-# The functions below compose the manual-backward square roots (SqrtmSPD,
-# SqrtmAndInvSqrtmSPD: Daleckii-Krein backward), the Lyapunov transports and the
-# Lyapunov solve with products and sums differentiated by autograd: no matrix
+# The functions below compose the manual-backward square roots (SqrtmSPD:
+# Daleckii-Krein backward), polar factors (PolarFactor), the Lyapunov transports
+# and the Lyapunov solve with products and sums differentiated by autograd: no matrix
 # decomposition is differentiated by autograd, so the gradients stay finite at
 # repeated eigenvalues (a batch of scalar matrices cI, parameters at the identity).
 
@@ -901,10 +978,7 @@ def BuresWassersteinLog(X: torch.Tensor, base: torch.Tensor) -> torch.Tensor:
     tangent : torch.Tensor of shape (..., n_features, n_features)
         Tangent vectors at *base*
     """
-    B_sqrt, B_inv_sqrt = SqrtmAndInvSqrtmSPD.apply(base)
-    S_sqrt = _sqrtm(B_sqrt @ X @ B_sqrt)
-    BX_sqrt = B_sqrt @ S_sqrt @ B_inv_sqrt
-    return BX_sqrt.transpose(-2, -1) + BX_sqrt - 2 * base
+    return _log_from_roots(_sqrtm(X), _sqrtm(base), base, PolarFactor.apply)
 
 
 def BuresWassersteinGeodesic(
@@ -928,11 +1002,7 @@ def BuresWassersteinGeodesic(
     point : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices on the geodesic
     """
-    p1_sqrt, p1_inv_sqrt = SqrtmAndInvSqrtmSPD.apply(point1)
-    M_sqrt = _sqrtm(p1_sqrt @ point2 @ p1_sqrt)
-    cross = p1_sqrt @ M_sqrt @ p1_inv_sqrt
-    cross_T = cross.transpose(-2, -1)
-    return (1 - t) ** 2 * point1 + t**2 * point2 + t * (1 - t) * (cross + cross_T)
+    return _geodesic_from_roots(_sqrtm(point1), _sqrtm(point2), t, PolarFactor.apply)
 
 
 def BuresWassersteinMean(data: torch.Tensor, n_iterations: int = 1) -> torch.Tensor:
@@ -960,12 +1030,9 @@ def BuresWassersteinMean(data: torch.Tensor, n_iterations: int = 1) -> torch.Ten
     """
     if data.ndim == 2:
         return data
-    G = arithmetic_mean(data)
-    for _ in range(n_iterations):
-        G_sqrt, G_inv_sqrt = SqrtmAndInvSqrtmSPD.apply(G)
-        T = arithmetic_mean(_sqrtm(G_sqrt @ data @ G_sqrt))
-        G = G_inv_sqrt @ (T @ T) @ G_inv_sqrt
-    return G
+    return _mean_fixed_point(
+        data, _sqrtm(data), n_iterations, _sqrtm, PolarFactor.apply
+    )
 
 
 def BuresWassersteinCenter(
