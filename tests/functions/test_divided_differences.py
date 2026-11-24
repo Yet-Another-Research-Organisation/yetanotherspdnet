@@ -157,3 +157,15 @@ def test_gradcheck_spectra(function, spectrum):
         atol=1e-6,
         rtol=1e-4,
     )
+
+
+def test_pow_divided_difference_nonpositive_eigenvalue():
+    """A rounded singular matrix (eigenvalue slightly below 0): finite for an
+    integer exponent, equal to the plain quotient, like the forward x^t."""
+    from yetanotherspdnet.functions.scalar_functions import pow_divided_difference
+
+    a = torch.tensor([-1e-7, 0.0, 2.0], dtype=torch.float32)
+    b = torch.tensor([3.0, 3.0, 3.0], dtype=torch.float32)
+    result = pow_divided_difference(a, b, 2.0)
+    assert torch.isfinite(result).all()
+    torch.testing.assert_close(result, a + b)
