@@ -108,10 +108,12 @@ holding its mean, geodesic, scalar standard deviation and parallel transport,
 each with its autograd and manual-backward implementations. The layers look
 their operations up here, so an unsupported combination (for example the
 parallel transport of the Bures–Wasserstein mean) is rejected when the layer
-is built.
+is built. The pairs are {class}`~yetanotherspdnet.functions.dispatch.DualPath`
+objects (see {doc}`utilities`); `BURES_WASSERSTEIN_STEPS` holds the center /
+scale / bias steps of GBWBN.
 
 ```{eval-rst}
 .. automodule:: yetanotherspdnet.functions.spd_geometries.registry
-   :members: DualPath, Geometry, get_geometry
+   :members: Geometry, get_geometry
    :member-order: bysource
 ```
