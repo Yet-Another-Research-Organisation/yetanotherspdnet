@@ -1,7 +1,5 @@
 """Riemannian Residual Network layers: spectral vector field and residual block."""
 
-from typing import cast
-
 import torch
 from torch import nn
 
@@ -35,7 +33,7 @@ from yetanotherspdnet.functions.spd_linalg import (
 )
 from yetanotherspdnet.nn.parametrizations import (
     StiefelAdaptiveParametrization,
-    _parametrization_of,
+    recenter_dynamic_parametrization,
 )
 from yetanotherspdnet.random.stiefel import random_stiefel
 
@@ -163,6 +161,9 @@ class SpectralVectorField(nn.Module):
             StiefelAdaptiveParametrization(
                 n_in=n_features,
                 n_out=n_features,
+                # reference point = the sampled Q, as BiMap: the tangent vector
+                # starts at zero and Q at its sampled value
+                initial_reference=self.Q.clone().detach(),
                 mapping="QR",
                 use_autograd=use_autograd,
                 device=device,
@@ -297,17 +298,10 @@ class SpectralVectorField(nn.Module):
             and self.is_dynamic
             and self.current_ref_step >= self.n_steps_ref_update
         ):
-            with torch.no_grad():
-                # update reference point
-                stiefel = cast(
-                    StiefelAdaptiveParametrization, _parametrization_of(self, "Q")[0]
-                )
-                stiefel.update_reference_point()
-                # reset tangent vector to zero, so that Q stays at the new
-                # reference point instead of jumping by the old tangent vector
-                _parametrization_of(self, "Q").original.zero_()
-                # reset counter
-                self.current_ref_step = 0
+            # reference point <- Q after the step, tangent vector <- 0: Q is
+            # continuous across the update
+            recenter_dynamic_parametrization(self, "Q")
+            self.current_ref_step = 0
 
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """Register optimizer hook for dynamic Stiefel parametrization."""
