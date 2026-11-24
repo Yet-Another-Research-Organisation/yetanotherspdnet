@@ -10,6 +10,7 @@ gives their formulas.
 |---|---|---|
 | `affine_invariant` | affine-invariant (Fisher–Rao) | Karcher mean (iterative) |
 | `log_euclidean` | log-Euclidean | $\exp(\overline{\log X})$ |
+| `euclidean` | Euclidean (left Kullback–Leibler mean) | arithmetic mean |
 | `kullback_leibler` | left / right Kullback–Leibler | arithmetic / harmonic mean |
 | `kullback_leibler_symmetrized` | symmetrized Kullback–Leibler | GAH: AI midpoint of harmonic and arithmetic (adaptive: learned point $t$) |
 | `bures_wasserstein` | Bures–Wasserstein | fixed-point barycenter |
@@ -53,6 +54,20 @@ of a pair $(A, B)$ instead of square roots of $B$. Used by
    :member-order: bysource
 ```
 
+## Euclidean
+
+Euclidean geodesic and arithmetic mean, the building blocks of the
+Kullback–Leibler and log-Euclidean geometries.
+
+```{dualpath-table} yetanotherspdnet.functions.spd_geometries.euclidean
+```
+
+```{eval-rst}
+.. automodule:: yetanotherspdnet.functions.spd_geometries.euclidean
+   :members:
+   :member-order: bysource
+```
+
 ## Kullback–Leibler (arithmetic and harmonic)
 
 ```{dualpath-table} yetanotherspdnet.functions.spd_geometries.kullback_leibler
@@ -83,5 +98,20 @@ of a pair $(A, B)$ instead of square roots of $B$. Used by
 ```{eval-rst}
 .. automodule:: yetanotherspdnet.functions.spd_geometries.bures_wasserstein
    :members:
+   :member-order: bysource
+```
+
+## Registry used by the batch normalization
+
+Each `mean_type` of the batch normalization layers maps to a `Geometry`
+holding its mean, geodesic, scalar standard deviation and parallel transport,
+each with its autograd and manual-backward implementations. The layers look
+their operations up here, so an unsupported combination (for example the
+parallel transport of the Bures–Wasserstein mean) is rejected when the layer
+is built.
+
+```{eval-rst}
+.. automodule:: yetanotherspdnet.functions.spd_geometries.registry
+   :members: DualPath, Geometry, get_geometry
    :member-order: bysource
 ```

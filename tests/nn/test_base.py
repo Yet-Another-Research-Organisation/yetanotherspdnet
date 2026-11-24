@@ -8,28 +8,6 @@ from yetanotherspdnet.functions.spd_linalg import symmetrize
 from yetanotherspdnet.random.spd import random_SPD
 
 
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="module")
-def seed():
-    return 777
-
-
-@pytest.fixture(scope="function")
-def generator(device, seed):
-    generator = torch.Generator(device=device)
-    generator.manual_seed(seed)
-    return generator
-
-
 class TestBiMap:
     """
     Test suite for BiMap module
@@ -83,9 +61,9 @@ class TestBiMap:
 
     def test_invalid_dimensions(self, device, dtype, generator):
         """
-        Test that n_out > n_in raises AssertionError
+        Test that n_out > n_in raises ValueError
         """
-        with pytest.raises(AssertionError, match="must have n_out <= n_in"):
+        with pytest.raises(ValueError, match="must have n_out <= n_in"):
             nn_spd_base.BiMap(
                 n_in=5, n_out=10, dtype=dtype, device=device, generator=generator
             )
@@ -1175,5 +1153,5 @@ class TestReEigBias:
 
     def test_wrong_dimension(self, device, dtype):
         layer = nn_spd_base.ReEigBias(3, device=device, dtype=dtype)
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError):
             layer(torch.eye(4, device=device, dtype=dtype))

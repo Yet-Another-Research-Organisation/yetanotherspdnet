@@ -9,11 +9,11 @@ from yetanotherspdnet.model import GBWBNRResNet, RResNet, SPDnet
 
 # Define public API
 __all__ = [
-    "functions",
-    "nn",
-    "random",
     "GBWBNRResNet",
     "RResNet",
     "SPDnet",
     "__version__",
+    "functions",
+    "nn",
+    "random",
 ]

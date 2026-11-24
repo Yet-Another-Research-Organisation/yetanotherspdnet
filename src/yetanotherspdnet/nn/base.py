@@ -5,7 +5,10 @@ from torch import nn
 from torch.nn.utils import parametrizations
 from torch.nn.utils.parametrize import register_parametrization
 
-from yetanotherspdnet.nn.parametrizations import StiefelAdaptiveParametrization
+from yetanotherspdnet.nn.parametrizations import (
+    StiefelAdaptiveParametrization,
+    _parametrization_of,
+)
 
 from ..functions.spd_linalg import (
     CongruenceRectangular,
@@ -105,13 +108,15 @@ class BiMap(nn.Module):
             Autograd path (True) or hand-written backward (False, default).
         """
         super().__init__()
-        assert n_out <= n_in, "must have n_out <= n_in"
+        if n_out > n_in:
+            raise ValueError("must have n_out <= n_in")
         self.n_in = n_in
         self.n_out = n_out
         self.parametrized = parametrized
-        assert parametrization_mode in ["static", "dynamic"], (
-            f"expected parametrization_mode in ['static', 'dynamic'], got {parametrization_mode}"
-        )
+        if parametrization_mode not in ("static", "dynamic"):
+            raise ValueError(
+                f"expected parametrization_mode in ['static', 'dynamic'], got {parametrization_mode}"
+            )
         self.parametrization_mode = parametrization_mode
         self.parametrization_options = parametrization_options
         self.n_steps_ref_update = n_steps_ref_update
@@ -164,7 +169,7 @@ class BiMap(nn.Module):
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the BiMap layer
+        Forward pass of the BiMap layer.
 
         Parameters
         ----------
@@ -184,8 +189,10 @@ class BiMap(nn.Module):
         self, _optimizer: torch.optim.Optimizer, *_args, **_kwargs
     ) -> None:
         """
-        Hook that runs after optimizer.step() to handle dynamic parametrization reference point.
-        See torch.optim.Optimizer.register_step_post_hook method for more details
+        Update the dynamic parametrization after ``optimizer.step()``.
+
+        Moves the reference point. See ``torch.optim.Optimizer.register_step_post_hook``
+        for the signature.
 
         Parameters
         ----------
@@ -201,15 +208,16 @@ class BiMap(nn.Module):
                 # update reference point
                 self.stiefel_parametrization.update_reference_point()
                 # reset tangent vector to zero
-                self.parametrizations.weight.original.zero_()
+                _parametrization_of(self, "weight").original.zero_()
                 # reset counter
                 self.current_ref_step = 0
 
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """
         Register the post-step hook with the optimizer.
-        If dynamic parametrization, it needs to be called once after creating
-        the optimizer for dynamic parametrization to actually work as expected
+
+        If dynamic parametrization, it needs to be called once after creating the
+        optimizer for dynamic parametrization to actually work as expected
 
         Parameters
         ----------
@@ -221,7 +229,7 @@ class BiMap(nn.Module):
 
     def __repr__(self) -> str:
         """
-        Representation of the layer
+        Representation of the layer.
 
         Returns
         -------
@@ -252,14 +260,15 @@ class ReEig(nn.Module):
         self, eps: float = 1e-4, use_autograd: bool = False, dim: int | None = None
     ) -> None:
         """
-        ReEig layer in a SPDnet layer according to the paper:
-            A Riemannian Network for SPD Matrix Learning, Huang et al
-            AAAI Conference on Artificial Intelligence, 2017
+        Build a ReEig layer.
+
+        ReEig of SPDnet (Huang and Van Gool, A Riemannian Network for SPD Matrix
+        Learning, AAAI 2017).
 
         Parameters
         ----------
         eps : float, optional
-            Value of rectification of the eigenvalues. Default is 1e-2.
+            Value of rectification of the eigenvalues. Default is 1e-4.
 
         use_autograd : bool, optional
             Use torch autograd for the computation of the gradient rather than
@@ -268,6 +277,7 @@ class ReEig(nn.Module):
         dim : int, optional
             Dimension of the SPD matrices. Default is None.
             Used for logging purposes.
+
         Attributes
         ----------
         eps : float
@@ -288,7 +298,7 @@ class ReEig(nn.Module):
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the ReEig layer
+        Forward pass of the ReEig layer.
 
         Parameters
         ----------
@@ -304,7 +314,7 @@ class ReEig(nn.Module):
 
     def __repr__(self) -> str:
         """
-        Representation of the layer
+        Representation of the layer.
 
         Returns
         -------
@@ -371,7 +381,8 @@ class ReEigBias(nn.Module):
             Autograd path (True) or hand-written backward (False, default).
         """
         super().__init__()
-        assert 0 < eps < 1, f"eps must be in (0, 1), got {eps}"
+        if not (0 < eps < 1):
+            raise ValueError(f"eps must be in (0, 1), got {eps}")
         self.n_features = n_features
         self.eps = eps
         self.use_autograd = use_autograd
@@ -384,7 +395,7 @@ class ReEigBias(nn.Module):
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the ReEigBias layer
+        Forward pass of the ReEigBias layer.
 
         Parameters
         ----------
@@ -396,14 +407,15 @@ class ReEigBias(nn.Module):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
         """
-        assert data.shape[-1] == self.n_features, (
-            f"expected matrices of size {self.n_features}, got {data.shape[-1]}"
-        )
+        if data.shape[-1] != self.n_features:
+            raise ValueError(
+                f"expected matrices of size {self.n_features}, got {data.shape[-1]}"
+            )
         return self.reeig_bias_fun(data, self.bias, self.eps)
 
     def __repr__(self) -> str:
         """
-        Representation of the layer
+        Representation of the layer.
 
         Returns
         -------
@@ -427,15 +439,17 @@ class LogEig(nn.Module):
 
     def __init__(self, use_autograd: bool = False) -> None:
         """
-        LogEig layer in a SPDnet layer according to the paper:
-            A Riemannian Network for SPD Matrix Learning, Huang et al
-            AAAI Conference on Artificial Intelligence, 2017
+        Build a LogEig layer.
+
+        LogEig of SPDnet (Huang and Van Gool, A Riemannian Network for SPD Matrix
+        Learning, AAAI 2017).
 
         Parameters
         ----------
         use_autograd : bool, optional
             Use torch autograd for the computation of the gradient rather than
             the analytical formula. Default is False.
+
         Attributes
         ----------
         use_autograd : bool
@@ -449,7 +463,7 @@ class LogEig(nn.Module):
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the LogEig layer
+        Forward pass of the LogEig layer.
 
         Parameters
         ----------
@@ -465,7 +479,7 @@ class LogEig(nn.Module):
 
     def __repr__(self) -> str:
         """
-        Representation of the layer
+        Representation of the layer.
 
         Returns
         -------
@@ -476,21 +490,18 @@ class LogEig(nn.Module):
 
 
 class Vec(nn.Module):
-    r"""
-    Full vectorization of a batch of matrices: ``(..., n, n) -> (..., n * n)``.
-
-    """
+    r"""Full vectorization of a batch of matrices: ``(..., n, n) -> (..., n * n)``."""
 
     def __init__(self, use_autograd: bool = False):
         """
-        Vectorization operator of a batch of matrices according to
-        the last two dimensions
+        Vectorization of a batch of matrices along their last two dimensions.
 
         Parameters
         ----------
         use_autograd : bool, optional
             Use torch autograd for the computation of the gradient rather than
             the analytical formula. Default is False.
+
         Attributes
         ----------
         use_autograd : bool
@@ -502,7 +513,7 @@ class Vec(nn.Module):
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the Vec layer
+        Forward pass of the Vec layer.
 
         Parameters
         ----------
@@ -517,7 +528,7 @@ class Vec(nn.Module):
         return self.vecBatch(data)
 
     def __repr__(self) -> str:
-        """Representation of the layer
+        """Representation of the layer.
 
         Returns
         -------
@@ -531,13 +542,13 @@ class Vech(nn.Module):
     r"""
     Half vectorization of symmetric matrices: ``(..., n, n) -> (..., n (n + 1) / 2)``.
 
-    Keeps only the upper-triangular part, which carries all the information of a
-    symmetric matrix.
+    Keeps only the lower-triangular part (diagonal included), which carries all
+    the information of a symmetric matrix.
     """
 
     def __init__(self) -> None:
         """
-        Vech operator of a batch of matrices according to the last two dimensions
+        Vech operator of a batch of matrices according to the last two dimensions.
 
         WARNING : no automatic differentiation available here because it fails
         """
@@ -545,7 +556,7 @@ class Vech(nn.Module):
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the Vech layer
+        Forward pass of the Vech layer.
 
         WARNING : no automatic differentiation available here because it fails
 

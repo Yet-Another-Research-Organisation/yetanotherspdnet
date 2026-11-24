@@ -1,8 +1,12 @@
 """SPD and Stiefel manifold parametrizations for constrained optimization."""
 
+from typing import cast
+
 import torch
 from torch import nn
+from torch.nn.utils.parametrize import ParametrizationList
 
+from yetanotherspdnet.functions._constants import SIGMOID_CLAMP_EPS
 from yetanotherspdnet.functions.scalar_functions import (
     inv_scaled_softplus,
     scaled_softplus,
@@ -32,15 +36,36 @@ from ..functions.stiefel import (
 )
 
 
+def _parametrization_of(module: nn.Module, tensor_name: str) -> ParametrizationList:
+    """
+    Return the parametrizations registered on ``module.<tensor_name>``.
+
+    Same as ``module.parametrizations.<tensor_name>``, typed for type checkers
+    (``nn.Module.__getattr__`` is typed ``Tensor | Module``).
+
+    Parameters
+    ----------
+    module : nn.Module
+        Module with a parametrized tensor.
+    tensor_name : str
+        Name of the parametrized tensor.
+
+    Returns
+    -------
+    ParametrizationList
+        Its parametrizations; ``.original`` is the unconstrained tensor.
+    """
+    return cast(ParametrizationList, getattr(module.parametrizations, tensor_name))
+
+
 class ScalarSoftPlusParametrization(nn.Module):
-    """
-    Parametrization constraining a scalar to be positive with a softplus.
-    """
+    """Parametrization constraining a scalar to be positive with a softplus."""
 
     def forward(self, scalar: torch.Tensor) -> torch.Tensor:
         """
-        Positive definite scalars parametrization using the SoftPlus function
-        (rescaled so that f(0) = 1 as compared to default torch function)
+        Positive scalar parametrization through the scaled SoftPlus function.
+
+        Rescaled so that f(0) = 1, as compared to the default torch function.
 
         Parameters
         ----------
@@ -56,8 +81,7 @@ class ScalarSoftPlusParametrization(nn.Module):
 
     def right_inverse(self, scalar_pd: torch.Tensor) -> torch.Tensor:
         """
-        Mapping from positive definite scalar onto real scalars through
-        the inverse SoftPlus function
+        Map a positive scalar to a real scalar (inverse SoftPlus).
 
         Parameters
         ----------
@@ -73,13 +97,11 @@ class ScalarSoftPlusParametrization(nn.Module):
 
 
 class ScalarSigmoidParametrization(nn.Module):
-    """
-    Parametrization to constrain a scalar to the interval [0, 1] using sigmoid.
-    """
+    """Parametrization to constrain a scalar to the interval [0, 1] using sigmoid."""
 
     def forward(self, scalar: torch.Tensor) -> torch.Tensor:
         """
-        Mapping from real scalar to [0, 1] through sigmoid function
+        Map a real scalar to [0, 1] through the sigmoid function.
 
         Parameters
         ----------
@@ -95,7 +117,7 @@ class ScalarSigmoidParametrization(nn.Module):
 
     def right_inverse(self, scalar_constrained: torch.Tensor) -> torch.Tensor:
         """
-        Mapping from [0, 1] to real scalars through inverse sigmoid (logit)
+        Map [0, 1] to real scalars through the inverse sigmoid (logit).
 
         Parameters
         ----------
@@ -108,7 +130,7 @@ class ScalarSigmoidParametrization(nn.Module):
             Real scalar (unconstrained)
         """
         # Clamp to avoid numerical issues at boundaries
-        eps = 1e-7
+        eps = SIGMOID_CLAMP_EPS
         scalar_clamped = torch.clamp(scalar_constrained, eps, 1 - eps)
         return torch.log(scalar_clamped / (1 - scalar_clamped))
 
@@ -124,7 +146,7 @@ class SPDParametrization(nn.Module):
 
     def __init__(self, mapping: str = "softplus", use_autograd: bool = False) -> None:
         """
-        SPD Parametrization
+        SPD Parametrization.
 
         Parameters
         ----------
@@ -138,10 +160,8 @@ class SPDParametrization(nn.Module):
             the analytical formula. Default is False.
         """
         super().__init__()
-        assert mapping in [
-            "softplus",
-            "exp",
-        ], f"mapping must be in ['softplus', 'exp'], got {mapping}"
+        if mapping not in ("softplus", "exp"):
+            raise ValueError(f"mapping must be in ['softplus', 'exp'], got {mapping}")
         self.mapping = mapping
         self.use_autograd = use_autograd
 
@@ -169,7 +189,7 @@ class SPDParametrization(nn.Module):
 
     def forward(self, tangent_vector: torch.Tensor) -> torch.Tensor:
         """
-        Mapping from the tangent space at identity to the SPD manifold
+        Map the tangent space at identity to the SPD manifold.
 
         Parameters
         ----------
@@ -185,7 +205,7 @@ class SPDParametrization(nn.Module):
 
     def right_inverse(self, spd_matrix: torch.Tensor) -> torch.Tensor:
         """
-        Mapping from the SPD manifold to the tangent space at identity
+        Map the SPD manifold to the tangent space at identity.
 
         Parameters
         ----------
@@ -201,7 +221,7 @@ class SPDParametrization(nn.Module):
 
     def __repr__(self) -> str:
         """
-        Representation of the layer
+        Representation of the layer.
 
         Returns
         -------
@@ -221,6 +241,12 @@ class SPDAdaptiveParametrization(nn.Module):
     (``parametrization_mode="dynamic"`` in the layers).
     """
 
+    # buffers registered in __init__ (declared for type checkers)
+    reference_point: torch.Tensor
+    reference_point_sqrtm: torch.Tensor
+    reference_point_inv_sqrtm: torch.Tensor
+    last_spd_value: torch.Tensor
+
     def __init__(
         self,
         n_features: int,
@@ -231,7 +257,7 @@ class SPDAdaptiveParametrization(nn.Module):
         dtype: torch.dtype = torch.float64,
     ) -> None:
         """
-        Adaptive SPD Parametrization
+        Adaptive SPD Parametrization.
 
         Parameters
         ----------
@@ -248,11 +274,9 @@ class SPDAdaptiveParametrization(nn.Module):
             Default is "softplus".
             Choices are: "softplus" and "exp"
 
-        use_autograd : bool | dict, optional
-            Use torch autograd for gradient computation. Can be bool for all layers,
-            or dict with keys: 'bimap', 'reeig', 'logeig', 'batchnorm', 'vec'.
-            Note that Vech module always uses manual gradient.
-            Default is False
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False.
 
         device : torch.device, optional
             Device to run model on. Default is torch.device('cpu')
@@ -264,10 +288,8 @@ class SPDAdaptiveParametrization(nn.Module):
 
         self.n_features = n_features
         self.initial_reference = initial_reference
-        assert mapping in [
-            "softplus",
-            "exp",
-        ], f"mapping must be in ['softplus', 'exp'], got {mapping}"
+        if mapping not in ("softplus", "exp"):
+            raise ValueError(f"mapping must be in ['softplus', 'exp'], got {mapping}")
         self.mapping = mapping
         self.use_autograd = use_autograd
         self.device = device
@@ -288,11 +310,13 @@ class SPDAdaptiveParametrization(nn.Module):
                 torch.eye(n_features, device=device, dtype=dtype),
             )
         else:
-            assert isinstance(self.initial_reference, torch.Tensor) and (
-                self.initial_reference.shape == (n_features, n_features)
-            ), (
-                "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_features, n_features)"
-            )
+            if not (
+                isinstance(self.initial_reference, torch.Tensor)
+                and self.initial_reference.shape == (n_features, n_features)
+            ):
+                raise ValueError(
+                    "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_features, n_features)"
+                )
             self.register_buffer("reference_point", self.initial_reference.clone())
             self.register_buffer(
                 "reference_point_sqrtm", sqrtm_SPD(self.initial_reference.clone())[0]
@@ -331,7 +355,7 @@ class SPDAdaptiveParametrization(nn.Module):
 
     def forward(self, tangent_vector: torch.Tensor) -> torch.Tensor:
         """
-        Mapping from the tangent space at reference_point onto the SPD manifold
+        Map the tangent space at reference_point onto the SPD manifold.
 
         Parameters
         ----------
@@ -362,7 +386,7 @@ class SPDAdaptiveParametrization(nn.Module):
 
     def right_inverse(self, spd_matrix: torch.Tensor) -> torch.Tensor:
         """
-        Mapping from SPD manifold onto the tangent space at reference_point
+        Map the SPD manifold onto the tangent space at reference_point.
 
         Parameters
         ----------
@@ -385,16 +409,14 @@ class SPDAdaptiveParametrization(nn.Module):
         )
 
     def update_reference_point(self) -> None:
-        """
-        Update reference point with last SPD value
-        """
+        """Update reference point with last SPD value."""
         self.reference_point.copy_(self.last_spd_value)
         self.reference_point_sqrtm.copy_(sqrtm_SPD(self.last_spd_value)[0])
         self.reference_point_inv_sqrtm.copy_(inv_sqrtm_SPD(self.last_spd_value)[0])
 
     def __repr__(self) -> str:
         """
-        Representation of the layer
+        Representation of the layer.
 
         Returns
         -------
@@ -418,6 +440,10 @@ class StiefelAdaptiveParametrization(nn.Module):
     BiMap with ``parametrization_mode="dynamic"``.
     """
 
+    # buffers registered in __init__ (declared for type checkers)
+    reference_point: torch.Tensor
+    last_stiefel_value: torch.Tensor
+
     def __init__(
         self,
         n_in: int,
@@ -430,7 +456,7 @@ class StiefelAdaptiveParametrization(nn.Module):
         generator: torch.Generator | None = None,
     ) -> None:
         """
-        Adaptive Stiefel Parametrization
+        Adaptive Stiefel Parametrization.
 
         Parameters
         ----------
@@ -451,11 +477,9 @@ class StiefelAdaptiveParametrization(nn.Module):
             Choices are: "QR" and "polar"
             WARNING: with "polar", use_autograd needs to be False
 
-        use_autograd : bool | dict, optional
-            Use torch autograd for gradient computation. Can be bool for all layers,
-            or dict with keys: 'bimap', 'reeig', 'logeig', 'batchnorm', 'vec'.
-            Note that Vech module always uses manual gradient.
-            Default is False
+        use_autograd : bool, optional
+            Use torch autograd for the computation of the gradient rather than
+            the analytical formula. Default is False.
 
         device : torch.device, optional
             Device to run model on. Default is torch.device('cpu')
@@ -468,14 +492,13 @@ class StiefelAdaptiveParametrization(nn.Module):
         """
         super().__init__()
 
-        assert n_in >= n_out, f"Must have n_in >= n_out, got n_in={n_in}, n_out={n_out}"
+        if n_in < n_out:
+            raise ValueError(f"Must have n_in >= n_out, got n_in={n_in}, n_out={n_out}")
         self.n_in = n_in
         self.n_out = n_out
         self.initial_reference = initial_reference
-        assert mapping in [
-            "QR",
-            "polar",
-        ], f"mapping must be in ['QR', 'polar'], got {mapping}"
+        if mapping not in ("QR", "polar"):
+            raise ValueError(f"mapping must be in ['QR', 'polar'], got {mapping}")
         self.mapping = mapping
         self.use_autograd = use_autograd
         self.device = device
@@ -497,11 +520,13 @@ class StiefelAdaptiveParametrization(nn.Module):
                 ),
             )
         else:
-            assert isinstance(self.initial_reference, torch.Tensor) and (
-                self.initial_reference.shape == (n_in, n_out)
-            ), (
-                "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_in, n_out)"
-            )
+            if not (
+                isinstance(self.initial_reference, torch.Tensor)
+                and self.initial_reference.shape == (n_in, n_out)
+            ):
+                raise ValueError(
+                    "Got incoherent initial_reference, either it is not a torch.Tensor or its shape is not (n_in, n_out)"
+                )
             self.register_buffer("reference_point", self.initial_reference.clone())
 
         # Last Stiefel value (for reference point update)
@@ -532,7 +557,7 @@ class StiefelAdaptiveParametrization(nn.Module):
 
     def forward(self, weight_tangent: torch.Tensor) -> torch.Tensor:
         """
-        Mapping from the tangent space of reference_point to the Stiefel manifold
+        Map the tangent space at reference_point to the Stiefel manifold.
 
         Parameters
         ----------
@@ -557,8 +582,9 @@ class StiefelAdaptiveParametrization(nn.Module):
 
     def right_inverse(self, weight: torch.Tensor) -> torch.Tensor:
         """
-        Mapping from Stiefel manifold to the tangent space at reference_point
-        (achieved through orthogonal projection)
+        Map the Stiefel manifold to the tangent space at reference_point.
+
+        Achieved through the orthogonal projection.
 
         Parameters
         ----------
@@ -575,14 +601,12 @@ class StiefelAdaptiveParametrization(nn.Module):
         )
 
     def update_reference_point(self) -> None:
-        """
-        Update reference point with last Stiefel value
-        """
+        """Update reference point with last Stiefel value."""
         self.reference_point.copy_(self.last_stiefel_value)
 
     def __repr__(self) -> str:
         """
-        Representation of the layer
+        Representation of the layer.
 
         Returns
         -------

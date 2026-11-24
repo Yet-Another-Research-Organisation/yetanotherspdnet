@@ -6,6 +6,7 @@ import warnings
 import torch
 from torch.autograd import Function
 
+from yetanotherspdnet._deprecation import _mark_deprecated
 from yetanotherspdnet.functions.scalar_functions import inv, zero_where_zero_std
 
 from ..spd_linalg import (
@@ -15,7 +16,7 @@ from ..spd_linalg import (
     expm_symmetric,
     logm_SPD,
 )
-from .kullback_leibler import (
+from .euclidean import (
     ArithmeticMean,
     EuclideanGeodesic,
     arithmetic_mean,
@@ -23,9 +24,9 @@ from .kullback_leibler import (
 )
 
 
-# --------------------------
-# Affine-invariant geodesics
-# --------------------------
+# ----------------------
+# Log-Euclidean geodesic
+# ----------------------
 def log_euclidean_geodesic(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
@@ -68,7 +69,7 @@ def LogEuclideanGeodesic(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
     """
-    Log-Euclidean geodesic between two batches of SPD matrices
+    Log-Euclidean geodesic between two batches of SPD matrices.
 
     Parameters
     ----------
@@ -127,7 +128,7 @@ def log_euclidean_mean(data: torch.Tensor) -> torch.Tensor:
 
 def LogEuclideanMean(data: torch.Tensor) -> torch.Tensor:
     """
-    Log-Euclidean mean
+    Log-Euclidean mean.
 
     Parameters
     ----------
@@ -179,22 +180,36 @@ def log_euclidean_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
+    return _log_euclidean_std_scalar(data, reference_point)[0]
+
+
+def _log_euclidean_std_scalar(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> tuple[torch.Tensor, ...]:
+    """Log-Euclidean scalar std and the logarithms / eigendecompositions it uses."""
     n_matrices = math.prod(data.shape[:-2])
-    logm_data = logm_SPD(data)[0]
-    logm_G = logm_SPD(reference_point)[0]
+    logm_data, eigvals_data, eigvecs_data = logm_SPD(data)
+    logm_G, eigvals_G, eigvecs_G = logm_SPD(reference_point)
     variance = torch.sum((logm_data - logm_G) ** 2) / n_matrices
-    return torch.sqrt(torch.clamp(variance, min=0.0))
+    std_scalar = torch.sqrt(torch.clamp(variance, min=0.0))
+    return (
+        std_scalar,
+        logm_data,
+        logm_G,
+        eigvals_data,
+        eigvecs_data,
+        eigvals_G,
+        eigvecs_G,
+    )
 
 
 class LogEuclideanStdScalar(Function):
-    """
-    Scalar standard deviation with respect to the Log-Euclidean distance
-    """
+    """Scalar standard deviation with respect to the Log-Euclidean distance."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the scalar standard deviation with respect to the Log-Euclidean distance
+        Forward pass of the log-Euclidean scalar standard deviation.
 
         Parameters
         ----------
@@ -212,12 +227,16 @@ class LogEuclideanStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = math.prod(data.shape[:-2])
-        logm_data, eigvals_data, eigvecs_data = logm_SPD(data)
-        logm_G, eigvals_G, eigvecs_G = logm_SPD(reference_point)
-        variance = torch.sum((logm_data - logm_G) ** 2) / n_matrices
-        std_scalar = torch.sqrt(torch.clamp(variance, min=0.0))
-        ctx.n_matrices = n_matrices
+        (
+            std_scalar,
+            logm_data,
+            logm_G,
+            eigvals_data,
+            eigvecs_data,
+            eigvals_G,
+            eigvecs_G,
+        ) = _log_euclidean_std_scalar(data, reference_point)
+        ctx.n_matrices = math.prod(data.shape[:-2])
         ctx.save_for_backward(
             logm_data,
             logm_G,
@@ -232,7 +251,7 @@ class LogEuclideanStdScalar(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the scalar standard deviation with respect to the affine-invariant distance
+        Backward pass of the log-Euclidean scalar standard deviation.
 
         Parameters
         ----------
@@ -282,7 +301,7 @@ def log_euclidean_parallel_transport_SPD(
     data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
     """
-    Parallel transport with respect to the log-Euclidean geometry
+    Parallel transport with respect to the log-Euclidean geometry.
 
     Parameters
     ----------
@@ -309,7 +328,7 @@ def LogEuclideanParallelTransportSPD(
     data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
     """
-    Parallel transport with respect to the log-Euclidean geometry
+    Parallel transport with respect to the log-Euclidean geometry.
 
     Parameters
     ----------
@@ -338,8 +357,9 @@ def LogEuclideanParalleTransportSPD(
     data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
     """
-    Deprecated alias of :func:`LogEuclideanParallelTransportSPD` (misspelled
-    name), kept for backward compatibility.
+    Use :func:`LogEuclideanParallelTransportSPD` instead (deprecated alias).
+
+    Misspelled name, kept for backward compatibility.
     """
     warnings.warn(
         "LogEuclideanParalleTransportSPD is deprecated, use "
@@ -351,16 +371,6 @@ def LogEuclideanParalleTransportSPD(
 
 
 # marker read by the documentation (docs/_ext/dualpath_pairing.py)
-LogEuclideanParalleTransportSPD.__deprecated__ = (
-    "use LogEuclideanParallelTransportSPD instead"
+_mark_deprecated(
+    LogEuclideanParalleTransportSPD, "use LogEuclideanParallelTransportSPD instead"
 )
-
-
-# -----------------------------------
-# Riemannian logarithm in coordinates
-# -----------------------------------
-
-
-# ---------------------------------------
-# Riemannian exponential from coordinates
-# ---------------------------------------

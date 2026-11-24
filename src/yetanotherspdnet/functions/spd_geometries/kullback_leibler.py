@@ -1,187 +1,21 @@
-"""Base geometries: Euclidean geodesic, arithmetic mean, harmonic mean/curve, and KL divergence."""
+"""Kullback-Leibler geometries: harmonic curve and mean, left / right KL scalar std.
+
+The Euclidean geodesic and the arithmetic mean (the left KL mean) live in
+:mod:`~yetanotherspdnet.functions.spd_geometries.euclidean`.
+"""
 
 import math
 
 import torch
 from torch.autograd import Function
 
+from ..._deprecation import _deprecated
 from ..scalar_functions import zero_where_zero_std
 from ..spd_linalg import (
+    inv_SPD,
     symmetrize,
 )
-
-
-# ------------------
-# Euclidean geodesic
-# ------------------
-def euclidean_geodesic(
-    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
-) -> torch.Tensor:
-    r"""
-    Euclidean geodesic between two symmetric matrices.
-
-    .. math::
-
-        \gamma(t) = (1-t)\,P_1 + t\,P_2, \quad t \in [0, 1]
-
-    Parameters
-    ----------
-    point1 : torch.Tensor of shape (..., n_features, n_features)
-        Symmetric matrices
-
-    point2 : torch.Tensor of shape (..., n_features, n_features)
-        Symmetric matrices
-
-    t : float | torch.Tensor
-        parameter on the path, should be in [0,1]
-
-    Returns
-    -------
-    point : torch.Tensor of shape (..., n_features, n_features)
-        Symmetric matrices
-    """
-    return symmetrize((1 - t) * point1 + t * point2)
-
-
-class EuclideanGeodesic(Function):
-    """
-    Euclidean geodesic of a batch of symmetric matrices
-    """
-
-    @staticmethod
-    def forward(
-        ctx, point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Forward pass of the Euclidean geodesic
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        point1 : torch.Tensor of shape (..., n_features, n_features)
-            Symmetric matrices
-
-        point2 : torch.Tensor of shape (..., n_features, n_features)
-            Symmetric matrices
-
-        t : float | torch.Tensor
-            parameter on the path, should be in [0,1]
-
-        Returns
-        -------
-        point : torch.Tensor of shape (..., n_features, n_features)
-            Symmetric matrices
-        """
-        ctx.t = t
-        return symmetrize((1 - t) * point1 + t * point2)
-
-    @staticmethod
-    def backward(
-        ctx, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, None]:
-        """
-        Backward pass of the Euclidean geodesic
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        grad_output : torch.Tensor of shape (..., n_features, n_features)
-
-        Returns
-        -------
-        grad_input1 : torch.Tensor of shape (..., n_features, n_features)
-
-        grad_input2 : torch.Tensor of shape (..., n_features, n_features)
-        """
-        t = ctx.t
-        return symmetrize((1 - t) * grad_output), symmetrize(t * grad_output), None
-
-
-# ---------------
-# Arithmetic mean
-# ---------------
-def arithmetic_mean(data: torch.Tensor) -> torch.Tensor:
-    r"""
-    Arithmetic (Euclidean) mean of a batch of symmetric matrices.
-
-    .. math::
-
-        \bar{P} = \frac{1}{N}\sum_{i=1}^{N} P_i
-
-    Parameters
-    ----------
-    data : torch.Tensor of shape (..., n_features, n_features)
-        Batch of symmetric matrices. The mean is computed along ... axes
-
-    Returns
-    -------
-    mean : torch.Tensor of shape (n_features, n_features)
-        Arithmetic mean
-    """
-    if data.ndim == 2:
-        return data
-    return symmetrize(torch.real(torch.mean(data, dim=tuple(range(data.ndim - 2)))))
-
-
-class ArithmeticMean(Function):
-    """
-    Arithmetic mean
-    """
-
-    @staticmethod
-    def forward(ctx, data: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the arithmetic mean of a batch of symmetric matrices
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of symmetric matrices. The mean is computed along ... axes
-
-        Returns
-        -------
-        mean : torch.Tensor of shape (n_features, n_features)
-            Arithmetic mean
-        """
-        ctx.shape = data.shape
-        if data.ndim == 2:
-            return symmetrize(data)
-        return symmetrize(torch.mean(data, dim=tuple(range(data.ndim - 2))))
-
-    @staticmethod
-    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
-        """
-        Backward pass of the arithmetic mean of a batch of symmetric matrices
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        grad_output : torch.Tensor of shape (n_features, n_features)
-            Gradient of the loss with respect to the arithmetic mean
-
-        Returns
-        -------
-        grad_input : torch.Tensor of shape (..., n_features, n_features)
-            Gradient of the loss with respect to the input batch of symmetric matrices
-        """
-        shape = ctx.shape
-        if len(shape) == 2:
-            return symmetrize(grad_output)
-        n_matrices = math.prod(shape[:-2])
-        grad_input = torch.zeros(
-            shape, dtype=grad_output.dtype, device=grad_output.device
-        )
-        grad_input[..., :, :] = symmetrize(grad_output / n_matrices)
-        return grad_input
+from . import euclidean
 
 
 # ---------------
@@ -191,8 +25,7 @@ def left_kullback_leibler_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> torch.Tensor:
     r"""
-    Scalar standard deviation with respect to the left Kullback-Leibler
-    divergence.
+    Scalar standard deviation with respect to the left Kullback-Leibler divergence.
 
     .. math::
 
@@ -220,6 +53,13 @@ def left_kullback_leibler_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
+    return _left_kullback_leibler_std_scalar(data, reference_point)[0]
+
+
+def _left_kullback_leibler_std_scalar(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Left KL scalar std, the inverse of G and the Cholesky factors of data."""
     n_matrices = math.prod(data.shape[:-2])
     n_features = data.shape[-1]
     L_G = torch.linalg.cholesky(reference_point)
@@ -230,18 +70,16 @@ def left_kullback_leibler_std_scalar(
     logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
     var = (trace - logdet_data) / n_matrices + logdet_G - n_features
     # clamp to avoid small numerical errors yielding small negative variance
-    return torch.sqrt(torch.clamp(var, min=0.0))
+    return torch.sqrt(torch.clamp(var, min=0.0)), G_inv, L_data
 
 
 class LeftKullbackLeiblerStdScalar(Function):
-    """
-    Scalar standard deviation with respect to the left Kullback-Leibler divergence
-    """
+    """Scalar standard deviation with respect to the left Kullback-Leibler divergence."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the scalar standard deviation with respect to the left Kullback-Leibler divergence
+        Forward pass of the left Kullback-Leibler scalar standard deviation.
 
         Parameters
         ----------
@@ -256,28 +94,17 @@ class LeftKullbackLeiblerStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = math.prod(data.shape[:-2])
-        n_features = data.shape[-1]
-        L_G = torch.linalg.cholesky(reference_point)
-        G_inv = torch.cholesky_inverse(L_G)
-        L_data = torch.linalg.cholesky(data)
-        trace = torch.einsum("ik,...ki->", G_inv, data)
-        logdet_data = 2 * L_data.diagonal(dim1=-2, dim2=-1).log().sum()
-        logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
-        # clamp to avoid small numerical errors yielding small negative variance
-        std_scalar = torch.sqrt(
-            torch.clamp(
-                (trace - logdet_data) / n_matrices + logdet_G - n_features, min=0.0
-            )
+        std_scalar, G_inv, L_data = _left_kullback_leibler_std_scalar(
+            data, reference_point
         )
-        ctx.n_matrices = n_matrices
+        ctx.n_matrices = math.prod(data.shape[:-2])
         ctx.save_for_backward(data, reference_point, G_inv, L_data, std_scalar)
         return std_scalar
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the scalar standard deviation with respect to the left Kullback-Leibler divergence
+        Backward pass of the left Kullback-Leibler scalar standard deviation.
 
         Parameters
         ----------
@@ -302,7 +129,7 @@ class LeftKullbackLeiblerStdScalar(Function):
         grad_input_G = (
             grad_output
             * G_inv
-            @ (reference_point - arithmetic_mean(data))
+            @ (reference_point - euclidean.arithmetic_mean(data))
             @ G_inv
             / 2
             / std_scalar
@@ -327,7 +154,8 @@ def harmonic_curve(
 
         \gamma(t) = \big((1-t)\,P_1^{-1} + t\,P_2^{-1}\big)^{-1}
 
-    the harmonic analogue of :func:`euclidean_geodesic`: a Euclidean
+    the harmonic analogue of
+    :func:`~yetanotherspdnet.functions.spd_geometries.euclidean.euclidean_geodesic`: a Euclidean
     geodesic between the matrix inverses, inverted back.
 
     Parameters
@@ -346,23 +174,28 @@ def harmonic_curve(
     point : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
     """
-    point1_inv = torch.cholesky_inverse(torch.linalg.cholesky(point1))
-    point2_inv = torch.cholesky_inverse(torch.linalg.cholesky(point2))
-    point_inv = euclidean_geodesic(point1_inv, point2_inv, t)
-    return torch.cholesky_inverse(torch.linalg.cholesky(point_inv))
+    return _harmonic_curve(point1, point2, t)[0]
+
+
+def _harmonic_curve(
+    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Harmonic curve at t and the inverses of point1 and point2."""
+    point1_inv = inv_SPD(point1)
+    point2_inv = inv_SPD(point2)
+    point_inv = euclidean.euclidean_geodesic(point1_inv, point2_inv, t)
+    return inv_SPD(point_inv), point1_inv, point2_inv
 
 
 class HarmonicCurve(Function):
-    """
-    Harmonic curve of two batches of SPD matrices
-    """
+    """Harmonic curve of two batches of SPD matrices."""
 
     @staticmethod
     def forward(
         ctx, point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
     ) -> torch.Tensor:
         """
-        Forward pass of the harmonic curve
+        Forward pass of the harmonic curve.
 
         Parameters
         ----------
@@ -383,10 +216,7 @@ class HarmonicCurve(Function):
         point : torch.Tensor of shape (..., n_features, n_features)
             SPD matrices
         """
-        point1_inv = torch.cholesky_inverse(torch.linalg.cholesky(point1))
-        point2_inv = torch.cholesky_inverse(torch.linalg.cholesky(point2))
-        point_inv = euclidean_geodesic(point1_inv, point2_inv, t)
-        point = torch.cholesky_inverse(torch.linalg.cholesky(point_inv))
+        point, point1_inv, point2_inv = _harmonic_curve(point1, point2, t)
         ctx.t = t
         ctx.save_for_backward(point1_inv, point2_inv, point)
         return point
@@ -396,7 +226,7 @@ class HarmonicCurve(Function):
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, None]:
         """
-        Backward pass of the harmonic curve
+        Backward pass of the harmonic curve.
 
         Parameters
         ----------
@@ -445,20 +275,22 @@ def harmonic_mean(data: torch.Tensor) -> torch.Tensor:
     """
     if data.ndim == 2:
         return data
-    inv_data = torch.cholesky_inverse(torch.linalg.cholesky(data))
-    inv_mean = arithmetic_mean(inv_data)
-    return torch.cholesky_inverse(torch.linalg.cholesky(inv_mean))
+    return _harmonic_mean(data)[0]
+
+
+def _harmonic_mean(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Harmonic mean of a batch (ndim > 2) and the inverses of the batch."""
+    inv_data = inv_SPD(data)
+    return inv_SPD(euclidean.arithmetic_mean(inv_data)), inv_data
 
 
 class HarmonicMean(Function):
-    """
-    Harmonic mean
-    """
+    """Harmonic mean."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the harmonic mean of a batch of SPD matrices
+        Forward pass of the harmonic mean of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -476,16 +308,14 @@ class HarmonicMean(Function):
         ctx.shape = data.shape
         if data.ndim == 2:
             return data
-        inv_data = torch.cholesky_inverse(torch.linalg.cholesky(data))
-        inv_mean = arithmetic_mean(inv_data)
-        mean = torch.cholesky_inverse(torch.linalg.cholesky(inv_mean))
+        mean, inv_data = _harmonic_mean(data)
         ctx.save_for_backward(inv_data, mean)
         return mean
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the harmonic mean of a batch of SPD matrices
+        Backward pass of the harmonic mean of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -517,8 +347,7 @@ def right_kullback_leibler_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> torch.Tensor:
     r"""
-    Scalar standard deviation with respect to the right Kullback-Leibler
-    divergence (docstring previously said "left" — copy-paste bug, fixed).
+    Scalar standard deviation with respect to the right KL divergence.
 
     .. math::
 
@@ -544,6 +373,13 @@ def right_kullback_leibler_std_scalar(
     scalar_std : torch.Tensor of shape ()
         scalar standard deviation
     """
+    return _right_kullback_leibler_std_scalar(data, reference_point)[0]
+
+
+def _right_kullback_leibler_std_scalar(
+    data: torch.Tensor, reference_point: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Right KL scalar std, the Cholesky factor of G and the inverses of data."""
     n_matrices = math.prod(data.shape[:-2])
     n_features = data.shape[-1]
     L_G = torch.linalg.cholesky(reference_point)
@@ -554,18 +390,16 @@ def right_kullback_leibler_std_scalar(
     logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
     var = (trace + logdet_data) / n_matrices - logdet_G - n_features
     # clamp to avoid small numerical errors yielding small negative variance
-    return torch.sqrt(torch.clamp(var, min=0.0))
+    return torch.sqrt(torch.clamp(var, min=0.0)), L_G, data_inv
 
 
 class RightKullbackLeiblerStdScalar(Function):
-    """
-    Scalar standard deviation with respect to the left Kullback-Leibler divergence
-    """
+    """Scalar standard deviation with respect to the right Kullback-Leibler divergence."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the scalar standard deviation with respect to the right Kullback-Leibler divergence
+        Forward pass of the right Kullback-Leibler scalar standard deviation.
 
         Parameters
         ----------
@@ -580,28 +414,17 @@ class RightKullbackLeiblerStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             scalar standard deviation
         """
-        n_matrices = math.prod(data.shape[:-2])
-        n_features = data.shape[-1]
-        L_G = torch.linalg.cholesky(reference_point)
-        L_data = torch.linalg.cholesky(data)
-        data_inv = torch.cholesky_inverse(L_data)
-        trace = torch.einsum("...ik,ki->", data_inv, reference_point)
-        logdet_data = 2 * L_data.diagonal(dim1=-2, dim2=-1).log().sum()
-        logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
-        # clamp to avoid small numerical errors yielding small negative variance
-        std_scalar = torch.sqrt(
-            torch.clamp(
-                (trace + logdet_data) / n_matrices - logdet_G - n_features, min=0.0
-            )
+        std_scalar, L_G, data_inv = _right_kullback_leibler_std_scalar(
+            data, reference_point
         )
-        ctx.n_matrices = n_matrices
+        ctx.n_matrices = math.prod(data.shape[:-2])
         ctx.save_for_backward(data, reference_point, L_G, data_inv, std_scalar)
         return std_scalar
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the scalar standard deviation with respect to the right Kullback-Leibler divergence
+        Backward pass of the right Kullback-Leibler scalar standard deviation.
 
         Parameters
         ----------
@@ -632,10 +455,17 @@ class RightKullbackLeiblerStdScalar(Function):
             / n_matrices
         )
         grad_input_G = (
-            grad_output * (arithmetic_mean(data_inv) - G_inv) / 2 / std_scalar
+            grad_output * (euclidean.arithmetic_mean(data_inv) - G_inv) / 2 / std_scalar
         )
         # std = 0: zero subgradient instead of 0/0
         return (
             zero_where_zero_std(grad_input_data, std_scalar),
             zero_where_zero_std(grad_input_G, std_scalar),
         )
+
+
+# moved to spd_geometries.euclidean
+euclidean_geodesic = _deprecated("euclidean_geodesic", euclidean.euclidean_geodesic)
+EuclideanGeodesic = _deprecated("EuclideanGeodesic", euclidean.EuclideanGeodesic)
+arithmetic_mean = _deprecated("arithmetic_mean", euclidean.arithmetic_mean)
+ArithmeticMean = _deprecated("ArithmeticMean", euclidean.ArithmeticMean)

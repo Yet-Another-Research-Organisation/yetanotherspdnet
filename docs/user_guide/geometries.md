@@ -17,7 +17,7 @@ dimension and return one `(n, n)` matrix.
 |---|---|---|---|---|
 | Affine-invariant (AI) | `affine_invariant` | Karcher mean, iterative | highest | `"affine_invariant"` |
 | Log-Euclidean (LE) | `log_euclidean` | $\exp(\frac1N\sum \log P_i)$ | one eigendecomposition per matrix | `"log_euclidean"` |
-| Euclidean / left KL | `kullback_leibler` | arithmetic $\frac1N\sum P_i$ | lowest | `"arithmetic"` |
+| Euclidean / left KL | `euclidean`, `kullback_leibler` | arithmetic $\frac1N\sum P_i$ | lowest | `"arithmetic"` |
 | Right KL | `kullback_leibler` | harmonic $(\frac1N\sum P_i^{-1})^{-1}$ | low | `"harmonic"` |
 | Symmetrized KL | `kullback_leibler_symmetrized` | GAH: AI midpoint of arithmetic and harmonic | low | `"geometric_arithmetic_harmonic"` |
 | Symmetrized KL, adaptive | `kullback_leibler_symmetrized` | point $t$ on the AI geodesic harmonic → arithmetic, $t$ learned | low | `"adaptive_geometric_arithmetic_harmonic"` |

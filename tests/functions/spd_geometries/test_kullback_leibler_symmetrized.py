@@ -5,27 +5,10 @@ from torch.testing import assert_close
 import yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized as kullback_leibler_symmetrized
 from utils import is_spd, is_symmetric
 from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
-    affine_invariant_mean_2points,
+    affine_invariant_geodesic,
 )
 from yetanotherspdnet.random.spd import random_DPD, random_SPD
 from yetanotherspdnet.random.stiefel import random_stiefel
-
-
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="function")
-def generator(device):
-    generator = torch.Generator(device=device)
-    generator.manual_seed(777)
-    return generator
 
 
 class TestGeometricEuclideanHarmonicCurve:
@@ -280,9 +263,10 @@ class TestGeometricEuclideanHarmonicCurve:
             Id, point, t
         )
 
-        expected = affine_invariant_mean_2points(
+        expected = affine_invariant_geodesic(
             (1 - t) * Id + t * point,
             torch.linalg.inv((1 - t) * Id + t * torch.linalg.inv(point)),
+            0.5,
         )
 
         assert_close(point_auto, expected)

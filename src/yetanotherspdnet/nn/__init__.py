@@ -7,16 +7,16 @@ from .rresnet_layers import ResidualBlock, SpectralVectorField
 
 
 __all__ = [
-    "BiMap",
-    "ReEig",
-    "ReEigBias",
-    "LogEig",
-    "Vec",
-    "Vech",
     "BatchNormSPDMean",
     "BatchNormSPDMeanScalarVariance",
-    "SampleCovariance",
+    "BiMap",
+    "LogEig",
     "MEstimation",
-    "SpectralVectorField",
+    "ReEig",
+    "ReEigBias",
     "ResidualBlock",
+    "SampleCovariance",
+    "SpectralVectorField",
+    "Vec",
+    "Vech",
 ]

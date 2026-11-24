@@ -9,23 +9,6 @@ from utils import is_spd
 from yetanotherspdnet.nn import MEstimation, SampleCovariance
 
 
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="function")
-def generator(device):
-    generator = torch.Generator(device=device)
-    generator.manual_seed(777)
-    return generator
-
-
 def _samples(n_batches, n_samples, n_features, device, dtype, generator, df=None):
     """Correlated Gaussian (or Student-t with ``df`` degrees of freedom) samples."""
     mixing = torch.randn(
@@ -160,11 +143,11 @@ class TestMEstimator:
     def test_gradcheck(self, estimator, use_autograd, device, dtype, generator):
         data = _samples(1, 10, 3, device, dtype, generator).requires_grad_(True)
         if estimator == "tyler":
-            fun = lambda x: me.tyler_estimator(  # noqa: E731
+            fun = lambda x: me.tyler_estimator(
                 x, n_iterations=300, tol=1e-13, use_autograd=use_autograd
             )
         else:
-            fun = lambda x: me.student_estimator(  # noqa: E731
+            fun = lambda x: me.student_estimator(
                 x, nu=3.0, n_iterations=300, tol=1e-13, use_autograd=use_autograd
             )
         assert torch.autograd.gradcheck(fun, (data,), atol=1e-6)

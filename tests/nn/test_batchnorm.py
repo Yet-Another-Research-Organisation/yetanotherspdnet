@@ -11,37 +11,13 @@ from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
 from yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd import (
     affine_invariant_mean_gevd,
 )
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
-    arithmetic_mean,
-    harmonic_mean,
-)
+from yetanotherspdnet.functions.spd_geometries.euclidean import arithmetic_mean
+from yetanotherspdnet.functions.spd_geometries.kullback_leibler import harmonic_mean
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     geometric_arithmetic_harmonic_mean,
 )
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import log_euclidean_mean
 from yetanotherspdnet.random.spd import random_SPD
-
-
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="module")
-def seed():
-    return 777
-
-
-@pytest.fixture(scope="function")
-def generator(device, seed):
-    generator = torch.Generator(device=device)
-    generator.manual_seed(seed)
-    return generator
 
 
 def _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd=True):
@@ -2230,7 +2206,7 @@ def _gbwbn_reference(data, M, G, theta, shift, eps=1e-5):
     B_sqrt, B_isqrt = _spectral(B, torch.sqrt), _spectral(B, lambda s: s.rsqrt())
     # variance of the deformed metric: d_BW^2(B, X_i) / theta^2
     cross = _spectral(B_sqrt @ X @ B_sqrt, torch.sqrt)
-    tr = lambda A: torch.diagonal(A, dim1=-2, dim2=-1).sum(-1)  # noqa: E731
+    tr = lambda A: torch.diagonal(A, dim1=-2, dim2=-1).sum(-1)
     var = (tr(B) + tr(X) - 2 * tr(cross)).mean() / theta**2
     # centering: Log_B, transport B -> I, Exp_I   (LogG, pal1)
     C = B_sqrt @ cross @ B_isqrt

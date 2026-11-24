@@ -30,6 +30,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Mathematics",
 ]
@@ -57,6 +58,9 @@ docs = [
     "furo>=2024.8.6",
     "sphinx-copybutton>=0.5.0",
     "sphinx-design>=0.5.0",
+    # docs/_diagrams/make_diagrams.py (regenerates the figures of docs/_static)
+    "numpy>=1.24",
+    "matplotlib>=3.7",
 ]
 all = [
     "yetanotherspdnet[test,dev,docs]",
@@ -146,18 +150,34 @@ select = [
     "SIM",    # flake8-simplify
     "NPY",    # NumPy-specific rules
     "T20",    # flake8-print: no print() in library code
+    "D",      # pydocstyle (numpy convention, see below)
+    "N",      # pep8-naming
+    "PLR",    # pylint refactor
+    "RUF",    # ruff-specific rules
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
     "B008",   # do not perform function calls in argument defaults
     "B905",   # zip without explicit strict parameter
     "E731",   # Lambda functions
+    "PLR0913", "PLR0917",  # layers and models expose every hyper-parameter as an argument
+    "PLR2004",  # magic values: comparisons are ndim == 2 (a single matrix) checks
 ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
-"tests/*" = ["ARG", "S101"]  # Allow assert statements in tests
-"docs/_diagrams/*" = ["T20"]  # command-line script reporting the files it writes
+# mathematical notation: matrices are upper case (X, G_inv), SPD / BW suffixes,
+# and the manual-backward twin of an operation is its CamelCase name
+# (AffineInvariantMean, a function chaining torch.autograd.Function classes)
+"src/**" = ["N802", "N803", "N806", "N816"]
+"src/yetanotherspdnet/model.py" = ["PLR0915"]  # constructors building every layer
+# tests: test names / docstrings are not API documentation
+"tests/*" = ["ARG", "S101", "D", "N", "PLR"]
+"docs/*" = ["D", "N"]
+"docs/_diagrams/*" = ["T20", "D", "N", "PLR", "RUF001"]  # script printing the files it writes; typographic dashes in figure titles
 
 [tool.ruff.lint.isort]
 known-first-party = ["yetanotherspdnet"]
@@ -174,7 +194,10 @@ line-ending = "lf"
 # ============================================================================
 [tool.mypy]
 python_version = "3.11"
-warn_return_any = true
+# off: the torch stubs type most tensor ops, ``nn.Module.__call__`` and
+# ``torch.autograd.Function.apply`` as returning Any, so every function returning
+# their result would be flagged (no-any-return) although it returns a Tensor
+warn_return_any = false
 warn_unused_configs = true
 disallow_untyped_defs = false
 disallow_incomplete_defs = false

@@ -16,6 +16,7 @@ from yetanotherspdnet.functions import spd_linalg
 from yetanotherspdnet.functions.spd_geometries import (
     affine_invariant,
     bures_wasserstein,
+    euclidean,
     kullback_leibler,
     kullback_leibler_symmetrized,
     log_euclidean,
@@ -143,7 +144,7 @@ def test_arithmetic_mean_backward_keeps_dtype(generator):
     X = random_SPD(3, 7, cond=10, dtype=DTYPE, generator=generator)
     X.requires_grad_(True)
     grad_output = torch.full((3, 3), 1 / 3, dtype=DTYPE)
-    kullback_leibler.ArithmeticMean.apply(X).backward(grad_output)
+    euclidean.ArithmeticMean.apply(X).backward(grad_output)
     assert_close(X.grad, (grad_output / 7).expand(7, 3, 3), rtol=1e-15, atol=0)
 
 

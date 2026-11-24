@@ -9,28 +9,6 @@ from yetanotherspdnet.random.spd import random_SPD
 from yetanotherspdnet.random.stiefel import random_stiefel
 
 
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="module")
-def seed():
-    return 777
-
-
-@pytest.fixture(scope="function")
-def generator(device, seed):
-    generator = torch.Generator(device=device)
-    generator.manual_seed(seed)
-    return generator
-
-
 class TestSPDParametrization:
     """
     Test suite for SPDParametrization
@@ -299,7 +277,7 @@ class TestSPDAdaptiveParametrization:
             dtype=dtype,
             generator=generator,
         )
-        with pytest.raises(AssertionError, match="Got incoherent initial_reference,"):
+        with pytest.raises(ValueError, match="Got incoherent initial_reference,"):
             nn_parametrizations.SPDAdaptiveParametrization(
                 n_features,
                 initial_reference=initial_reference,
@@ -316,7 +294,7 @@ class TestSPDAdaptiveParametrization:
         """
         Test invalid mapping
         """
-        with pytest.raises(AssertionError, match="mapping must be in"):
+        with pytest.raises(ValueError, match="mapping must be in"):
             nn_parametrizations.SPDAdaptiveParametrization(
                 n_features,
                 initial_reference=None,
@@ -687,7 +665,7 @@ class TestStiefelAdaptiveParametrization:
         """
         Test invalid n_in and n_out combinations
         """
-        with pytest.raises(AssertionError, match="Must have n_in >= n_out"):
+        with pytest.raises(ValueError, match="Must have n_in >= n_out"):
             nn_parametrizations.StiefelAdaptiveParametrization(
                 n_in,
                 n_out,
@@ -726,7 +704,7 @@ class TestStiefelAdaptiveParametrization:
             dtype=dtype,
             generator=generator,
         )
-        with pytest.raises(AssertionError, match="Got incoherent initial_reference,"):
+        with pytest.raises(ValueError, match="Got incoherent initial_reference,"):
             nn_parametrizations.StiefelAdaptiveParametrization(
                 n_in,
                 n_out,
@@ -747,7 +725,7 @@ class TestStiefelAdaptiveParametrization:
         """
         Test invalid mapping
         """
-        with pytest.raises(AssertionError, match="mapping must be in"):
+        with pytest.raises(ValueError, match="mapping must be in"):
             nn_parametrizations.StiefelAdaptiveParametrization(
                 n_in,
                 n_out,

@@ -2,78 +2,21 @@
 
 import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 import torch
 from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
 
-from yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd import (
-    AffineInvariantGeodesicGEVD,
-    AffineInvariantMeanGEVD,
-    AffineInvariantParallelTransportGEVD,
-    affine_invariant_geodesic_gevd,
-    affine_invariant_mean_gevd,
-    affine_invariant_parallel_transport_gevd,
-)
 from yetanotherspdnet.functions.spd_geometries.bures_wasserstein import (
-    BuresWassersteinMean,
-    BuresWassersteinStdScalar,
     bures_wasserstein_bias,
     bures_wasserstein_center,
-    bures_wasserstein_geodesic,
-    bures_wasserstein_mean,
     bures_wasserstein_scale,
-    bures_wasserstein_std_scalar,
 )
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
-    ArithmeticMean,
-    EuclideanGeodesic,
-    HarmonicCurve,
-    HarmonicMean,
-    LeftKullbackLeiblerStdScalar,
-    RightKullbackLeiblerStdScalar,
-    arithmetic_mean,
-    euclidean_geodesic,
-    harmonic_curve,
-    harmonic_mean,
-    left_kullback_leibler_std_scalar,
-    right_kullback_leibler_std_scalar,
-)
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
-    AdaptiveGeometricArithmeticHarmonicGeodesic,
-    AdaptiveGeometricArithmeticHarmonicMean,
-    GeometricArithmeticHarmonicMean,
-    GeometricEuclideanHarmonicCurve,
-    SymmetrizedKullbackLeiblerStdScalar,
-    adaptive_geometric_arithmetic_harmonic_geodesic,
-    adaptive_geometric_arithmetic_harmonic_mean,
-    geometric_arithmetic_harmonic_mean,
-    geometric_euclidean_harmonic_curve,
-    symmetrized_kullback_leibler_std_scalar,
-)
-from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
-    LogEuclideanGeodesic,
-    LogEuclideanMean,
-    LogEuclideanParallelTransportSPD,
-    LogEuclideanStdScalar,
-    log_euclidean_geodesic,
-    log_euclidean_mean,
-    log_euclidean_parallel_transport_SPD,
-    log_euclidean_std_scalar,
-)
+from yetanotherspdnet.functions.spd_geometries.registry import get_geometry
 
-from ..functions.spd_geometries.affine_invariant import (
-    AffineInvariantGeodesic,
-    AffineInvariantMean,
-    AffineInvariantParallelTransport,
-    AffineInvariantStdScalar,
-    affine_invariant_geodesic,
-    affine_invariant_mean,
-    affine_invariant_parallel_transport,
-    affine_invariant_std_scalar,
-)
 from ..functions.spd_linalg import (
     CongruenceSPD,
     InvSqrtmSPD,
@@ -91,6 +34,7 @@ from .parametrizations import (
     ScalarSoftPlusParametrization,
     SPDAdaptiveParametrization,
     SPDParametrization,
+    _parametrization_of,
 )
 
 
@@ -142,6 +86,10 @@ class BatchNormSPDBase(ABC, nn.Module):
     ``_get_running_parameters``, ``_norm_and_bias``).
     """
 
+    # buffers registered in __init__ (declared for type checkers)
+    running_mean: torch.Tensor
+    mean_regularizer: torch.Tensor
+
     def __init__(
         self,
         n_features: int,
@@ -160,7 +108,7 @@ class BatchNormSPDBase(ABC, nn.Module):
         dtype: torch.dtype = torch.float64,
     ) -> None:
         """
-        Base class for battch normalization layers for SPDnet
+        Build the common part of the SPD batch normalization layers.
 
         Parameters
         ----------
@@ -241,49 +189,36 @@ class BatchNormSPDBase(ABC, nn.Module):
         # register all input variables
         self.n_features = n_features
         self.mean_type = mean_type
-        assert self.mean_type in [
-            "affine_invariant",
-            "affine_invariant_gevd",
-            "log_euclidean",
-            "arithmetic",
-            "harmonic",
-            "geometric_arithmetic_harmonic",
-            "adaptive_geometric_arithmetic_harmonic",
-            "bures_wasserstein",
-        ], (
-            f"formula must be in ['affine_invariant', 'affine_invariant_gevd', "
-            f"'log_euclidean', 'arithmetic', 'harmonic', "
-            f"'geometric_arithmetic_harmonic', "
-            f"'adaptive_geometric_arithmetic_harmonic', 'bures_wasserstein'], "
-            f"got {self.mean_type}"
-        )
+        # mean, geodesic, std and transport of the geometry (ValueError if unknown)
+        self.geometry = get_geometry(mean_type)
         self.mean_options = mean_options
         self.momentum = momentum
         self.norm_strategy = norm_strategy
-        assert self.norm_strategy in [
-            "classical",
-            "minibatch",
-        ], f"formula must be in ['classical', 'minibatch'], got {self.norm_strategy}"
+        if self.norm_strategy not in ("classical", "minibatch"):
+            raise ValueError(
+                f"norm_strategy must be in ['classical', 'minibatch'], got {self.norm_strategy}"
+            )
         self.minibatch_mode = minibatch_mode
-        if norm_strategy == "minibatch":
-            assert self.minibatch_mode in [
-                "constant",
-                "decay",
-                "growth",
-            ], (
-                f"formula must be in ['constant', 'decay', 'growth'], got {self.minibatch_mode}"
+        if norm_strategy == "minibatch" and self.minibatch_mode not in (
+            "constant",
+            "decay",
+            "growth",
+        ):
+            raise ValueError(
+                f"minibatch_mode must be in ['constant', 'decay', 'growth'], got {self.minibatch_mode}"
             )
         self.minibatch_momentum = minibatch_momentum
         self.minibatch_maxstep = minibatch_maxstep
         self.parametrization = parametrization
-        assert self.parametrization in [
-            "softplus",
-            "exp",
-        ], f"parametrization must be in ['softplus', 'exp'], got {self.parametrization}"
+        if self.parametrization not in ("softplus", "exp"):
+            raise ValueError(
+                f"parametrization must be in ['softplus', 'exp'], got {self.parametrization}"
+            )
         self.parametrization_mode = parametrization_mode
-        assert self.parametrization_mode in ["static", "dynamic"], (
-            f"parametrization_mode must be in ['static', 'dynamic'], got {self.parametrization_mode}"
-        )
+        if self.parametrization_mode not in ("static", "dynamic"):
+            raise ValueError(
+                f"parametrization_mode must be in ['static', 'dynamic'], got {self.parametrization_mode}"
+            )
         self.n_steps_ref_update = n_steps_ref_update
         self.use_autograd = use_autograd
         self.device = device
@@ -309,10 +244,7 @@ class BatchNormSPDBase(ABC, nn.Module):
         self._init_norm_and_bias()
 
     def _init_norm_parameters(self) -> None:
-        """
-        Initialize functions to compute batch parameters, normalization parameters,
-        and running parameters
-        """
+        """Initialize the batch, normalization and running parameters."""
         self._init_mean()
         self._init_adaptive_mean_fun()
         self._init_norm_strategy_mean()
@@ -325,73 +257,18 @@ class BatchNormSPDBase(ABC, nn.Module):
 
     @abstractmethod
     def _init_bias_parameters(self) -> None:
-        """
-        Initialize bias parameters and their parametrization
-        """
+        """Initialize bias parameters and their parametrization."""
         pass
 
     @abstractmethod
     def _init_norm_and_bias(self) -> None:
-        """
-        Initialize normalization and bias functions
-        """
+        """Initialize normalization and bias functions."""
         pass
 
     def _init_mean(self) -> None:
-        """
-        Auxiliary function to select mean function
-        """
-        if self.mean_type == "affine_invariant":
-            if self.mean_options is not None and "n_iterations" in self.mean_options:
-                if self.use_autograd:
-                    self.mean_fun = partial(
-                        affine_invariant_mean,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-                else:
-                    self.mean_fun = partial(
-                        AffineInvariantMean,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-            else:
-                self.mean_fun = (
-                    affine_invariant_mean if self.use_autograd else AffineInvariantMean
-                )
-        elif self.mean_type == "affine_invariant_gevd":
-            if self.mean_options is not None and "n_iterations" in self.mean_options:
-                if self.use_autograd:
-                    self.mean_fun = partial(
-                        affine_invariant_mean_gevd,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-                else:
-                    self.mean_fun = partial(
-                        AffineInvariantMeanGEVD,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-            else:
-                self.mean_fun = (
-                    affine_invariant_mean_gevd
-                    if self.use_autograd
-                    else AffineInvariantMeanGEVD
-                )
-        elif self.mean_type == "log_euclidean":
-            self.mean_fun = (
-                log_euclidean_mean if self.use_autograd else LogEuclideanMean
-            )
-        elif self.mean_type == "arithmetic":
-            self.mean_fun = (
-                arithmetic_mean if self.use_autograd else ArithmeticMean.apply
-            )
-        elif self.mean_type == "harmonic":
-            self.mean_fun = harmonic_mean if self.use_autograd else HarmonicMean.apply
-        elif self.mean_type == "geometric_arithmetic_harmonic":
-            self.mean_fun = (
-                geometric_arithmetic_harmonic_mean
-                if self.use_autograd
-                else GeometricArithmeticHarmonicMean
-            )
-        elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
+        """Select the mean function of the geometry."""
+        mean = self.geometry.mean.select(self.use_autograd)
+        if self.geometry.learnable_t:
             # Register learnable parameter t for adaptive GAH mean
             # Use sigmoid parametrization to constrain t in [0, 1]
             t_init = (self.mean_options or {}).get("t_init", 0.5)
@@ -401,61 +278,23 @@ class BatchNormSPDBase(ABC, nn.Module):
                 torch.tensor(t_init, dtype=self.dtype, device=self.device)
             )
             register_parametrization(self, "t_gah", ScalarSigmoidParametrization())
-            if self.use_autograd:
-                self.mean_fun = lambda data: (
-                    adaptive_geometric_arithmetic_harmonic_mean(data, self.t_gah)
-                )
-            else:
-                self.mean_fun = lambda data: AdaptiveGeometricArithmeticHarmonicMean(
-                    data, self.t_gah
-                )
-        elif self.mean_type == "bures_wasserstein":
-            n_iter = 1
-            if self.mean_options is not None and "n_iterations" in self.mean_options:
-                n_iter = self.mean_options["n_iterations"]
-            self.mean_fun = (
-                partial(bures_wasserstein_mean, n_iterations=n_iter)
-                if self.use_autograd
-                else partial(BuresWassersteinMean, n_iterations=n_iter)
-            )
+            self.mean_fun = lambda data: mean(data, self.t_gah)
+        else:
+            mean_kwargs = self.geometry.mean_kwargs(self.mean_options)
+            self.mean_fun = partial(mean, **mean_kwargs) if mean_kwargs else mean
 
     def _init_adaptive_mean_fun(self) -> None:
         """
-        Auxiliary function to select adaptive mean update function
+        Select the running mean update, a step along the geodesic.
+
+        It is computed without gradient, so through the autograd path.
         """
-        if self.mean_type == "affine_invariant":
-            self.adaptive_mean_fun = affine_invariant_geodesic
-        elif self.mean_type == "affine_invariant_gevd":
-            self.adaptive_mean_fun = lambda x, y, t: affine_invariant_geodesic_gevd(
-                x, y, t
-            )[0]
-        elif self.mean_type == "log_euclidean":
-            self.adaptive_mean_fun = log_euclidean_geodesic
-        elif self.mean_type == "arithmetic":
-            self.adaptive_mean_fun = euclidean_geodesic
-        elif self.mean_type == "harmonic":
-            self.adaptive_mean_fun = harmonic_curve
-        elif self.mean_type == "geometric_arithmetic_harmonic":
-            self.adaptive_mean_fun = geometric_euclidean_harmonic_curve
-        elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
-            # Use the adaptive geodesic with learnable t for running mean update
-            if self.use_autograd:
-                self.adaptive_mean_fun = lambda p1, p2, t: (
-                    adaptive_geometric_arithmetic_harmonic_geodesic(p1, p2, t)
-                )
-            else:
-                self.adaptive_mean_fun = lambda p1, p2, t: (
-                    AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
-                        p1, p2, torch.tensor(t, dtype=self.dtype, device=self.device)
-                    )
-                )
-        elif self.mean_type == "bures_wasserstein":
-            self.adaptive_mean_fun = bures_wasserstein_geodesic
+        # every registered geometry has an autograd geodesic (DualPath.autograd
+        # is only None for some parallel transports)
+        self.adaptive_mean_fun = cast(Callable, self.geometry.geodesic.autograd)
 
     def _init_norm_strategy_mean(self) -> None:
-        """
-        Auxiliary function to select normalization strategy
-        """
+        """Auxiliary function to select normalization strategy."""
         if self.norm_strategy == "classical":
             self.get_norm_mean = lambda mean: mean
         elif self.norm_strategy == "minibatch":
@@ -464,59 +303,11 @@ class BatchNormSPDBase(ABC, nn.Module):
                 "mean_regularizer",
                 torch.eye(self.n_features, dtype=self.dtype, device=self.device),
             )
-            if self.mean_type == "affine_invariant":
-                self.regularize_mean_fun = (
-                    affine_invariant_geodesic
-                    if self.use_autograd
-                    else AffineInvariantGeodesic.apply
-                )
-            elif self.mean_type == "affine_invariant_gevd":
-                self.regularize_mean_fun = (
-                    (lambda x, y, t: affine_invariant_geodesic_gevd(x, y, t)[0])
-                    if self.use_autograd
-                    else AffineInvariantGeodesicGEVD.apply
-                )
-            elif self.mean_type == "log_euclidean":
-                self.regularize_mean_fun = (
-                    log_euclidean_geodesic
-                    if self.use_autograd
-                    else LogEuclideanGeodesic
-                )
-            elif self.mean_type == "arithmetic":
-                self.regularize_mean_fun = (
-                    euclidean_geodesic if self.use_autograd else EuclideanGeodesic.apply
-                )
-            elif self.mean_type == "harmonic":
-                self.regularize_mean_fun = (
-                    harmonic_curve if self.use_autograd else HarmonicCurve.apply
-                )
-            elif self.mean_type == "geometric_arithmetic_harmonic":
-                self.regularize_mean_fun = (
-                    geometric_euclidean_harmonic_curve
-                    if self.use_autograd
-                    else GeometricEuclideanHarmonicCurve
-                )
-            elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
-                if self.use_autograd:
-                    self.regularize_mean_fun = (
-                        adaptive_geometric_arithmetic_harmonic_geodesic
-                    )
-                else:
-                    self.regularize_mean_fun = lambda p1, p2, t: (
-                        AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
-                            p1,
-                            p2,
-                            torch.tensor(t, dtype=self.dtype, device=self.device),
-                        )
-                    )
-            elif self.mean_type == "bures_wasserstein":
-                self.regularize_mean_fun = bures_wasserstein_geodesic
+            self.regularize_mean_fun = self.geometry.geodesic.select(self.use_autograd)
             self._init_minibatch_mode()
 
     def _init_minibatch_mode(self) -> None:
-        """
-        Auxiliary function to deal with initialization of minibatch mode
-        """
+        """Auxiliary function to deal with initialization of minibatch mode."""
         if self.minibatch_mode == "constant":
             self.get_minibatch_momentum = lambda: self.minibatch_momentum
         elif self.minibatch_mode == "decay":
@@ -526,7 +317,7 @@ class BatchNormSPDBase(ABC, nn.Module):
 
     def _minibatch_momentum_decay(self) -> float:
         """
-        Function to compute the minibatch momentum with minibatch_mode == "decay"
+        Compute the minibatch momentum for minibatch_mode == "decay".
 
         Returns
         -------
@@ -545,7 +336,7 @@ class BatchNormSPDBase(ABC, nn.Module):
 
     def _minibatch_momentum_growth(self) -> float:
         """
-        Function to compute the minibatch momentum for minibatch_mode == "growth"
+        Compute the minibatch momentum for minibatch_mode == "growth".
 
         Returns
         -------
@@ -560,7 +351,7 @@ class BatchNormSPDBase(ABC, nn.Module):
 
     def _handle_minibatch_mean(self, mean_batch: torch.Tensor) -> torch.Tensor:
         """
-        Auxiliary function to handle mean used for normalization with minibatch strategy
+        Regularize the batch mean in the minibatch normalization strategy.
 
         Parameters
         ----------
@@ -581,7 +372,7 @@ class BatchNormSPDBase(ABC, nn.Module):
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the BatchNormSPD layer
+        Forward pass of the BatchNormSPD layer.
 
         Parameters
         ----------
@@ -608,7 +399,7 @@ class BatchNormSPDBase(ABC, nn.Module):
     @abstractmethod
     def _get_norm_parameters(self, data: torch.Tensor) -> tuple[Any, Any]:
         """
-        Get parameters used to normalize data
+        Get parameters used to normalize data.
 
         Parameters
         ----------
@@ -629,7 +420,7 @@ class BatchNormSPDBase(ABC, nn.Module):
     @abstractmethod
     def _update_running_parameters(self, parameters_batch) -> None:
         """
-        Update running parameters
+        Update running parameters.
 
         Parameters
         ----------
@@ -641,7 +432,7 @@ class BatchNormSPDBase(ABC, nn.Module):
     @abstractmethod
     def _get_running_parameters(self) -> Any:
         """
-        Get running parameters for normalization in inference
+        Get running parameters for normalization in inference.
 
         Returns
         -------
@@ -653,14 +444,15 @@ class BatchNormSPDBase(ABC, nn.Module):
     @abstractmethod
     def _norm_and_bias(self, data: torch.Tensor, parameters) -> torch.Tensor:
         """
-        Apply normalization and add bias
+        Apply normalization and add bias.
 
         Parameters
         ----------
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
 
-        parameters
+        Parameters
+        ----------
             Parameters used for normalization
 
         Returns
@@ -675,8 +467,10 @@ class BatchNormSPDBase(ABC, nn.Module):
         self, _optimizer: torch.optim.Optimizer, *_args, **_kwargs
     ) -> None:
         """
-        Hook that runs after optimizer.step() to handle dynamic parametrization reference point.
-        See torch.optim.Optimizer.register_step_post_hook method for more details
+        Update the dynamic parametrization after ``optimizer.step()``.
+
+        Moves the reference point. See ``torch.optim.Optimizer.register_step_post_hook``
+        for the signature.
 
         Parameters
         ----------
@@ -688,8 +482,9 @@ class BatchNormSPDBase(ABC, nn.Module):
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """
         Register the post-step hook with the optimizer.
-        If dynamic parametrization, it needs to be called once after creating
-        the optimizer for dynamic parametrization to actually work as expected
+
+        If dynamic parametrization, it needs to be called once after creating the
+        optimizer for dynamic parametrization to actually work as expected
 
         Parameters
         ----------
@@ -701,7 +496,7 @@ class BatchNormSPDBase(ABC, nn.Module):
 
     def __repr__(self) -> str:
         """
-        Representation of the layer
+        Representation of the layer.
 
         Returns
         -------
@@ -729,7 +524,7 @@ class BatchNormSPDBase(ABC, nn.Module):
 
     def __str__(self) -> str:
         """
-        String representation of the layer
+        Return the string representation of the layer.
 
         Returns
         -------
@@ -776,6 +571,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
     ) -> None:
         """
         Batch normalization layer for SPDnet relying on a SPD mean.
+
         Only the SPD mean is normalized
 
         Parameters
@@ -864,12 +660,10 @@ class BatchNormSPDMean(BatchNormSPDBase):
             Default is torch.float64
         """
         self.norm_and_bias_mode = norm_and_bias_mode
-        assert self.norm_and_bias_mode in [
-            "whitening",
-            "parallel_transport",
-        ], (
-            f"formula must be in ['whitening', 'parallel_transport'], got {self.norm_and_bias_mode}"
-        )
+        if self.norm_and_bias_mode not in ("whitening", "parallel_transport"):
+            raise ValueError(
+                f"norm_and_bias_mode must be in ['whitening', 'parallel_transport'], got {self.norm_and_bias_mode}"
+            )
         super().__init__(
             n_features,
             mean_type,
@@ -888,13 +682,12 @@ class BatchNormSPDMean(BatchNormSPDBase):
         )
 
     def _init_bias_parameters(self) -> None:
-        """
-        Initialize bias parameters and their parametrization
-        """
+        """Initialize bias parameters and their parametrization."""
         self.Covbias = torch.nn.Parameter(
             torch.eye(self.n_features, dtype=self.dtype, device=self.device)
         )
         # deal with parametrization
+        self.spd_parametrization: SPDParametrization | SPDAdaptiveParametrization
         if self.parametrization_mode == "static":
             self.spd_parametrization = SPDParametrization(mapping=self.parametrization)
         elif self.parametrization_mode == "dynamic":
@@ -906,9 +699,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
         register_parametrization(self, "Covbias", self.spd_parametrization)
 
     def _init_norm_and_bias(self) -> None:
-        """
-        Initialize normalization and bias functions
-        """
+        """Initialize normalization and bias functions."""
         if self.norm_and_bias_mode == "whitening":
             self.normalize_mean = whitening if self.use_autograd else Whitening.apply
             self.add_bias_mean = (
@@ -916,59 +707,19 @@ class BatchNormSPDMean(BatchNormSPDBase):
             )
             self._norm_and_bias_fun = self._norm_and_bias_whitening
         elif self.norm_and_bias_mode == "parallel_transport":
-            if self.use_autograd and self.mean_type in (
-                "affine_invariant",
-                "log_euclidean",
-            ):
-                raise ValueError(
-                    "norm_and_bias_mode='parallel_transport' with use_autograd=True "
-                    f"is not supported for mean_type={self.mean_type!r}: the "
-                    "transport takes square roots or logarithms of the bias, which "
-                    "starts at the identity, where autograd through "
-                    "torch.linalg.eigh gives NaN gradients (repeated eigenvalues). "
-                    "Use use_autograd=False (hand-written backward)."
-                )
-            if self.mean_type == "affine_invariant":
-                self.parallel_transport = (
-                    affine_invariant_parallel_transport
-                    if self.use_autograd
-                    else AffineInvariantParallelTransport
-                )
-            elif self.mean_type == "affine_invariant_gevd":
-                self.parallel_transport = (
-                    affine_invariant_parallel_transport_gevd
-                    if self.use_autograd
-                    else AffineInvariantParallelTransportGEVD
-                )
-            elif self.mean_type == "log_euclidean":
-                self.parallel_transport = (
-                    log_euclidean_parallel_transport_SPD
-                    if self.use_autograd
-                    else LogEuclideanParallelTransportSPD
-                )
-            elif self.mean_type in (
-                "arithmetic",
-                "harmonic",
-                "geometric_arithmetic_harmonic",
-                "adaptive_geometric_arithmetic_harmonic",
-            ):
-                self.parallel_transport = (
-                    affine_invariant_parallel_transport_gevd
-                    if self.use_autograd
-                    else AffineInvariantParallelTransportGEVD
-                )
-            else:
+            if self.geometry.transport is None:
                 raise ValueError(
                     f"norm_and_bias_mode='parallel_transport' is not available "
                     f"for mean_type={self.mean_type!r}"
                 )
+            self.parallel_transport = self.geometry.transport.select(self.use_autograd)
             self._norm_and_bias_fun = self._norm_and_bias_transport
 
     def _norm_and_bias_whitening(
         self, data: torch.Tensor, parameters: torch.Tensor
     ) -> torch.Tensor:
         """
-        Apply normalization and add bias
+        Apply normalization and add bias.
 
         Parameters
         ----------
@@ -989,7 +740,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
         self, data: torch.Tensor, parameters: torch.Tensor
     ) -> torch.Tensor:
         """
-        Apply normalization and add bias
+        Apply normalization and add bias.
 
         Parameters
         ----------
@@ -1008,7 +759,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
 
     def _norm_and_bias(self, data: torch.Tensor, parameters) -> torch.Tensor:
         """
-        Apply normalization and add bias
+        Apply normalization and add bias.
 
         Parameters
         ----------
@@ -1025,11 +776,11 @@ class BatchNormSPDMean(BatchNormSPDBase):
         """
         return self._norm_and_bias_fun(data, parameters)
 
-    def _get_norm_parameters(
-        self, data: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    # the parameters are Any (as in BatchNormSPDBase), not Tensor: the subclass
+    # BatchNormSPDMeanScalarVariance passes (mean, std) tuples instead
+    def _get_norm_parameters(self, data: torch.Tensor) -> tuple[Any, Any]:
         """
-        Get parameters used to normalize data
+        Get parameters used to normalize data.
 
         Parameters
         ----------
@@ -1049,9 +800,9 @@ class BatchNormSPDMean(BatchNormSPDBase):
         mean = self.get_norm_mean(mean_batch)
         return mean, mean_batch
 
-    def _update_running_parameters(self, parameters_batch: torch.Tensor) -> None:
+    def _update_running_parameters(self, parameters_batch: Any) -> None:
         """
-        Update running parameters
+        Update running parameters.
 
         Parameters
         ----------
@@ -1064,9 +815,9 @@ class BatchNormSPDMean(BatchNormSPDBase):
             self.momentum,
         )
 
-    def _get_running_parameters(self) -> torch.Tensor:
+    def _get_running_parameters(self) -> Any:
         """
-        Get running parameters for normalization in inference
+        Get running parameters for normalization in inference.
 
         Returns
         -------
@@ -1079,8 +830,10 @@ class BatchNormSPDMean(BatchNormSPDBase):
         self, _optimizer: torch.optim.Optimizer, *_args, **_kwargs
     ) -> None:
         """
-        Hook that runs after optimizer.step() to handle dynamic parametrization reference point.
-        See torch.optim.Optimizer.register_step_post_hook method for more details
+        Update the dynamic parametrization after ``optimizer.step()``.
+
+        Moves the reference point. See ``torch.optim.Optimizer.register_step_post_hook``
+        for the signature.
 
         Parameters
         ----------
@@ -1094,15 +847,18 @@ class BatchNormSPDMean(BatchNormSPDBase):
         ):
             with torch.no_grad():
                 # update reference point
-                self.spd_parametrization.update_reference_point()
+                # is_dynamic: the parametrization is the adaptive one
+                cast(
+                    SPDAdaptiveParametrization, self.spd_parametrization
+                ).update_reference_point()
                 # reset tangent vector to zero
-                self.parametrizations.Covbias.original.zero_()
+                _parametrization_of(self, "Covbias").original.zero_()
                 # reset counter
                 self.current_ref_step = 0
 
     def __repr__(self) -> str:
         """
-        Representation of the layer
+        Representation of the layer.
 
         Returns
         -------
@@ -1143,6 +899,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
 
     """
 
+    # buffers registered in __init__ (declared for type checkers)
+    running_std_scalar: torch.Tensor
+    std_regularizer: torch.Tensor
+
     def __init__(
         self,
         n_features: int,
@@ -1162,8 +922,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
     ) -> None:
-        """
+        r"""
         Batch normalization layer for SPDnet relying on a SPD mean.
+
         Both the SPD mean and scalar variance are normalized
 
         Parameters
@@ -1235,7 +996,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         bw_theta : float, optional
             Power deformation :math:`\theta` of the generalized Bures-Wasserstein
             metric (GBWBN, Wang et al. 2025): data are mapped by
-            :math:`X \\mapsto M^{-1/2} X^\theta M^{-1/2}` and the variance is
+            :math:`X \mapsto M^{-1/2} X^\theta M^{-1/2}` and the variance is
             measured with the deformed metric (divided by :math:`\theta^2`).
             Only used when mean_type="bures_wasserstein". theta=1.0 is the
             plain BW metric; 0.5 is the best value of the paper's ablation
@@ -1270,9 +1031,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         bw_M, bw_G : torch.Tensor of shape (n_features, n_features)
             GBWBN only: learnable SPD pre-transform :math:`M` and bias
             :math:`G`, applied in the transformed space as
-            :math:`\\hat G = M^{-1/2} G^\theta M^{-1/2}`.
+            :math:`\hat G = M^{-1/2} G^\theta M^{-1/2}`.
         bw_theta : float
-            GBWBN only: power of the pre-transform :math:`X \\mapsto X^\theta`.
+            GBWBN only: power of the pre-transform :math:`X \mapsto X^\theta`.
         """
         super().__init__(
             n_features=n_features,
@@ -1312,10 +1073,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             )
 
     def _init_norm_parameters(self) -> None:
-        """
-        Initialize functions to compute batch parameters, normalization parameters,
-        and running parameters
-        """
+        """Initialize the batch, normalization and running parameters."""
         # init mean parameters from parent class
         super()._init_norm_parameters()
         # init scalar std parameters and functions
@@ -1328,9 +1086,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         )
 
     def _init_bias_parameters(self) -> None:
-        """
-        Initialize bias parameters and their parametrization
-        """
+        """Initialize bias parameters and their parametrization."""
         # init cov bias from parent class (GBWBN uses its own bias bw_G instead)
         if self.mean_type != "bures_wasserstein":
             super()._init_bias_parameters()
@@ -1341,9 +1097,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         register_parametrization(self, "stdScalarbias", ScalarSoftPlusParametrization())
 
     def _init_norm_and_bias(self) -> None:
-        """
-        Initialize normalization and bias functions
-        """
+        """Initialize normalization and bias functions."""
         if self.mean_type == "bures_wasserstein":
             # GBWBN has its own pipeline (see _forward_bures_wasserstein)
             return
@@ -1357,56 +1111,11 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         )
 
     def _init_std(self) -> None:
-        """
-        Auxiliray function to select std function
-        """
-        if self.mean_type in ("affine_invariant", "affine_invariant_gevd"):
-            # the GEVD backend computes the same affine-invariant mean
-            self.std_fun = (
-                affine_invariant_std_scalar
-                if self.use_autograd
-                else AffineInvariantStdScalar.apply
-            )
-        elif self.mean_type == "log_euclidean":
-            self.std_fun = (
-                log_euclidean_std_scalar
-                if self.use_autograd
-                else LogEuclideanStdScalar.apply
-            )
-        elif self.mean_type == "arithmetic":
-            self.std_fun = (
-                left_kullback_leibler_std_scalar
-                if self.use_autograd
-                else LeftKullbackLeiblerStdScalar.apply
-            )
-        elif self.mean_type == "harmonic":
-            self.std_fun = (
-                right_kullback_leibler_std_scalar
-                if self.use_autograd
-                else RightKullbackLeiblerStdScalar.apply
-            )
-        elif self.mean_type in (
-            "geometric_arithmetic_harmonic",
-            "adaptive_geometric_arithmetic_harmonic",
-        ):
-            # same dispersion as the (fixed t = 1/2) GAH mean: the symmetrized
-            # Kullback-Leibler divergence
-            self.std_fun = (
-                symmetrized_kullback_leibler_std_scalar
-                if self.use_autograd
-                else SymmetrizedKullbackLeiblerStdScalar.apply
-            )
-        elif self.mean_type == "bures_wasserstein":
-            self.std_fun = (
-                bures_wasserstein_std_scalar
-                if self.use_autograd
-                else BuresWassersteinStdScalar.apply
-            )
+        """Select the scalar standard deviation of the geometry."""
+        self.std_fun = self.geometry.std.select(self.use_autograd)
 
     def _init_norm_strategy_std(self) -> None:
-        """
-        Auxiliary function to select norm strategy
-        """
+        """Auxiliary function to select norm strategy."""
         if self.norm_strategy == "classical":
             self.get_norm_std = lambda std: std
         elif self.norm_strategy == "minibatch":
@@ -1417,9 +1126,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             )
 
     def _handle_minibatch_std(self, std_scalar_batch: torch.Tensor) -> torch.Tensor:
-        """
-        Auxiliary function to handle var used for normalization with minibatch strategy
-        """
+        """Auxiliary function to handle var used for normalization with minibatch strategy."""
         std_scalar = self.adaptive_std_fun(
             self.std_regularizer, std_scalar_batch, self.get_minibatch_momentum()
         )
@@ -1433,7 +1140,25 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         std_scalar_batch: torch.Tensor,
         momentum: float,
     ) -> torch.Tensor:
-        """ """
+        r"""
+        Combine two scalar standard deviations (running update of the variance).
+
+        Parameters
+        ----------
+        running_std_scalar : torch.Tensor of shape ()
+            Current (running or regularized) scalar standard deviation
+
+        std_scalar_batch : torch.Tensor of shape ()
+            Scalar standard deviation of the batch
+
+        momentum : float
+            Weight of the batch
+
+        Returns
+        -------
+        std_scalar : torch.Tensor of shape ()
+            :math:`\sqrt{(1 - m)\,\sigma_r^2 + m\,\sigma_b^2}`
+        """
         std_scalar = torch.sqrt(
             (1 - momentum) * running_std_scalar**2 + momentum * std_scalar_batch**2
         )
@@ -1443,7 +1168,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         self, data: torch.Tensor
     ) -> tuple[tuple[torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]:
         """
-        Get parameters used to normalize data
+        Get parameters used to normalize data.
 
         Parameters
         ----------
@@ -1468,7 +1193,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         self, parameters_batch: tuple[torch.Tensor, torch.Tensor]
     ) -> None:
         """
-        Update running parameters
+        Update running parameters.
 
         Parameters
         ----------
@@ -1484,7 +1209,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
 
     def _get_running_parameters(self) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Get running parameters for normalization in inference
+        Get running parameters for normalization in inference.
 
         Returns
         -------
@@ -1497,9 +1222,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         self, _optimizer: torch.optim.Optimizer, *_args, **_kwargs
     ) -> None:
         """
-        Hook that runs after optimizer.step() to handle dynamic parametrization
-        reference point (no-op for GBWBN, which has no Covbias).
-        See torch.optim.Optimizer.register_step_post_hook method for more details
+        Update the dynamic parametrization after ``optimizer.step()``.
+
+        No-op for GBWBN, which has no Covbias. See
+        ``torch.optim.Optimizer.register_step_post_hook`` for the signature.
 
         Parameters
         ----------
@@ -1521,8 +1247,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         error_msgs,
     ) -> None:
         """
-        Drop the unused Covbias entries that GBWBN layers saved before Covbias
-        was removed from that mode, so that older checkpoints still load.
+        Drop the stale Covbias entries of GBWBN checkpoints.
+
+        GBWBN layers saved an unused Covbias before it was removed from that mode: drop
+        it so that older checkpoints still load.
         """
         if self.mean_type == "bures_wasserstein":
             stale = prefix + "parametrizations.Covbias."
@@ -1542,7 +1270,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         self, data: torch.Tensor, parameters: tuple[torch.Tensor, torch.Tensor]
     ) -> torch.Tensor:
         """
-        Apply normalization and add bias
+        Apply normalization and add bias.
 
         Parameters
         ----------
@@ -1566,8 +1294,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
-        Normalize a batch of SPD matrices (GBWBN pipeline for
-        ``mean_type="bures_wasserstein"``, otherwise the generic one)
+        Normalize a batch of SPD matrices.
+
+        GBWBN pipeline for ``mean_type="bures_wasserstein"``, otherwise the generic one.
 
         Parameters
         ----------
@@ -1600,9 +1329,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         # autograd through torch.linalg.eigh is undefined for repeated
         # eigenvalues
         if self.use_autograd:
-            inv_sqrtm = lambda x: inv_sqrtm_SPD(x)[0]  # noqa: E731
-            sqrtm = lambda x: sqrtm_SPD(x)[0]  # noqa: E731
-            powm = lambda x, p: powm_SPD(x, p)[0]  # noqa: E731
+            inv_sqrtm = lambda x: inv_sqrtm_SPD(x)[0]
+            sqrtm = lambda x: sqrtm_SPD(x)[0]
+            powm = lambda x, p: powm_SPD(x, p)[0]
         else:
             inv_sqrtm, sqrtm = InvSqrtmSPD.apply, SqrtmSPD.apply
 
@@ -1650,7 +1379,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
 
     def __repr__(self) -> str:
         """
-        Representation of the layer
+        Representation of the layer.
 
         Returns
         -------

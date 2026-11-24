@@ -5,26 +5,9 @@ from torch.testing import assert_close
 import yetanotherspdnet.functions.spd_geometries.log_euclidean as log_euclidean
 import yetanotherspdnet.functions.spd_linalg as spd_linalg
 from utils import is_spd, is_symmetric
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler import arithmetic_mean
+from yetanotherspdnet.functions.spd_geometries.euclidean import arithmetic_mean
 from yetanotherspdnet.random.spd import random_DPD, random_SPD
 from yetanotherspdnet.random.stiefel import random_stiefel
-
-
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="function")
-def generator(device):
-    generator = torch.Generator(device=device)
-    generator.manual_seed(777)
-    return generator
 
 
 class TestLogEuclideanGeodesic:

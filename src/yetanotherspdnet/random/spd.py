@@ -14,7 +14,7 @@ def random_DPD(
     generator: torch.Generator | None = None,
 ) -> torch.Tensor:
     """
-    Generate a batch of random diagonal positive definite matrices
+    Generate a batch of random diagonal positive definite matrices.
 
     Parameters
     ----------
@@ -42,7 +42,8 @@ def random_DPD(
     torch.Tensor of shape (n_matrices, n_features, n_features)
         Batch of DPD matrices
     """
-    assert n_features >= 2, "Expected n_features>=2 to form matrices"
+    if n_features < 2:
+        raise ValueError("Expected n_features>=2 to form matrices")
 
     diagvals = torch.zeros(n_matrices, n_features, device=device, dtype=dtype)
     sqrt_cond = torch.sqrt(torch.tensor(cond, device=device, dtype=dtype))
@@ -72,7 +73,7 @@ def random_SPD(
     generator: torch.Generator | None = None,
 ) -> torch.Tensor:
     """
-    Generate a batch of random SPD matrices
+    Generate a batch of random SPD matrices.
 
     Parameters
     ----------
@@ -100,7 +101,8 @@ def random_SPD(
     torch.Tensor of shape (n_matrices, n_features, n_features)
         Batch of SPD matrices
     """
-    assert n_features >= 2, "Expected n_features>=2 to form matrices"
+    if n_features < 2:
+        raise ValueError("Expected n_features>=2 to form matrices")
 
     eigvecs = random_stiefel(
         n_features,

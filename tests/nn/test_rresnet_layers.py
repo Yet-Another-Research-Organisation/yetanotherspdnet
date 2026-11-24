@@ -9,23 +9,6 @@ from yetanotherspdnet.nn.rresnet_layers import ResidualBlock, SpectralVectorFiel
 from yetanotherspdnet.random.spd import random_SPD
 
 
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="function")
-def generator(device):
-    gen = torch.Generator(device=device) if device.type == "cuda" else torch.Generator()
-    gen.manual_seed(777)
-    return gen
-
-
 # ========================================================================
 # SpectralVectorField tests
 # ========================================================================
@@ -122,8 +105,8 @@ class TestSpectralVectorField:
         assert_close(Q.T @ Q, eye, atol=1e-6, rtol=1e-6)
 
     def test_invalid_spectrum_type(self, device, dtype, generator):
-        """Invalid spectrum_type raises AssertionError."""
-        with pytest.raises(AssertionError, match="spectrum_type"):
+        """Invalid spectrum_type raises ValueError."""
+        with pytest.raises(ValueError, match="spectrum_type"):
             SpectralVectorField(
                 n_features=5,
                 spectrum_type="invalid",
@@ -377,8 +360,8 @@ class TestResidualBlockIllConditioned:
     def test_affine_invariant_step_has_unit_length(self, device, dtype, generator):
         from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
             affine_invariant_log,
+            affine_invariant_norm,
         )
-        from yetanotherspdnet.nn.rresnet_layers import affine_invariant_norm
 
         X = _ill_conditioned_spd(10, 6, device, dtype, generator)
         block = ResidualBlock(10, device=device, dtype=dtype, generator=generator)
@@ -387,8 +370,10 @@ class TestResidualBlockIllConditioned:
         assert_close(step, torch.ones_like(step), atol=1e-6, rtol=0)
 
     def test_affine_invariant_norm(self, device, dtype, generator):
+        from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
+            affine_invariant_norm,
+        )
         from yetanotherspdnet.functions.spd_linalg import inv_sqrtm_SPD
-        from yetanotherspdnet.nn.rresnet_layers import affine_invariant_norm
 
         X = random_SPD(6, 4, cond=100, device=device, dtype=dtype, generator=generator)
         V = torch.randn(4, 6, 6, device=device, dtype=dtype, generator=generator)
@@ -431,7 +416,7 @@ class TestResidualBlockIllConditioned:
         assert_close(grads[0], grads[1])
 
     def test_invalid_metric(self, device, dtype):
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError):
             ResidualBlock(4, metric="bures_wasserstein", device=device, dtype=dtype)
 
 

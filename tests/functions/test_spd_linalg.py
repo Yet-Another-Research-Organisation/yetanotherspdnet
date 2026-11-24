@@ -9,23 +9,6 @@ from yetanotherspdnet.random.spd import random_DPD, random_SPD
 from yetanotherspdnet.random.stiefel import _init_weights_stiefel, random_stiefel
 
 
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="function")
-def generator(device):
-    generator = torch.Generator(device=device)
-    generator.manual_seed(777)
-    return generator
-
-
 # ----------
 # Symmetrize
 # ----------
@@ -694,7 +677,7 @@ class TestGEVD:
 # ---------
 # Invm SPD
 # ---------
-class TestInvmSPD:
+class TestInvSPD:
     """
     Test suite for matrix inverse in SPD case
     """
@@ -703,7 +686,7 @@ class TestInvmSPD:
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_forward(self, n_matrices, n_features, cond, device, dtype, generator):
         """
-        Test of invm_SPD function and forward of InvmSPD Function class
+        Test of inv_SPD (and of the eigendecomposition-based inverse)
         """
         X = random_SPD(
             n_features,
@@ -718,8 +701,8 @@ class TestInvmSPD:
                 torch.ones((n_matrices, n_features), device=device, dtype=dtype)
             )
         )
-        X_invm, _, _ = spd_linalg.invm_SPD(X)
-        X_Invm = spd_linalg.InvmSPD.apply(X)
+        X_invm = spd_linalg.inv_SPD(X)
+        X_Invm = spd_linalg._InvmSPD.apply(X)
         assert X_invm.shape == X.shape
         assert X_invm.device == X.device
         assert X_invm.dtype == X.dtype
@@ -735,12 +718,12 @@ class TestInvmSPD:
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_torch_comparison(self, n_features, cond, device, dtype, generator):
         """
-        Comparison of InvmSPD and torch.linalg.inv
+        Comparison of inv_SPD and torch.linalg.inv
         """
         X = random_SPD(
             n_features, cond=cond, device=device, dtype=dtype, generator=generator
         )
-        X_Invm = spd_linalg.InvmSPD.apply(X)
+        X_Invm = spd_linalg.inv_SPD(X)
         X_invm_torch = torch.linalg.inv(X)
         assert_close(X_Invm, X_invm_torch)
 
@@ -750,7 +733,7 @@ class TestInvmSPD:
         Test that the matrix inverse of the identity is the identity
         """
         identity_matrix = torch.eye(n_features, device=device, dtype=dtype)
-        I_Invm = spd_linalg.InvmSPD.apply(identity_matrix)
+        I_Invm = spd_linalg.inv_SPD(identity_matrix)
         assert_close(I_Invm, identity_matrix)
 
     @pytest.mark.parametrize("n_features", [100])
@@ -763,7 +746,7 @@ class TestInvmSPD:
             ** 2
         )
         D = torch.diag(diag_vals)
-        D_Invm = spd_linalg.InvmSPD.apply(D)
+        D_Invm = spd_linalg.inv_SPD(D)
         expected = torch.diag(1 / diag_vals)
         assert_close(D_Invm, expected)
 
@@ -776,7 +759,7 @@ class TestInvmSPD:
             n_features, cond=cond, device=device, dtype=dtype, generator=generator
         )
         eigvals_X = torch.linalg.eigvalsh(X)
-        X_Invm = spd_linalg.InvmSPD.apply(X)
+        X_Invm = spd_linalg.inv_SPD(X)
         eigvals_X_Invm = torch.linalg.eigvalsh(X_Invm)
         # Sort for comparison (probably not needed)
         expected = (1 / eigvals_X).sort()[0]
@@ -787,7 +770,7 @@ class TestInvmSPD:
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
     def test_backward(self, n_matrices, n_features, cond, device, dtype, generator):
         """
-        Test of backward of InvmSPD Function class
+        Test of the gradient of inv_SPD
         """
         X = random_SPD(
             n_features,
@@ -802,8 +785,9 @@ class TestInvmSPD:
         X_auto = X.clone().detach()
         X_auto.requires_grad = True
 
-        X_manual_invm = spd_linalg.InvmSPD.apply(X_manual)
-        X_auto_invm, _, _ = spd_linalg.invm_SPD(X_auto)
+        # eigendecomposition-based manual backward vs autograd through Cholesky
+        X_manual_invm = spd_linalg._InvmSPD.apply(X_manual)
+        X_auto_invm = spd_linalg.inv_SPD(X_auto)
 
         loss_manual = torch.norm(X_manual_invm)
         loss_manual.backward()
@@ -2440,12 +2424,12 @@ class TestEighReLuBias:
             n_features, device=device, dtype=dtype, generator=generator
         )
         eps = 0.05
-        manual = lambda x, b: spd_linalg.EighReLuBias.apply(  # noqa: E731
+        manual = lambda x, b: spd_linalg.EighReLuBias.apply(
             spd_linalg.symmetrize(x), b, eps
         )
-        auto = lambda x, b: spd_linalg.eigh_relu_bias(  # noqa: E731
-            spd_linalg.symmetrize(x), b, eps
-        )[0]
+        auto = lambda x, b: spd_linalg.eigh_relu_bias(spd_linalg.symmetrize(x), b, eps)[
+            0
+        ]
         inputs = (data.clone().requires_grad_(), bias.clone().requires_grad_())
         assert torch.autograd.gradcheck(manual, inputs)
         assert torch.autograd.gradcheck(auto, inputs)

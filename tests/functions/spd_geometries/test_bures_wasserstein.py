@@ -9,23 +9,6 @@ from utils import is_spd, is_symmetric
 from yetanotherspdnet.random.spd import random_SPD
 
 
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="function")
-def generator(device):
-    gen = torch.Generator(device=device)
-    gen.manual_seed(777)
-    return gen
-
-
 class TestBuresWassersteinDistance:
     """Tests for BW distance."""
 
@@ -455,7 +438,7 @@ class TestDegenerateSafeGradients:
         rhs = _symmetrize(
             torch.randn(3, n, n, device=device, dtype=dtype, generator=generator)
         )
-        fun = lambda b, v: bw.LyapunovSolveSPD.apply(_symmetrize(b), _symmetrize(v))  # noqa: E731
+        fun = lambda b, v: bw.LyapunovSolveSPD.apply(_symmetrize(b), _symmetrize(v))
         inputs = (base.clone().requires_grad_(), rhs.clone().requires_grad_())
         assert torch.autograd.gradcheck(fun, inputs)
 
@@ -472,7 +455,7 @@ class TestDegenerateSafeGradients:
         tangent = _symmetrize(
             torch.randn(3, n, n, device=device, dtype=dtype, generator=generator)
         )
-        fun = lambda s, g: bw.ParallelTransportFromIdentityBW.apply(  # noqa: E731
+        fun = lambda s, g: bw.ParallelTransportFromIdentityBW.apply(
             _symmetrize(s), _symmetrize(g)
         )
         inputs = (tangent.clone().requires_grad_(), target.clone().requires_grad_())

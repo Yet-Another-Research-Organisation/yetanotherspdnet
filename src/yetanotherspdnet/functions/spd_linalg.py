@@ -1,10 +1,12 @@
-"""Core SPD matrix linear algebra: eigendecomposition, matrix functions, congruence, and vectorization."""
+"""Core SPD linear algebra: matrix functions, congruences and vectorization."""
 
 from collections.abc import Callable
 
 import torch
 from torch.autograd import Function
 
+from yetanotherspdnet._deprecation import _deprecated
+from yetanotherspdnet.functions._constants import EIGVAL_TIE_THRESHOLD
 from yetanotherspdnet.functions.scalar_functions import (
     inv,
     inv_derivative,
@@ -12,6 +14,7 @@ from yetanotherspdnet.functions.scalar_functions import (
     inv_scaled_softplus_derivative,
     inv_sqrt,
     inv_sqrt_derivative,
+    pow_exponent_derivative,
     scaled_softplus,
     scaled_softplus_derivative,
     sqrt_derivative,
@@ -34,7 +37,7 @@ def symmetrize(data: torch.Tensor) -> torch.Tensor:
     sym_data : torch.Tensor of shape (..., n_features, n_features)
         Batch of symmetrized matrices
     """
-    return torch.real(0.5 * (data + data.transpose(-1, -2)))
+    return 0.5 * (data + data.transpose(-1, -2))
 
 
 def skew_symmetrize(data: torch.Tensor) -> torch.Tensor:
@@ -51,7 +54,7 @@ def skew_symmetrize(data: torch.Tensor) -> torch.Tensor:
     skew_data : torch.Tensor of shape (..., n_features, n_features)
         Batch of skew-symmetrized matrices
     """
-    return torch.real(0.5 * (data - data.transpose(-1, -2)))
+    return 0.5 * (data - data.transpose(-1, -2))
 
 
 # -----------------------
@@ -59,7 +62,7 @@ def skew_symmetrize(data: torch.Tensor) -> torch.Tensor:
 # -----------------------
 def vec_batch(data: torch.Tensor) -> torch.Tensor:
     """
-    Vectorize a batch of tensors along last two dimensions
+    Vectorize a batch of tensors along last two dimensions.
 
     Parameters
     ----------
@@ -76,7 +79,7 @@ def vec_batch(data: torch.Tensor) -> torch.Tensor:
 
 def unvec_batch(data_vec: torch.Tensor, n_rows: int) -> torch.Tensor:
     """
-    Unvectorize a batch of tensors along last dimension
+    Unvectorize a batch of tensors along last dimension.
 
     Parameters
     ----------
@@ -96,14 +99,15 @@ def unvec_batch(data_vec: torch.Tensor, n_rows: int) -> torch.Tensor:
 
 class VecBatch(Function):
     """
-    Vectorize a batch of matrices along last two dimensions.
-    Matrices are assumed to be symmetric (for backward)
+    Vectorize a batch of matrices along their last two dimensions.
+
+    Matrices are assumed to be symmetric (for the backward).
     """
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the vectorization of a batch of matrices
+        Forward pass of the vectorization of a batch of matrices.
 
         Parameters
         ----------
@@ -123,7 +127,7 @@ class VecBatch(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the vectorization of a batch of symmetric matrices
+        Backward pass of the vectorization of a batch of symmetric matrices.
 
         Parameters
         ----------
@@ -143,7 +147,7 @@ class VecBatch(Function):
 
 def vech_batch(data: torch.Tensor) -> torch.Tensor:
     """
-    Vectorize the lower triangular part of a batch of square matrices
+    Vectorize the lower triangular part of a batch of square matrices.
 
     Parameters
     ----------
@@ -161,8 +165,9 @@ def vech_batch(data: torch.Tensor) -> torch.Tensor:
 
 def unvech_batch(data_vech: torch.Tensor, n_features: int) -> torch.Tensor:
     """
-    Unvectorize a batch of tensors along last dimension,
-    assuming that matrices are symmetric
+    Unvectorize a batch of tensors along their last dimension.
+
+    Matrices are assumed to be symmetric.
 
     Parameters
     ----------
@@ -197,14 +202,12 @@ def unvech_batch(data_vech: torch.Tensor, n_features: int) -> torch.Tensor:
 
 
 class VechBatch(Function):
-    """
-    Half vectorize a batch of symmetric matrices along last two dimensions
-    """
+    """Half vectorize a batch of symmetric matrices along last two dimensions."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the half vectorization of a batch of matrices
+        Forward pass of the half vectorization of a batch of matrices.
 
         Parameters
         ----------
@@ -224,7 +227,7 @@ class VechBatch(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the vectorization of a batch of matrices
+        Backward pass of the vectorization of a batch of matrices.
 
         Parameters
         ----------
@@ -249,7 +252,7 @@ def eigh_operation(
     eigvals: torch.Tensor, eigvecs: torch.Tensor, operation: Callable
 ) -> torch.Tensor:
     r"""
-    Applies a function on the eigenvalues of a batch of symmetric matrices.
+    Apply a function on the eigenvalues of a batch of symmetric matrices.
 
     .. math::
 
@@ -277,10 +280,6 @@ def eigh_operation(
     result : torch.Tensor of shape (..., n_features, n_features)
         Resulting symmetric matrices with operation applied to eigenvalues
     """
-    eigvals, eigvecs = (
-        torch.real(eigvals),
-        torch.real(eigvecs),
-    )  # to correct eventual numerical errors...
     _eigvals = operation(eigvals)
     result = (eigvecs * _eigvals.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)
     return result
@@ -292,8 +291,10 @@ def _aux_eigh_operation_grad(
     operation_deriv: Callable,
 ) -> torch.Tensor:
     """
-    Constructs matrix to be multiplied (Hadamard product) with transformed output gradient
-    to get the input gradient for a function applied on the eigenvalues of a symmetric matrix
+    Build the Daleckii-Krein matrix of a function applied on eigenvalues.
+
+    It is multiplied (Hadamard product) with the transformed output gradient to get the
+    input gradient of a function applied on the eigenvalues of a symmetric matrix.
 
     Parameters
     ----------
@@ -317,9 +318,8 @@ def _aux_eigh_operation_grad(
     denominator = eigvals.unsqueeze(-1) - eigvals.unsqueeze(-2)
     numerator = eigvals_transformed.unsqueeze(-1) - eigvals_transformed.unsqueeze(-2)
 
-    null_denominator = (
-        torch.abs(denominator) < 1e-6
-    )  # arbitrary value, probably to be changed to be proper... Ammar ?
+    # (near-)repeated eigenvalues: use the derivative instead of the quotient
+    null_denominator = torch.abs(denominator) < EIGVAL_TIE_THRESHOLD
 
     numerator = torch.where(null_denominator, eigvals_deriv.unsqueeze(-1), numerator)
     denominator = torch.where(null_denominator, torch.ones_like(numerator), denominator)
@@ -335,8 +335,9 @@ def eigh_operation_grad(
     operation_deriv: Callable,
 ) -> torch.Tensor:
     """
-    Computes the backpropagation of the gradient for a function applied on
-    the eigenvalues of a batch of symmetric matrices
+    Backpropagate through a function applied on the eigenvalues.
+
+    Gradient of a function applied on the eigenvalues of a batch of symmetric matrices.
 
     Parameters
     ----------
@@ -374,8 +375,9 @@ def solve_sylvester_SPD(
     eigvals: torch.Tensor, eigvecs: torch.Tensor, mat: torch.Tensor
 ) -> torch.Tensor:
     r"""
-    Solve Sylvester equations in the context of SPD matrices relying on
-    eigenvalue decomposition.
+    Solve Sylvester equations AX + XA = mat for SPD matrices A.
+
+    Relies on the eigendecomposition of A.
 
     Given :math:`A = V \operatorname{diag}(\lambda) V^\top` (via
     ``eigvals``, ``eigvecs``), solves :math:`AX + XA = \text{mat}` for
@@ -402,11 +404,6 @@ def solve_sylvester_SPD(
     result : torch.Tensor of shape (..., n_features, n_features)
         Symmetric matrices solutions to Sylvester equations
     """
-    # should those corrections be here though ?
-    eigvals, eigvecs = (
-        torch.real(eigvals),
-        torch.real(eigvecs),
-    )  # to correct eventual numerical errors...
     K = 1 / (eigvals.unsqueeze(-1) + eigvals.unsqueeze(-2))
     middle_term = K * (eigvecs.transpose(-1, -2) @ mat @ eigvecs)
     return eigvecs @ middle_term @ eigvecs.transpose(-1, -2)
@@ -418,8 +415,10 @@ def solve_sylvester_SPD(
 def gevd(
     point1: torch.Tensor, point2: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Computes the generalized eigenvalue decomposition of an SPD matrix point1 and a symmetric matrix point2
+    r"""
+    Compute the generalized eigendecomposition of (point1, point2).
+
+    point1 is an SPD matrix and point2 a symmetric matrix.
 
     We have :math: `point1 = general_eigvecs^\top general_eigvecs, point2 = general_eigvecs^\top general_eigvals general_eigvecs`.
 
@@ -451,9 +450,11 @@ def gevd(
 def gevd_operation(
     general_eigvals: torch.Tensor, general_eigvecs: torch.Tensor, operation: Callable
 ) -> torch.Tensor:
-    """
-    Applies a function on the generalized eigenvalues of the generalized eigenvalue decomposition
-    of a symmetric matrix point2 and a SPD matrix point1.
+    r"""
+    Apply a function on generalized eigenvalues.
+
+    Generalized eigenvalue decomposition of a symmetric matrix point2 and an SPD matrix
+    point1.
 
     We have :math: `point1 = general_eigvecs^\top general_eigvecs, point2 = general_eigvecs^\top general_eigvals general_eigvecs`.
 
@@ -475,10 +476,6 @@ def gevd_operation(
     result : torch.Tensor of shape (..., n_features, n_features)
         Batch of resulting symmetric matrices with operation applied to generalized eigenvalues
     """
-    general_eigvals, general_eigvecs = (
-        torch.real(general_eigvals),
-        torch.real(general_eigvecs),
-    )  # to correct eventual numerical errors...
     _Lambda = operation(general_eigvals)
     result = (
         general_eigvecs.transpose(-1, -2) * _Lambda.unsqueeze(-2)
@@ -494,10 +491,11 @@ def gevd_operation_grad(
     operation: Callable,
     operation_derivative: Callable,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Computes the backpropagation of the gradient for a function applied on the
-    generalized eigenvalues of the generalized eigenvalue decomposition of a
-    symmetric matrix point2 and a SPD matrix point1.
+    r"""
+    Backpropagate through a function applied on generalized eigenvalues.
+
+    Generalized eigenvalue decomposition of a symmetric matrix point2 and an SPD matrix
+    point1.
 
     We have :math: `point1 = general_eigvecs^\top general_eigvecs, point2 = general_eigvecs^\top general_eigvals general_eigvecs`.
 
@@ -553,9 +551,26 @@ def gevd_operation_grad(
 # ------------------
 # SPD matrix inverse
 # ------------------
-def invm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def inv_SPD(data: torch.Tensor) -> torch.Tensor:
     """
-    Matrix inverse of a batch of SPD matrices
+    Inverse of a batch of SPD matrices, from their Cholesky factors.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    Returns
+    -------
+    inv_data : torch.Tensor of shape (..., n_features, n_features)
+        Matrix inverses of the input batch of SPD matrices
+    """
+    return torch.cholesky_inverse(torch.linalg.cholesky(data))
+
+
+def _invm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Matrix inverse of a batch of SPD matrices, from their eigendecomposition.
 
     Parameters
     ----------
@@ -565,7 +580,7 @@ def invm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tens
     Returns
     -------
     invm_data : torch.Tensor of shape (..., n_features, n_features)
-        Matrix logarithms of the input batch of SPD matrices
+        Matrix inverses of the input batch of SPD matrices
 
     eigvals : torch.Tensor of shape (..., n_features)
         Eigenvalues of matrices in data
@@ -577,15 +592,13 @@ def invm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tens
     return eigh_operation(eigvals, eigvecs, inv), eigvals, eigvecs
 
 
-class InvmSPD(Function):
-    """
-    Matrix inverse of a batch of SPD matrices
-    """
+class _InvmSPD(Function):
+    """Matrix inverse of a batch of SPD matrices (eigendecomposition)."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the matrix inverse of a batch of SPD matrices
+        Forward pass of the matrix inverse of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -598,16 +611,16 @@ class InvmSPD(Function):
         Returns
         -------
         invm_data : torch.Tensor of shape (..., n_features, n_features)
-            Matrix logarithms of the input batch of SPD matrices
+            Matrix inverses of the input batch of SPD matrices
         """
-        invm_data, eigvals, eigvecs = invm_SPD(data)
+        invm_data, eigvals, eigvecs = _invm_SPD(data)
         ctx.save_for_backward(eigvals, eigvecs)
         return invm_data
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the matrix inverse of a batch of SPD matrices
+        Backward pass of the matrix inverse of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -615,7 +628,7 @@ class InvmSPD(Function):
             Context object to retrieve tensors saved during the forward pass
 
         grad_output : torch.Tensor of shape (..., n_features, n_features)
-            Gradient of the loss with respect to matrix inverse of the input batch of SPD matrices
+            Gradient of the loss with respect to the matrix inverses
 
         Returns
         -------
@@ -624,6 +637,22 @@ class InvmSPD(Function):
         """
         eigvals, eigvecs = ctx.saved_tensors
         return eigh_operation_grad(grad_output, eigvals, eigvecs, inv, inv_derivative)
+
+
+# eigendecomposition-based inverse, unused by the library: kept with its
+# (inverse, eigvals, eigvecs) outputs for backward compatibility
+invm_SPD = _deprecated(
+    "invm_SPD",
+    _invm_SPD,
+    note="inv_SPD returns the inverse only (Cholesky-based).",
+    replacement="yetanotherspdnet.functions.spd_linalg.inv_SPD",
+)
+InvmSPD = _deprecated(
+    "InvmSPD",
+    _InvmSPD,
+    note="inv_SPD is differentiated by autograd through the Cholesky factor.",
+    replacement="yetanotherspdnet.functions.spd_linalg.inv_SPD",
+)
 
 
 # ----------------------
@@ -658,15 +687,12 @@ def sqrtm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Ten
 
 
 class SqrtmSPD(Function):
-    """
-    Matrix square root of a batch of SPD matrices
-    (relies on eigenvalue decomposition)
-    """
+    """Matrix square root of a batch of SPD matrices (relies on eigenvalue decomposition)."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the matrix square root of a batch of SPD matrices
+        Forward pass of the matrix square root of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -688,7 +714,7 @@ class SqrtmSPD(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the matrix square root of a batch of SPD matrices
+        Backward pass of the matrix square root of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -744,14 +770,15 @@ def inv_sqrtm_SPD(
 
 class InvSqrtmSPD(Function):
     """
-    Matrix inverse square root of a batch of SPD matrices
-    (relies on eigenvalue decomposition)
+    Matrix inverse square root of a batch of SPD matrices.
+
+    Relies on the eigenvalue decomposition.
     """
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the matrix inverse square root of a batch of SPD matrices
+        Forward pass of the matrix inverse square root of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -773,7 +800,7 @@ class InvSqrtmSPD(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the matrix inverse square root of a batch of SPD matrices
+        Backward pass of the matrix inverse square root of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -798,8 +825,9 @@ def sqrtm_and_inv_sqrtm_SPD(
     data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Matrix square root and inverse square root of a batch of SPD matrices
-    (relies on eigenvalue decomposition)
+    Matrix square root and inverse square root of a batch of SPD matrices.
+
+    Relies on the eigenvalue decomposition (one for both).
 
     Parameters
     ----------
@@ -831,14 +859,15 @@ def sqrtm_and_inv_sqrtm_SPD(
 
 class SqrtmAndInvSqrtmSPD(Function):
     """
-    Matrix square roots and inverse square roots of a batch of SPD matrices
-    (relies on eigenvalue decomposition)
+    Matrix square roots and inverse square roots of a batch of SPD matrices.
+
+    Relies on the eigenvalue decomposition (one for both).
     """
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Forward pass of the matrix square roots and inverse square roots of a batch of SPD matrices
+        Forward pass of the matrix square roots and inverse square roots.
 
         Parameters
         ----------
@@ -865,7 +894,7 @@ class SqrtmAndInvSqrtmSPD(Function):
         ctx, grad_output_sqrtm: torch.Tensor, grad_output_inv_sqrtm: torch.Tensor
     ) -> torch.Tensor:
         """
-        Backward pass of the matrix square roots and inverse square roots of a batch of SPD matrices
+        Backward pass of the matrix square roots and inverse square roots.
 
         Parameters
         ----------
@@ -929,17 +958,14 @@ def powm_SPD(
 
 
 class PowmSPD(Function):
-    """
-    Matrix power of a batch of SPD matrices
-    (relies on eigenvalue decomposition)
-    """
+    """Matrix power of a batch of SPD matrices (relies on eigenvalue decomposition)."""
 
     @staticmethod
     def forward(
         ctx, data: torch.Tensor, exponent: float | torch.Tensor
     ) -> torch.Tensor:
         """
-        Forward pass of the matrix power of a batch of SPD matrices
+        Forward pass of the matrix power of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -973,7 +999,7 @@ class PowmSPD(Function):
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """
-        Backward pass of the matrix power of a batch of SPD matrices
+        Backward pass of the matrix power of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -1007,7 +1033,7 @@ class PowmSPD(Function):
             # the exponent is a scalar shared by the whole batch:
             # d/dp tr(G^T P^p) = tr(G^T U diag(lambda^p log lambda) U^T),
             # summed over the batch
-            exponent_deriv_fun = lambda x: torch.pow(x, exponent) * torch.log(x)
+            exponent_deriv_fun = lambda x: pow_exponent_derivative(x, exponent)
             grad_input_exponent = (
                 (grad_output @ eigh_operation(eigvals, eigvecs, exponent_deriv_fun))
                 .diagonal(offset=0, dim1=-1, dim2=-2)
@@ -1052,15 +1078,12 @@ def logm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tens
 
 
 class LogmSPD(Function):
-    """
-    Matrix logarithm of a batch of SPD matrices
-    (relies on eigenvalue decomposition)
-    """
+    """Matrix logarithm of a batch of SPD matrices (relies on eigenvalue decomposition)."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the matrix logarithm of a batch of SPD matrices
+        Forward pass of the matrix logarithm of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -1082,7 +1105,7 @@ class LogmSPD(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the matrix logarithm of a batch of SPD matrices
+        Backward pass of the matrix logarithm of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -1138,14 +1161,15 @@ def expm_symmetric(
 
 class ExpmSymmetric(Function):
     """
-    Matrix exponential of a batch of symmetric matrices
-    (relies on eigenvalue decomposition)
+    Matrix exponential of a batch of symmetric matrices.
+
+    Relies on the eigenvalue decomposition.
     """
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the matrix exponential of a batch of symmetric matrices
+        Forward pass of the matrix exponential of a batch of symmetric matrices.
 
         Parameters
         ----------
@@ -1167,7 +1191,7 @@ class ExpmSymmetric(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the matrix exponential of a batch of symmetric matrices
+        Backward pass of the matrix exponential of a batch of symmetric matrices.
 
         Parameters
         ----------
@@ -1226,14 +1250,14 @@ def scaled_softplus_symmetric(
 class ScaledSoftPlusSymmetric(Function):
     """
     Scaled matrix SoftPlus of a batch of symmetric matrices.
-    It is scaled so that: f(0) = 1, f(x) -> 0 as x -> -inf and
-    f'(x) -> 1 as x -> +inf
+
+    It is scaled so that f(0) = 1, f(x) -> 0 as x -> -inf and f'(x) -> 1 as x -> +inf.
     """
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the scaled matrix SoftPlus of a batch of symmetric matrices
+        Forward pass of the scaled matrix SoftPlus of a batch of symmetric matrices.
 
         Parameters
         ----------
@@ -1255,7 +1279,7 @@ class ScaledSoftPlusSymmetric(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the scaled matrix SoftPlus of a batch of symmetric matrices
+        Backward pass of the scaled matrix SoftPlus of a batch of symmetric matrices.
 
         Parameters
         ----------
@@ -1297,7 +1321,7 @@ def inv_scaled_softplus_SPD(
     Returns
     -------
     inv_softplus_data : torch.Tensor of shape (..., n_features, n_features)
-        Matrix logarithms of the input batch of SPD matrices
+        Inverse scaled SoftPlus of the input batch of SPD matrices
 
     eigvals : torch.Tensor of shape (..., n_features)
         Eigenvalues of matrices in data
@@ -1310,14 +1334,12 @@ def inv_scaled_softplus_SPD(
 
 
 class InvScaledSoftPlusSPD(Function):
-    """
-    Matrix inverse scaled SoftPlus of a batch of SPD matrices
-    """
+    """Matrix inverse scaled SoftPlus of a batch of SPD matrices."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the matrix inverse scaled SoftPlus of a batch of SPD matrices
+        Forward pass of the matrix inverse scaled SoftPlus of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -1330,7 +1352,7 @@ class InvScaledSoftPlusSPD(Function):
         Returns
         -------
         inv_softplus_data : torch.Tensor of shape (..., n_features, n_features)
-            Matrix logarithms of the input batch of SPD matrices
+            Inverse scaled SoftPlus of the input batch of SPD matrices
         """
         inv_softplus_data, eigvals, eigvecs = inv_scaled_softplus_SPD(data)
         ctx.save_for_backward(eigvals, eigvecs)
@@ -1339,7 +1361,7 @@ class InvScaledSoftPlusSPD(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the matrix inverse scaled SoftPlus of a batch of SPD matrices
+        Backward pass of the matrix inverse scaled SoftPlus of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -1408,14 +1430,12 @@ def eigh_relu(
 
 
 class EighReLu(Function):
-    """
-    ReLu activation function on the eigenvalues of SPD matrices
-    """
+    """ReLu activation function on the eigenvalues of SPD matrices."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, eps: float) -> torch.Tensor:
         """
-        Forward pass of the ReLu activation function on the eigenvalues of SPD matrices
+        Forward pass of the ReLu activation function on the eigenvalues of SPD matrices.
 
         Parameters
         ----------
@@ -1441,7 +1461,7 @@ class EighReLu(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
         """
-        Backward pass of the ReLu activation function on the eigenvalues of SPD matrices
+        Backward pass of the ReLu activation on the eigenvalues.
 
         Parameters
         ----------
@@ -1474,7 +1494,7 @@ def _clamped_bias_operation(bias: torch.Tensor, eps: float) -> Callable:
 
 
 def _clamped_bias_operation_deriv(bias: torch.Tensor, eps: float) -> Callable:
-    """Derivative of :func:`_clamped_bias_operation` with respect to the eigenvalues."""
+    """Compute the derivative of :func:`_clamped_bias_operation` (eigenvalues)."""
     return lambda x: ((x + bias > eps) & (x + bias < 1 / eps)).type(x.dtype)
 
 
@@ -1528,16 +1548,14 @@ def eigh_relu_bias(
 
 
 class EighReLuBias(Function):
-    """
-    Eigenvalue rectification with a learnable shift, with a hand-written backward
-    """
+    """Eigenvalue rectification with a learnable shift, with a hand-written backward."""
 
     @staticmethod
     def forward(
         ctx, data: torch.Tensor, bias: torch.Tensor, eps: float
     ) -> torch.Tensor:
         """
-        Forward pass of :func:`eigh_relu_bias`
+        Forward pass of :func:`eigh_relu_bias`.
 
         Parameters
         ----------
@@ -1567,8 +1585,8 @@ class EighReLuBias(Function):
     def backward(
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, None]:
-        """
-        Backward pass of :func:`eigh_relu_bias`
+        r"""
+        Backward pass of :func:`eigh_relu_bias`.
 
         The gradient with respect to ``data`` is the Daleckii-Krein formula of
         :func:`eigh_operation_grad`. Only the eigenvalues depend on the bias, so
@@ -1636,14 +1654,12 @@ def congruence_SPD(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
 
 
 class CongruenceSPD(Function):
-    """
-    Congruence of a batch of SPD matrices with an SPD matrix
-    """
+    """Congruence of a batch of SPD matrices with an SPD matrix."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the congruence of a batch of SPD matrices with an SPD matrix
+        Forward pass of the congruence of a batch of SPD matrices with an SPD matrix.
 
         Parameters
         ----------
@@ -1667,7 +1683,7 @@ class CongruenceSPD(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the congruence of a batch of SPD matrices with an SPD matrix
+        Backward pass of the congruence of a batch of SPD matrices with an SPD matrix.
 
         Parameters
         ----------
@@ -1686,9 +1702,6 @@ class CongruenceSPD(Function):
             Gradient of the loss with respect to the SPD matrix used for congruence
         """
         data, matrix = ctx.saved_tensors
-        # return matrix @ grad_output @ matrix, torch.sum(
-        #    2 * symmetrize(grad_output @ matrix @ data), dim=tuple(range(data.ndim - 2))
-        # )
         return (
             matrix @ symmetrize(grad_output) @ matrix,
             2
@@ -1702,7 +1715,7 @@ class CongruenceSPD(Function):
 
 def congruence_SPD_sqrtm(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
     """
-    Congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
+    Congruence of a batch of SPD matrices with the matrix square root of an SPD matrix.
 
     Parameters
     ----------
@@ -1722,14 +1735,12 @@ def congruence_SPD_sqrtm(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tens
 
 
 class CongruenceSPDSqrtm(Function):
-    """
-    Congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
-    """
+    """Congruence of a batch of SPD matrices with the matrix square root of an SPD matrix."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
+        Forward pass of the congruence with the square root of an SPD matrix.
 
         Parameters
         ----------
@@ -1754,7 +1765,7 @@ class CongruenceSPDSqrtm(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the congruence of a batch of SPD matrices with the matrix square root of an SPD matrix
+        Backward pass of the congruence with the square root of an SPD matrix.
 
         Parameters
         ----------
@@ -1811,14 +1822,12 @@ def whitening(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
 
 
 class Whitening(Function):
-    """
-    Whitening of a batch of SPD matrices with an SPD matrix
-    """
+    """Whitening of a batch of SPD matrices with an SPD matrix."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the whitening of a batch of SPD matrices with an SPD matrix
+        Forward pass of the whitening of a batch of SPD matrices with an SPD matrix.
 
         Parameters
         ----------
@@ -1843,7 +1852,7 @@ class Whitening(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the whitening of a batch of SPD matrices with an SPD matrix
+        Backward pass of the whitening of a batch of SPD matrices with an SPD matrix.
 
         Parameters
         ----------
@@ -1863,10 +1872,6 @@ class Whitening(Function):
         """
         data, eigvals_matrix, eigvecs_matrix, inv_sqrtm_matrix = ctx.saved_tensors
         grad_input_data = inv_sqrtm_matrix @ symmetrize(grad_output) @ inv_sqrtm_matrix
-        # syl_right = -torch.sum(
-        #    2 * symmetrize(grad_input_data @ data @ inv_sqrtm_matrix),
-        #    dim=tuple(range(data.ndim - 2)),
-        # )
         syl_right = -2 * symmetrize(
             torch.einsum("...ik,...kl,lj->ij", grad_input_data, data, inv_sqrtm_matrix)
         )
@@ -1878,8 +1883,7 @@ class Whitening(Function):
 
 def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     r"""
-    Forward pass of the congruence of a batch of SPD matrices with a
-    (full-rank) rectangular matrix.
+    Forward pass of the congruence with a full-rank rectangular matrix.
 
     .. math:: P' = W^\top P\, W, \qquad W \in \mathbb{R}^{n_{in} \times n_{out}}
 
@@ -1902,21 +1906,20 @@ def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Te
     data_transformed : torch.Tensor of shape (..., n_out, n_out)
         Transformed batch of SPD matrices
     """
-    assert weight.shape[-2] >= weight.shape[-1], (
-        "weight must reduce the dimension of data, i.e., n_in >= n_out"
-    )
+    if weight.shape[-2] < weight.shape[-1]:
+        raise ValueError(
+            "weight must reduce the dimension of data, i.e., n_in >= n_out"
+        )
     return weight.transpose(-1, -2) @ data @ weight
 
 
 class CongruenceRectangular(Function):
-    """
-    Congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
-    """
+    """Congruence of a batch of SPD matrices with a (full-rank) rectangular matrix."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
+        Forward pass of the congruence with a full-rank rectangular matrix.
 
         Parameters
         ----------
@@ -1941,7 +1944,7 @@ class CongruenceRectangular(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the congruence of a batch of SPD matrices with a (full-rank) rectangular matrix
+        Backward pass of the congruence with a full-rank rectangular matrix.
 
         Parameters
         ----------
@@ -1961,13 +1964,5 @@ class CongruenceRectangular(Function):
         """
         data, weight = ctx.saved_tensors
         grad_input_data = weight @ grad_output @ weight.transpose(-1, -2)
-        # grad_input_W = 2 * torch.sum(
-        #    grad_output @ W @ data, dim=tuple(range(data.ndim - 2))
-        # )
         grad_input_W = 2 * torch.einsum("...ik,kl,...lj->ij", data, weight, grad_output)
         return grad_input_data, grad_input_W
-
-
-# --------------------------
-# Symmetric Kronecker stuffs
-# --------------------------
