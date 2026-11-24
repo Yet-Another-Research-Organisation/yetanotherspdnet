@@ -1,6 +1,7 @@
 """SPD network model definitions: SPDnet, GBWBNRResNet, and RResNet."""
 
 import zlib
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -56,6 +57,19 @@ class _ModelMixin(nn.Module):
         """``eigh_dtype`` line of the representation, empty when not set."""
         eigh_dtype = getattr(self, "eigh_dtype", None)
         return "" if eigh_dtype is None else f"  eigh_dtype={eigh_dtype},\n"
+
+    def _residual_options_repr(self) -> str:
+        """``residual_options`` line of the representation, empty when not set."""
+        options = getattr(self, "residual_options", None)
+        if not options:
+            return ""
+        # callables (the branch factory) by name: their default repr holds a
+        # memory address, which would make the model hash change between runs
+        shown = {
+            key: getattr(value, "__qualname__", value) if callable(value) else value
+            for key, value in options.items()
+        }
+        return f"  residual_options={shown!r},\n"
 
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """
@@ -582,29 +596,83 @@ def _make_batchnorm(
         )
 
 
-class GBWBNRResNet(_ModelMixin, nn.Module):
-    """
-    Riemannian Residual Network faithful to the GBWBN experiment architecture.
+def _residual_options(
+    options: dict | None, use_logeig: bool
+) -> tuple[Callable[[int], dict], Callable[[int], dict], bool]:
+    r"""
+    Split ``residual_options`` into the options of the inner and of the last block.
 
-    Architecture:
+    ``le_output="log"`` (the last block returns :math:`\log X + V`) applies to
+    the last residual block only, which must be the last SPD layer, and
+    replaces its exponential and the LogEig layer. ``branch`` must be a
+    factory ``n_features -> nn.Module``, called once per block (a module
+    instance would be shared by every block, whatever their size).
+
+    Returns
+    -------
+    inner, last : Callable[[int], dict]
+        Keyword arguments of the residual blocks of size ``n_features``
+    log_output : bool
+        Whether the last block returns log coordinates (LogEig skipped)
+    """
+    options = dict(options or {})
+    log_output = options.pop("le_output", "spd") == "log"
+    if log_output and not use_logeig:
+        raise ValueError(
+            "residual_options le_output='log' replaces the LogEig layer: "
+            "it needs use_logeig=True"
+        )
+    branch = options.pop("branch", None)
+    if isinstance(branch, nn.Module):
+        raise ValueError(
+            "residual_options branch must be a factory n_features -> nn.Module "
+            "(called once per block), not a module instance"
+        )
+
+    def inner(n_features: int) -> dict:
+        if branch is None:
+            return dict(options)
+        return {**options, "branch": branch(n_features)}
+
+    def last(n_features: int) -> dict:
+        kwargs = inner(n_features)
+        return {**kwargs, "le_output": "log"} if log_output else kwargs
+
+    return inner, last, log_output
+
+
+class GBWBNRResNet(_ModelMixin, nn.Module):
+    r"""
+    Single-stage Riemannian residual network of the GBWBN experiments.
+
+    Architecture::
+
         BiMap(input_dim -> hidden_dim)
-        -> [BatchNorm]
-        -> ResidualBlock (spectral vector field + exp map)
-        -> LogEig
+        -> [BatchNorm]                      (GBWBN by default)
+        -> ResidualBlock                    (spectral vector field + step)
+        -> LogEig                           (skipped with le_output="log")
         -> Vec/Vech
         -> Linear(hidden_dim^2 -> output_dim)
         -> [Softmax]
 
-    This architecture matches the paper experiments (HDM05, NTU60) which use:
-    - A single BiMap for dimension reduction
-    - A single residual block with spectral vector field
-    - No ReEig (eigenvalue rectification not needed before residual block)
+    A single BiMap for the dimension reduction, a Bures-Wasserstein batch
+    normalization (``batchnorm_type="mean_var_scalar"``,
+    ``batchnorm_mean_type="bures_wasserstein"``) and one residual block, no
+    ReEig. :class:`RResNet` covers the same architecture with more options.
 
-    The residual block applies a geodesic step on the SPD manifold:
-        X_new = Exp_X(Q diag(f(spec(X))) Q^T)
+    The residual block (:class:`~yetanotherspdnet.nn.rresnet_layers.ResidualBlock`,
+    defaults of the reference RResNet code) computes the tangent vector
+    :math:`V = Q \operatorname{diag}(f(\lambda(X))) Q^\top` (:math:`Q`
+    Stiefel-parametrized, :math:`f` a Conv1d or MLP on the ascending
+    spectrum) and moves by one unit of affine-invariant length,
 
-    where Q is a Stiefel-parametrized orthogonal matrix and f is a
-    learnable spectrum mapping (Conv1d or MLP on eigenvalues).
+    .. math:: X_+ = \mathrm{Exp}_X\big(V / \lVert V \rVert_X\big),
+        \qquad \lVert V \rVert_X = \lVert X^{-1/2} V X^{-1/2} \rVert_F,
+
+    or translates in log coordinates, :math:`X_+ = \exp(\log X + V)`
+    (``residual_metric="log_euclidean"``). Its input eigenvalues are floored
+    first (the batch normalization may return numerically singular
+    matrices).
 
     Parameters
     ----------
@@ -695,6 +763,17 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
         exponential-map step) or "log_euclidean" (exp(log X + V)).
         Default is "affine_invariant"
 
+    residual_options : dict | None, optional
+        Further keyword arguments of the ResidualBlocks (``step``,
+        ``step_radius``, ``step_scale_init``, ``output_clamp``, ``residual``,
+        ``branch``, ``le_output``, ``spectrum_input``, ``basis``,
+        ``field_batchnorm``, see :class:`~yetanotherspdnet.nn.rresnet_layers.ResidualBlock`;
+        ``branch`` as a factory ``n_features -> nn.Module``, called once per
+        block).
+        ``le_output="log"`` applies to the last block only, which must be the
+        last SPD layer: it returns :math:`\log X + V` and the LogEig layer is
+        skipped (as the reference code). Default is None (the reference block)
+
     vec_type : str, optional
         "vec" or "vech". Default is "vec"
 
@@ -761,9 +840,11 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
         eigh_dtype: torch.dtype | None = None,
+        residual_options: dict | None = None,
     ) -> None:
         super().__init__()
         self.eigh_dtype = eigh_dtype
+        self.residual_options = residual_options
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
@@ -849,8 +930,10 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
             )
 
         # Residual block
+        _, last_options, log_output = _residual_options(residual_options, use_logeig)
         layers.append(
             ResidualBlock(
+                **last_options(hidden_dim),
                 n_features=hidden_dim,
                 spectrum_type=spectrum_type,
                 spectrum_hidden_dim=spectrum_hidden_dim,
@@ -866,8 +949,8 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
             )
         )
 
-        # LogEig
-        if use_logeig:
+        # LogEig (done by the residual block with le_output="log")
+        if use_logeig and not log_output:
             layers.append(LogEig(use_autograd=self.use_autograd["logeig"]))
 
         self.spd_layers = nn.Sequential(*layers)
@@ -944,6 +1027,7 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
             f"  use_autograd={self._use_autograd_original!r},\n"
             # only when set: the hashes of the existing configurations stay valid
             f"{self._eigh_dtype_repr()}"
+            f"{self._residual_options_repr()}"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f")"
@@ -951,7 +1035,7 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
 
 
 class RResNet(_ModelMixin, nn.Module):
-    """
+    r"""
     Flexible multi-stage Riemannian Residual Network on SPD manifold.
 
     Architecture (for each stage i):
@@ -1065,6 +1149,17 @@ class RResNet(_ModelMixin, nn.Module):
         exponential-map step) or "log_euclidean" (exp(log X + V)).
         Default is "affine_invariant"
 
+    residual_options : dict | None, optional
+        Further keyword arguments of the ResidualBlocks (``step``,
+        ``step_radius``, ``step_scale_init``, ``output_clamp``, ``residual``,
+        ``branch``, ``le_output``, ``spectrum_input``, ``basis``,
+        ``field_batchnorm``, see :class:`~yetanotherspdnet.nn.rresnet_layers.ResidualBlock`;
+        ``branch`` as a factory ``n_features -> nn.Module``, called once per
+        block).
+        ``le_output="log"`` applies to the last block only, which must be the
+        last SPD layer: it returns :math:`\log X + V` and the LogEig layer is
+        skipped (as the reference code). Default is None (the reference block)
+
     vec_type : str, optional
         "vec" or "vech". Default is "vec"
 
@@ -1134,9 +1229,11 @@ class RResNet(_ModelMixin, nn.Module):
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
         eigh_dtype: torch.dtype | None = None,
+        residual_options: dict | None = None,
     ) -> None:
         super().__init__()
         self.eigh_dtype = eigh_dtype
+        self.residual_options = residual_options
         if len(hidden_layers_size) != len(n_residual_blocks):
             raise ValueError(
                 f"hidden_layers_size and n_residual_blocks must have same length, "
@@ -1193,6 +1290,14 @@ class RResNet(_ModelMixin, nn.Module):
         # Build stages
         layers: list[nn.Module] = []
         dims = [input_dim, *hidden_layers_size]
+        block_options, last_options, log_output = _residual_options(
+            residual_options, use_logeig
+        )
+        if log_output and n_residual_blocks[-1] == 0:
+            raise ValueError(
+                "residual_options le_output='log' needs a residual block in the "
+                "last stage (the last SPD layer)"
+            )
 
         for stage_idx in range(len(hidden_layers_size)):
             d_in = dims[stage_idx]
@@ -1248,9 +1353,14 @@ class RResNet(_ModelMixin, nn.Module):
                 )
 
             # Residual blocks (at same dimension)
-            for _ in range(n_residual_blocks[stage_idx]):
+            for block_idx in range(n_residual_blocks[stage_idx]):
+                is_last = (
+                    stage_idx == len(hidden_layers_size) - 1
+                    and block_idx == n_residual_blocks[stage_idx] - 1
+                )
                 layers.append(
                     ResidualBlock(
+                        **(last_options if is_last else block_options)(d_out),
                         n_features=d_out,
                         spectrum_type=spectrum_type,
                         spectrum_hidden_dim=spectrum_hidden_dim,
@@ -1266,8 +1376,8 @@ class RResNet(_ModelMixin, nn.Module):
                     )
                 )
 
-        # LogEig
-        if use_logeig:
+        # LogEig (done by the last residual block with le_output="log")
+        if use_logeig and not log_output:
             layers.append(LogEig(use_autograd=self.use_autograd["logeig"]))
 
         self.spd_layers = nn.Sequential(*layers)
@@ -1348,6 +1458,7 @@ class RResNet(_ModelMixin, nn.Module):
             f"  use_autograd={self._use_autograd_original!r},\n"
             # only when set: the hashes of the existing configurations stay valid
             f"{self._eigh_dtype_repr()}"
+            f"{self._residual_options_repr()}"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f")"

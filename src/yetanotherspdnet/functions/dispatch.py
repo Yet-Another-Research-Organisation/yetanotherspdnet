@@ -45,6 +45,13 @@ AUTOGRAD_ONLY: dict[str, str] = {
     "yetanotherspdnet.functions.spd_geometries.affine_invariant.affine_invariant_log": (
         "metric only (no layer differentiates it)."
     ),
+    "yetanotherspdnet.functions.spd_geometries.log_euclidean.log_euclidean_exp": (
+        "metric only (no layer differentiates it; the residual blocks translate "
+        "in log coordinates, exp(log X + V))."
+    ),
+    "yetanotherspdnet.functions.spd_geometries.log_euclidean.log_euclidean_log": (
+        "metric only (no layer differentiates it)."
+    ),
 }
 
 

@@ -655,21 +655,22 @@ class AffineInvariantStdScalar(Function):
 def affine_invariant_parallel_transport_transformation(
     current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
-    """
+    r"""
     Affine-invariant transformation matrix for parallel transport.
 
     Parameters
     ----------
-    current_reference : torch.Tensor of shape (n_features, n_features)
+    current_reference : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
-    new_reference : torch.Tensor of shape (n_features, n_features)
+    new_reference : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
     Returns
     -------
-    transformation_matrix : torch.Tensor of shape (n_features, n_features)
-        Non-singular matrix
+    transformation_matrix : torch.Tensor of shape (..., n_features, n_features)
+        Non-singular matrices :math:`E^\top`, :math:`E = (Y X^{-1})^{1/2}` for
+        the transport from :math:`X` (current) to :math:`Y` (new)
     """
     Y_sqrtm, Y_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(new_reference)
     M_inv_sqrtm = inv_sqrtm_SPD(Y_inv_sqrtm @ current_reference @ Y_inv_sqrtm)[0]
@@ -679,21 +680,22 @@ def affine_invariant_parallel_transport_transformation(
 def AffineInvariantParallelTransportTransformation(
     current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
-    """
+    r"""
     Affine-invariant transformation matrix for parallel transport.
 
     Parameters
     ----------
-    current_reference : torch.Tensor of shape (n_features, n_features)
+    current_reference : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
-    new_reference : torch.Tensor of shape (n_features, n_features)
+    new_reference : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
     Returns
     -------
-    transformation_matrix : torch.Tensor of shape (n_features, n_features)
-        Non-singular matrix
+    transformation_matrix : torch.Tensor of shape (..., n_features, n_features)
+        Non-singular matrices :math:`E^\top`, :math:`E = (Y X^{-1})^{1/2}` for
+        the transport from :math:`X` (current) to :math:`Y` (new)
     """
     Y_sqrtm, Y_inv_sqrtm = SqrtmAndInvSqrtmSPD.apply(new_reference)
     M_inv_sqrtm = InvSqrtmSPD.apply(Y_inv_sqrtm @ current_reference @ Y_inv_sqrtm)
@@ -703,18 +705,27 @@ def AffineInvariantParallelTransportTransformation(
 def affine_invariant_parallel_transport(
     data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
-    """
+    r"""
     Affine-invariant parallel transport of some symmetric (or SPD) matrices data from current_reference to new_reference.
+
+    .. math:: \Gamma_{X \to Y}(V) = E V E^\top, \qquad E = (Y X^{-1})^{1/2}
+        = Y^{1/2} (Y^{1/2} X^{-1} Y^{1/2})^{1/2} Y^{-1/2}
+
+    One reference pair for the batch, or one pair per matrix (batched
+    references, e.g. a residual branch output and its input): the backward of
+    :class:`~yetanotherspdnet.functions.spd_linalg.CongruenceRectangular` sums
+    the gradient of the transformation over the batch dimensions it does not
+    have.
 
     Parameters
     ----------
     data : torch.Tensor of shape (..., n_features, n_features)
         Batch of symmetric (or SPD) matrices
 
-    current_reference : torch.Tensor of shape (n_features, n_features)
+    current_reference : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
-    new_reference : torch.Tensor of shape (n_features, n_features)
+    new_reference : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
     Returns
@@ -731,18 +742,27 @@ def affine_invariant_parallel_transport(
 def AffineInvariantParallelTransport(
     data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
-    """
+    r"""
     Affine-invariant parallel transport of some symmetric (or SPD) matrices data from current_reference to new_reference.
+
+    .. math:: \Gamma_{X \to Y}(V) = E V E^\top, \qquad E = (Y X^{-1})^{1/2}
+        = Y^{1/2} (Y^{1/2} X^{-1} Y^{1/2})^{1/2} Y^{-1/2}
+
+    One reference pair for the batch, or one pair per matrix (batched
+    references, e.g. a residual branch output and its input): the backward of
+    :class:`~yetanotherspdnet.functions.spd_linalg.CongruenceRectangular` sums
+    the gradient of the transformation over the batch dimensions it does not
+    have.
 
     Parameters
     ----------
     data : torch.Tensor of shape (..., n_features, n_features)
         Batch of symmetric (or SPD) matrices
 
-    current_reference : torch.Tensor of shape (n_features, n_features)
+    current_reference : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
-    new_reference : torch.Tensor of shape (n_features, n_features)
+    new_reference : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
     Returns

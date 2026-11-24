@@ -2109,6 +2109,181 @@ class EigvalshSymmetric(Function):
         return (eigvecs * grad_output.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)
 
 
+# -----------------------------------------------------------------
+# Several matrix functions of a floored SPD matrix from one eigh
+# -----------------------------------------------------------------
+#: matrix functions available in :func:`floored_eigh_functions`: name ->
+#: (scalar function, derivative); the scalar functions are the keys of the
+#: closed-form divided differences, so the backward uses the same kernels as
+#: :class:`SqrtmSPD`, :class:`InvSqrtmSPD` and :class:`LogmSPD`
+EIGH_FUNCTIONS: dict[str, tuple[Callable, Callable]] = {
+    "sqrt": (torch.sqrt, sqrt_derivative),
+    "inv_sqrt": (inv_sqrt, inv_sqrt_derivative),
+    "log": (torch.log, inv),
+}
+
+
+def floored_eigh_functions(
+    data: torch.Tensor, floor: EigvalBound, functions: tuple[str, ...] = ()
+) -> tuple[torch.Tensor, ...]:
+    r"""
+    Floored spectrum and matrix functions of SPD matrices from one eigendecomposition.
+
+    With :math:`X = U \operatorname{diag}(\lambda) U^\top` and the floored
+    eigenvalues :math:`\tilde\lambda = \max(\lambda, \epsilon)` (the
+    eigenvalues of :math:`\tilde X = \operatorname{ReEig}_\epsilon(X)`),
+    returns :math:`\tilde\lambda`, :math:`\lambda`, :math:`U` and
+    :math:`f(\tilde X) = U \operatorname{diag}(f(\tilde\lambda)) U^\top` for
+    each requested :math:`f` (``"sqrt"``, ``"inv_sqrt"``, ``"log"``). This is
+    what :class:`EighReLu` followed by :func:`eigvalsh_symmetric`,
+    :func:`sqrtm_and_inv_sqrtm_SPD` or :func:`logm_SPD` compute, with one
+    decomposition instead of one per function. Differentiated by autograd
+    (through ``torch.linalg.eigh``); see :class:`FlooredEighFunctions` for the
+    manual backward.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+    floor : float | torch.Tensor | Callable
+        Lower bound of the eigenvalues (see :func:`eigh_relu`), e.g.
+        :func:`spd_floor`
+    functions : tuple of str, optional
+        Names of the matrix functions to return (keys of
+        :data:`EIGH_FUNCTIONS`). Default is none.
+
+    Returns
+    -------
+    eigvals_floored : torch.Tensor of shape (..., n_features)
+        Floored eigenvalues :math:`\tilde\lambda`, ascending
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues :math:`\lambda` of *data*
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors :math:`U`
+    *matrices : torch.Tensor of shape (..., n_features, n_features)
+        :math:`f(\tilde X)` for each name of *functions*, in that order
+    """
+    eigvals, eigvecs = symmetric_eigh(data)
+    bound = _resolve_bound(floor, eigvals)
+    eigvals_floored = _clamp(eigvals, bound, None)
+    matrices = tuple(
+        eigh_operation(eigvals_floored, eigvecs, EIGH_FUNCTIONS[name][0])
+        for name in functions
+    )
+    return (eigvals_floored, eigvals, eigvecs, *matrices)
+
+
+class FlooredEighFunctions(Function):
+    r"""
+    Floored spectrum and matrix functions from one eigendecomposition, manual backward.
+
+    Forward: :func:`floored_eigh_functions`. The eigenvalues :math:`\lambda`
+    and eigenvectors :math:`U` are returned as non-differentiable tensors (for
+    the reuse of the decomposition); the floored eigenvalues and the matrix
+    functions are differentiable. With output gradients
+    :math:`\bar{\tilde\lambda}` and :math:`\bar F_k` (of :math:`f_k(\tilde X)`),
+    all expressed in the common eigenbasis :math:`U`:
+
+    .. math::
+
+        \bar X = U \Big( L^{c}(\lambda) \circ \Big[
+            \operatorname{diag}(\bar{\tilde\lambda})
+            + \textstyle\sum_k L^{f_k}(\tilde\lambda) \circ
+              \big(U^\top \operatorname{sym}(\bar F_k) U\big)
+        \Big] \Big) U^\top
+
+    where :math:`L^{f}` is the Daleckii-Krein matrix of :math:`f` (closed-form
+    divided differences, :func:`_aux_eigh_operation_grad`) and :math:`L^{c}`
+    the one of the floor :math:`c(\lambda) = \max(\lambda, \epsilon)`. This is
+    the chain rule through :class:`EighReLu` then :class:`EigvalshSymmetric`,
+    :class:`SqrtmAndInvSqrtmSPD` and :class:`LogmSPD`, whose decompositions
+    share the eigenvectors :math:`U`, so the two Daleckii-Krein products
+    collapse into one: no decomposition in the backward.
+    """
+
+    @staticmethod
+    def forward(
+        ctx, data: torch.Tensor, floor: EigvalBound, functions: tuple[str, ...] = ()
+    ) -> tuple[torch.Tensor, ...]:
+        """
+        Forward pass, see :func:`floored_eigh_functions`.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+        floor : float | torch.Tensor | Callable
+            Lower bound of the eigenvalues, not differentiated
+        functions : tuple of str, optional
+            Names of the matrix functions to return
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            Floored eigenvalues, eigenvalues, eigenvectors, matrix functions
+        """
+        outputs = floored_eigh_functions(data, floor, functions)
+        eigvals_floored, eigvals, eigvecs = outputs[:3]
+        ctx.save_for_backward(eigvals_floored, eigvals, eigvecs)
+        ctx.floor = _resolve_bound(floor, eigvals)
+        ctx.functions = functions
+        ctx.mark_non_differentiable(eigvals, eigvecs)
+        ctx.set_materialize_grads(False)
+        return outputs
+
+    @staticmethod
+    def backward(
+        ctx, grad_eigvals_floored, _grad_eigvals, _grad_eigvecs, *grad_matrices
+    ):
+        """
+        Backward pass (see the class docstring).
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object with the saved decomposition
+        grad_eigvals_floored : torch.Tensor of shape (..., n_features) or None
+            Gradient with respect to the floored eigenvalues
+        _grad_eigvals, _grad_eigvecs : None
+            Non-differentiable outputs
+        *grad_matrices : torch.Tensor of shape (..., n_features, n_features) or None
+            Gradients with respect to the matrix functions
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient with respect to the input batch
+        None, None
+            No gradient for the floor and the function names
+        """
+        eigvals_floored, eigvals, eigvecs = ctx.saved_tensors
+        middle = None
+        for name, grad in zip(ctx.functions, grad_matrices, strict=True):
+            if grad is None:
+                continue
+            operation, operation_deriv = EIGH_FUNCTIONS[name]
+            term = _aux_eigh_operation_grad(
+                eigvals_floored, operation, operation_deriv
+            ) * (eigvecs.transpose(-1, -2) @ symmetrize(grad) @ eigvecs)
+            middle = term if middle is None else middle + term
+        if grad_eigvals_floored is not None:
+            diagonal = torch.diag_embed(grad_eigvals_floored)
+            middle = diagonal if middle is None else middle + diagonal
+        if middle is None:
+            return None, None, None
+        # chain rule through the floor (the Daleckii-Krein matrix of EighReLu)
+        floor = ctx.floor
+        floor_pairwise = _pairwise_bound(floor)
+        middle = middle * _aux_eigh_operation_grad(
+            eigvals,
+            lambda x: _clamp(x, floor, None),
+            lambda x: (x > floor_pairwise).type(x.dtype),
+        )
+        return eigvecs @ middle @ eigvecs.transpose(-1, -2), None, None
+
+
 def _clamped_bias_operation(bias: torch.Tensor, eps: float) -> Callable:
     """Eigenvalue map of ReEigBias: shift by ``bias`` then clamp to [eps, 1/eps]."""
     return lambda x: torch.clamp(x + bias, min=eps, max=1 / eps)
@@ -2263,7 +2438,7 @@ def congruence_SPD(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
     data : torch.Tensor of shape (..., n_features, n_features)
         Batch of SPD matrices
 
-    matrix : torch.Tensor of shape (n_features, n_features)
+    matrix : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
     Returns
@@ -2290,7 +2465,7 @@ class CongruenceSPD(Function):
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
 
-        matrix : torch.Tensor of shape (n_features, n_features)
+        matrix : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
             SPD matrix
 
         Returns
@@ -2319,18 +2494,17 @@ class CongruenceSPD(Function):
         grad_input_data : torch.Tensor of shape (..., n_features, n_features)
             Gradient of the loss with respect to the input batch of SPD matrices
 
-        grad_input_bias : torch.Tensor of shape (n_features, n_features)
+        grad_input_bias : torch.Tensor of the shape of matrix
             Gradient of the loss with respect to the SPD matrix used for congruence
         """
         data, matrix = ctx.saved_tensors
+        grad_output = symmetrize(grad_output)
+        grad_input_matrix = 2 * symmetrize(
+            torch.einsum("...ik,...kl,...lj->...ij", grad_output, matrix, data)
+        )
         return (
-            matrix @ symmetrize(grad_output) @ matrix,
-            2
-            * symmetrize(
-                torch.einsum(
-                    "...ik,kl,...lj->ij", symmetrize(grad_output), matrix, data
-                )
-            ),
+            (matrix @ grad_output @ matrix).sum_to_size(data.shape),
+            grad_input_matrix.sum_to_size(matrix.shape),
         )
 
 
@@ -2343,7 +2517,7 @@ def congruence_SPD_sqrtm(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tens
     data : torch.Tensor of shape (..., n_features, n_features)
         Batch of SPD matrices
 
-    matrix : torch.Tensor of shape (n_features, n_features)
+    matrix : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
     Returns
@@ -2371,7 +2545,7 @@ class CongruenceSPDSqrtm(Function):
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
 
-        matrix : torch.Tensor of shape (n_features, n_features)
+        matrix : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
             SPD matrix
 
         Returns
@@ -2401,18 +2575,20 @@ class CongruenceSPDSqrtm(Function):
         grad_input_data : torch.Tensor of shape (..., n_features, n_features)
             Gradient of the loss with respect to the input batch of SPD matrices
 
-        grad_input_matrix : torch.Tensor of shape (n_features, n_features)
+        grad_input_matrix : torch.Tensor of the shape of matrix
             Gradient of the loss with respect to the SPD matrix used for whitening
         """
         data, eigvals_matrix, eigvecs_matrix, matrix_sqrtm = ctx.saved_tensors
         grad_input_data = matrix_sqrtm @ symmetrize(grad_output) @ matrix_sqrtm
+        # per-sample right-hand side, summed over the batch dimensions the
+        # matrix does not have (one matrix for the batch, or one per sample)
         syl_right = 2 * symmetrize(
-            torch.einsum("...ik, kl, ...lj->ij", data, matrix_sqrtm, grad_output)
-        )
+            torch.einsum("...ik,...kl,...lj->...ij", data, matrix_sqrtm, grad_output)
+        ).sum_to_size(matrix_sqrtm.shape)
         grad_input_matrix = solve_sylvester_SPD(
             torch.sqrt(eigvals_matrix), eigvecs_matrix, syl_right
         )
-        return grad_input_data, grad_input_matrix
+        return grad_input_data.sum_to_size(data.shape), grad_input_matrix
 
 
 def whitening(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
@@ -2518,7 +2694,7 @@ def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Te
     data : torch.Tensor of shape (..., n_in, n_in)
         Batch of SPD matrices
 
-    weight : torch.Tensor of shape (n_in, n_out)
+    weight : torch.Tensor of shape (n_in, n_out) or (..., n_in, n_out)
         Rectangular matrix (e.g., weights),
         n_in > n_out is expected
 
@@ -2550,7 +2726,7 @@ class CongruenceRectangular(Function):
         data : torch.Tensor of shape (..., n_in, n_in)
             Batch of SPD matrices
 
-        weight : torch.Tensor of shape (n_out, n_in)
+        weight : torch.Tensor of shape (n_in, n_out) or (..., n_in, n_out)
             Rectangular matrix (e.g., weights),
             n_in > n_out is expected
 
@@ -2580,10 +2756,17 @@ class CongruenceRectangular(Function):
         grad_input_data : torch.Tensor of shape (..., n_in, n_in)
             Gradient of the loss with respect to the input batch of SPD matrices
 
-        grad_input_W : torch.Tensor of shape (n_in, n_out)
+        grad_input_W : torch.Tensor of the shape of weight
             Gradient of the loss with respect to the (full-rank) rectangular matrix W
         """
         data, weight = ctx.saved_tensors
         grad_input_data = weight @ grad_output @ weight.transpose(-1, -2)
-        grad_input_W = 2 * torch.einsum("...ik,kl,...lj->ij", data, weight, grad_output)
-        return grad_input_data, grad_input_W
+        # per-sample products, summed over the batch dimensions the weight
+        # does not have (one weight for the batch, or one per matrix)
+        grad_input_W = 2 * torch.einsum(
+            "...ik,...kl,...lj->...ij", data, weight, grad_output
+        )
+        return (
+            grad_input_data.sum_to_size(data.shape),
+            grad_input_W.sum_to_size(weight.shape),
+        )

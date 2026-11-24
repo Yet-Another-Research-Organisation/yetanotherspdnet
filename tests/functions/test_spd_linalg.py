@@ -2512,3 +2512,90 @@ class TestPolarFactor:
         assert_close(
             W.double(), spd_linalg.polar_factor(A.double())[0], atol=1e-6, rtol=0
         )
+
+
+# ---------------------------------------------------------------------------
+# congruences with one transformation per matrix
+# ---------------------------------------------------------------------------
+def _batched_pair(n_matrices, n_in, n_out, generator):
+    data = random_SPD(
+        n_in, n_matrices=n_matrices, cond=10, dtype=torch.float64, generator=generator
+    )
+    weight = torch.randn(
+        n_matrices, n_in, n_out, dtype=torch.float64, generator=generator
+    )
+    return data, weight
+
+
+@pytest.mark.parametrize("batched_weight", [False, True])
+def test_congruence_rectangular_per_sample_gradcheck(batched_weight, generator):
+    from torch.autograd import gradcheck
+
+    data, weight = _batched_pair(3, 4, 3, generator)
+    if not batched_weight:
+        weight = weight[0]
+    data.requires_grad_(True)
+    weight.requires_grad_(True)
+    # the backwards assume symmetric output gradients (symmetric outputs)
+    assert gradcheck(
+        lambda d, w: spd_linalg.symmetrize(
+            spd_linalg.CongruenceRectangular.apply((d + d.mT) / 2, w)
+        ),
+        (data, weight),
+    )
+
+
+@pytest.mark.parametrize("cls", ["CongruenceSPD", "CongruenceSPDSqrtm"])
+def test_congruence_spd_per_sample_gradcheck(cls, generator):
+    from torch.autograd import gradcheck
+
+    data = random_SPD(
+        4, n_matrices=3, cond=10, dtype=torch.float64, generator=generator
+    )
+    matrix = random_SPD(
+        4, n_matrices=3, cond=10, dtype=torch.float64, generator=generator
+    )
+    function = getattr(spd_linalg, cls).apply
+    data.requires_grad_(True)
+    matrix.requires_grad_(True)
+    assert gradcheck(
+        lambda d, m: spd_linalg.symmetrize(function((d + d.mT) / 2, (m + m.mT) / 2)),
+        (data, matrix),
+    )
+    # per matrix, the same as one matrix at a time
+    out = function(data, matrix)
+    for i in range(3):
+        assert_close(out[i], function(data[i], matrix[i]))
+
+
+def test_affine_invariant_parallel_transport_per_sample(generator):
+    from torch.autograd import gradcheck
+
+    from yetanotherspdnet.functions.spd_geometries import affine_invariant
+
+    X = random_SPD(4, n_matrices=3, cond=20, dtype=torch.float64, generator=generator)
+    Z = random_SPD(4, n_matrices=3, cond=20, dtype=torch.float64, generator=generator)
+    V = spd_linalg.symmetrize(
+        torch.randn(3, 4, 4, dtype=torch.float64, generator=generator)
+    )
+    transported = affine_invariant.AffineInvariantParallelTransport(V, Z, X)
+    # orientation: Gamma_{Z -> X}(Z) = X; isometry ||Gamma V||_X = ||V||_Z
+    assert_close(affine_invariant.AffineInvariantParallelTransport(Z, Z, X), X)
+    assert_close(
+        affine_invariant.affine_invariant_norm(X, transported),
+        affine_invariant.affine_invariant_norm(Z, V),
+    )
+    for i in range(3):
+        assert_close(
+            transported[i],
+            affine_invariant.affine_invariant_parallel_transport(V[i], Z[i], X[i]),
+        )
+    inputs = tuple(t.clone().requires_grad_(True) for t in (V, Z, X))
+    assert gradcheck(
+        lambda v, z, x: spd_linalg.symmetrize(
+            affine_invariant.AffineInvariantParallelTransport(
+                (v + v.mT) / 2, (z + z.mT) / 2, (x + x.mT) / 2
+            )
+        ),
+        inputs,
+    )
