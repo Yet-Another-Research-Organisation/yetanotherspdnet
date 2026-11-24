@@ -2551,30 +2551,39 @@ class TestGBWBNRunningStatistics:
         if bw_theta != 1.0:
             running = powm_SPD(running, bw_theta)[0]
         state["running_mean"] = M_isqrt @ running @ M_isqrt
-        state._metadata[""]["version"] = 1
+        del state["bw_state_version"]
         if mode == "dynamic":
-            state = type(state)(
-                (k, v)
+            state = {
+                k: v
                 for k, v in state.items()
                 if "reference" not in k and "last" not in k
-            )
-            state._metadata = layer.state_dict()._metadata
-            state._metadata[""]["version"] = 1
+            }
         loaded = _gbwbn(bw_theta=bw_theta, parametrization_mode=mode)
         loaded.load_state_dict(state, strict=True)
         loaded.eval()
         assert_close(loaded(data), expected, rtol=1e-9, atol=1e-11)
         assert_close(loaded.bw_M, layer.bw_M)
 
-    def test_version_2_checkpoint_not_converted(self, generator):
+    @pytest.mark.parametrize("plain_dict", [False, True])
+    def test_version_2_checkpoint_not_converted(self, plain_dict, generator):
+        """Also when copied into a plain dict (no _metadata), as after
+        stripping a DDP prefix."""
         dtype = torch.float64
         layer = _gbwbn(momentum=0.5)
         with torch.no_grad():
             layer.bw_M = random_SPD(4, 1, cond=5, dtype=dtype, generator=generator)
-        layer(random_SPD(4, 8, cond=10, dtype=dtype, generator=generator))
+        for _ in range(3):
+            layer(random_SPD(4, 8, cond=10, dtype=dtype, generator=generator))
+        layer.eval()
+        data = random_SPD(4, 8, cond=10, dtype=dtype, generator=generator)
+        state = layer.state_dict()
+        if plain_dict:
+            state = {k: v.clone() for k, v in state.items()}
         loaded = _gbwbn()
-        loaded.load_state_dict(layer.state_dict())
+        loaded.load_state_dict(state, strict=True)
+        loaded.eval()
         assert_close(loaded.running_mean, layer.running_mean)
+        assert_close(loaded(data), layer(data))
 
 
 class TestGBWBNInitMetric:
@@ -2586,6 +2595,7 @@ class TestGBWBNInitMetric:
 
     def test_default_state_dict_unchanged(self):
         assert "bw_metric_initialized" not in _gbwbn().state_dict()
+        assert "bw_state_version" in _gbwbn().state_dict()
         assert "bw_init_metric" not in repr(_gbwbn())
         assert "bw_init_metric=trace_scale" in repr(
             _gbwbn(bw_init_metric="trace_scale")

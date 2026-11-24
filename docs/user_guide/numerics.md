@@ -361,8 +361,9 @@ are multiplied by 190 before an $\epsilon = 0.8$ ReEig).
   nearly singular batches that LAPACK handles on CPU. For matrices of a few
   hundred rows, a CPU run with a few threads is often as fast as a small GPU.
   LAPACK's float32 `eigh` also fails to converge on some batches at
-  $\kappa \ge 10^{4}$ (GBWBN); `eigh_dtype=torch.float64` removes those
-  failures.
+  $\kappa \ge 10^{4}$; `eigh_dtype=torch.float64` removes those convergence
+  failures, not the failures of GBWBN caused by folding (a folded, singular
+  centred matrix, see below).
 - **Tests.** The manual backwards are checked with `torch.autograd.gradcheck`
   in float64 (repeated, nearly repeated eigenvalues, the identity,
   $\kappa = 10^{6}$) and compared with the autograd path; every layer is run in

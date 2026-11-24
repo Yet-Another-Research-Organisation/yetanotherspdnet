@@ -123,9 +123,8 @@ Checkpoints saved before this change (state dict version 1) are converted
 when loaded: the running mean is mapped to the input space with the
 checkpoint's own $M$, and the missing reference points of dynamic layers are
 set to $I$ (the chart those versions used), so old checkpoints load with
-`strict=True` and evaluate as before. Keep the `_metadata` of the state dict
-(`torch.save(model.state_dict())` does) so that a new checkpoint is not
-converted again.
+`strict=True` and evaluate as before. New state dicts carry a `bw_state_version` buffer, so they are never
+converted again, even when copied into a plain dict.
 
 ### Package, paper and reference code
 

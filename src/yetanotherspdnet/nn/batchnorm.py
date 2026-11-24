@@ -948,10 +948,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
     running_std_scalar: torch.Tensor
     std_regularizer: torch.Tensor
     bw_metric_initialized: torch.Tensor
+    bw_state_version: torch.Tensor
 
-    # version 2: the GBWBN running mean is stored in the input space (version 1
-    # stored it in the transformed space of M, see _load_from_state_dict)
-    _version = 2
+    # GBWBN: the buffer bw_state_version marks state dicts whose running mean is
+    # stored in the input space (see _load_from_state_dict)
 
     def __init__(
         self,
@@ -1147,6 +1147,11 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
                     f"got {bw_init_metric!r}"
                 )
             self.bw_init_metric = bw_init_metric
+            # marks state dicts whose running mean is in the input space (see
+            # _load_from_state_dict); a buffer, so it survives plain-dict copies
+            self.register_buffer(
+                "bw_state_version", torch.tensor(2, device=self.device)
+            )
             if bw_init_metric == "trace_scale":
                 # persistent: a resumed or loaded layer is not initialized again
                 self.register_buffer(
@@ -1411,15 +1416,15 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
 
         - GBWBN layers saved an unused Covbias before it was removed from that
           mode: it is dropped.
-        - Version 1 (``local_metadata["version"]`` missing or 1, as for every
-          checkpoint saved before the running mean moved to the input space)
-          stored the GBWBN running mean :math:`\hat B_r` in the transformed
+        - Version 1 (no ``bw_state_version`` entry, as for every checkpoint
+          saved before the running mean moved to the input space) stored the
+          GBWBN running mean :math:`\hat B_r` in the transformed
           space of the :math:`M` of the time; it is converted to the input space,
           :math:`B_r = (M^{1/2} \hat B_r M^{1/2})^{1/\theta}`, with the
           checkpoint's :math:`M` and the layer's :math:`\theta`, so the layer
-          gives the same outputs as before. Keep the ``_metadata`` attribute of
-          the state dict (``torch.save(module.state_dict())`` does) so that a
-          version-2 checkpoint is not converted twice.
+          gives the same outputs as before. The marker is a buffer, so a
+          version-2 state dict copied into a plain dict is never converted
+          twice.
         - Version-1 checkpoints of ``parametrization_mode="dynamic"`` had static
           parametrizations of :math:`M` and :math:`G` (reference point
           :math:`I`): the missing reference buffers are set to :math:`I`, which
@@ -1429,9 +1434,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             stale = prefix + "parametrizations.Covbias."
             for key in [k for k in state_dict if k.startswith(stale)]:
                 del state_dict[key]
-            version = local_metadata.get("version", None)
-            if version is None or version < 2:
+            marker = prefix + "bw_state_version"
+            if marker not in state_dict:
                 self._upgrade_bw_state_dict_v1(state_dict, prefix)
+                state_dict[marker] = torch.tensor(2, device=self.device)
         super()._load_from_state_dict(
             state_dict,
             prefix,
