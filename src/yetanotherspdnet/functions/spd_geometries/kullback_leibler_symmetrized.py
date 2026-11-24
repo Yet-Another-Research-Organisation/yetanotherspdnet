@@ -13,13 +13,15 @@ from .affine_invariant import (
     AffineInvariantGeodesic,
     affine_invariant_geodesic,
 )
-from .kullback_leibler import (
+from .euclidean import (
     ArithmeticMean,
     EuclideanGeodesic,
-    HarmonicCurve,
-    HarmonicMean,
     arithmetic_mean,
     euclidean_geodesic,
+)
+from .kullback_leibler import (
+    HarmonicCurve,
+    HarmonicMean,
     harmonic_curve,
     harmonic_mean,
 )
@@ -39,7 +41,7 @@ def geometric_euclidean_harmonic_curve(
         H(t) = \big((1-t)P_1^{-1} + tP_2^{-1}\big)^{-1}
 
     where :math:`E` is the Euclidean geodesic
-    (:func:`~yetanotherspdnet.functions.spd_geometries.kullback_leibler.euclidean_geodesic`),
+    (:func:`~yetanotherspdnet.functions.spd_geometries.euclidean.euclidean_geodesic`),
     :math:`H` is the harmonic curve
     (:func:`~yetanotherspdnet.functions.spd_geometries.kullback_leibler.harmonic_curve`),
     and :math:`G` is the affine-invariant geometric mean of two points, the
@@ -118,7 +120,7 @@ def geometric_arithmetic_harmonic_mean(
         \bar{P}_{GAH} = G\big(\bar{P}_{arith},\ \bar{P}_{harm}\big)
 
     with :math:`\bar{P}_{arith}` the arithmetic mean
-    (:func:`~yetanotherspdnet.functions.spd_geometries.kullback_leibler.arithmetic_mean`),
+    (:func:`~yetanotherspdnet.functions.spd_geometries.euclidean.arithmetic_mean`),
     :math:`\bar{P}_{harm}` the harmonic mean
     (:func:`~yetanotherspdnet.functions.spd_geometries.kullback_leibler.harmonic_mean`),
     and :math:`G` the affine-invariant geometric mean of two points.

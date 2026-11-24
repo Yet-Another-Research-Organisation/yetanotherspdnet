@@ -2,7 +2,7 @@ import torch
 from torch.autograd import Function
 
 from yetanotherspdnet.functions.scalar_functions import inv, sqrt_derivative
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
+from yetanotherspdnet.functions.spd_geometries.euclidean import (
     ArithmeticMean,
     arithmetic_mean,
 )

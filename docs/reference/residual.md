@@ -14,7 +14,6 @@ affine-invariant (unit step) or log-Euclidean exponential map. See
 
    ResidualBlock
    SpectralVectorField
-   affine_invariant_norm
 ```
 
 ```{eval-rst}
@@ -27,6 +26,6 @@ affine-invariant (unit step) or log-Euclidean exponential map. See
    :members: forward, register_optimizer_hook
 ```
 
-```{eval-rst}
-.. autofunction:: yetanotherspdnet.nn.rresnet_layers.affine_invariant_norm
-```
+The affine-invariant norm used to normalize the step,
+{func}`~yetanotherspdnet.functions.spd_geometries.affine_invariant.affine_invariant_norm`,
+is documented with the affine-invariant geometry.

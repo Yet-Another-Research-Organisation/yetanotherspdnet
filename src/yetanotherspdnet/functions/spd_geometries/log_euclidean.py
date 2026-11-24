@@ -15,7 +15,7 @@ from ..spd_linalg import (
     expm_symmetric,
     logm_SPD,
 )
-from .kullback_leibler import (
+from .euclidean import (
     ArithmeticMean,
     EuclideanGeodesic,
     arithmetic_mean,
@@ -23,9 +23,9 @@ from .kullback_leibler import (
 )
 
 
-# --------------------------
-# Affine-invariant geodesics
-# --------------------------
+# ----------------------
+# Log-Euclidean geodesic
+# ----------------------
 def log_euclidean_geodesic(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
@@ -374,13 +374,3 @@ def LogEuclideanParalleTransportSPD(
 LogEuclideanParalleTransportSPD.__deprecated__ = (
     "use LogEuclideanParallelTransportSPD instead"
 )
-
-
-# -----------------------------------
-# Riemannian logarithm in coordinates
-# -----------------------------------
-
-
-# ---------------------------------------
-# Riemannian exponential from coordinates
-# ---------------------------------------

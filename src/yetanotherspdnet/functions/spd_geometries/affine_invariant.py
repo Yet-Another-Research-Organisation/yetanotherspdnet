@@ -28,7 +28,7 @@ from ..spd_linalg import (
     sqrtm_and_inv_sqrtm_SPD,
     symmetrize,
 )
-from .kullback_leibler import arithmetic_mean
+from .euclidean import arithmetic_mean
 
 
 # --------------------------
@@ -745,19 +745,6 @@ def AffineInvariantParallelTransport(
     return CongruenceRectangular.apply(data, transformation_matrix)
 
 
-# -----------------------------------
-# Riemannian logarithm in coordinates
-# -----------------------------------
-
-
-# ---------------------------------------
-# Riemannian exponential from coordinates
-# ---------------------------------------
-
-
-# ---------------------------------------------------------------------------------
-# Parallel transport in coordinates of vectors / tangent covariance / metric tensor
-# ---------------------------------------------------------------------------------
 # --------------------------------
 # Affine-invariant exponential map
 # --------------------------------
@@ -966,6 +953,36 @@ class AffineInvariantExp(Function):
             grad_base = grad_through_sqrtm + grad_through_inv_sqrtm
 
         return grad_base, grad_tangent
+
+
+# ----------------------------------------
+# Affine-invariant norm of tangent vectors
+# ----------------------------------------
+def affine_invariant_norm(base: torch.Tensor, tangent: torch.Tensor) -> torch.Tensor:
+    r"""
+    Affine-invariant norm of tangent vectors.
+
+    :math:`\lVert X^{-1/2} V X^{-1/2} \rVert_F = \lVert L^{-1} V L^{-\top} \rVert_F`
+    with :math:`X = LL^\top`: Cholesky and triangular solves only, so the
+    gradient does not go through an eigendecomposition.
+
+    Parameters
+    ----------
+    base : torch.Tensor of shape (..., n, n)
+        SPD base points
+
+    tangent : torch.Tensor of shape (..., n, n)
+        Symmetric tangent vectors at *base*
+
+    Returns
+    -------
+    norm : torch.Tensor of shape (...)
+        Affine-invariant norms
+    """
+    cholesky = torch.linalg.cholesky(base)
+    half = torch.linalg.solve_triangular(cholesky, tangent, upper=False)
+    whitened = torch.linalg.solve_triangular(cholesky, half.mT, upper=False)
+    return torch.linalg.matrix_norm(whitened)
 
 
 # ----------------------------

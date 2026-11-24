@@ -360,8 +360,8 @@ class TestResidualBlockIllConditioned:
     def test_affine_invariant_step_has_unit_length(self, device, dtype, generator):
         from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
             affine_invariant_log,
+            affine_invariant_norm,
         )
-        from yetanotherspdnet.nn.rresnet_layers import affine_invariant_norm
 
         X = _ill_conditioned_spd(10, 6, device, dtype, generator)
         block = ResidualBlock(10, device=device, dtype=dtype, generator=generator)
@@ -370,8 +370,10 @@ class TestResidualBlockIllConditioned:
         assert_close(step, torch.ones_like(step), atol=1e-6, rtol=0)
 
     def test_affine_invariant_norm(self, device, dtype, generator):
+        from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
+            affine_invariant_norm,
+        )
         from yetanotherspdnet.functions.spd_linalg import inv_sqrtm_SPD
-        from yetanotherspdnet.nn.rresnet_layers import affine_invariant_norm
 
         X = random_SPD(6, 4, cond=100, device=device, dtype=dtype, generator=generator)
         V = torch.randn(4, 6, 6, device=device, dtype=dtype, generator=generator)

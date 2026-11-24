@@ -10,6 +10,7 @@ gives their formulas.
 |---|---|---|
 | `affine_invariant` | affine-invariant (Fisher–Rao) | Karcher mean (iterative) |
 | `log_euclidean` | log-Euclidean | $\exp(\overline{\log X})$ |
+| `euclidean` | Euclidean (left Kullback–Leibler mean) | arithmetic mean |
 | `kullback_leibler` | left / right Kullback–Leibler | arithmetic / harmonic mean |
 | `kullback_leibler_symmetrized` | symmetrized Kullback–Leibler | GAH: AI midpoint of harmonic and arithmetic (adaptive: learned point $t$) |
 | `bures_wasserstein` | Bures–Wasserstein | fixed-point barycenter |
@@ -53,6 +54,20 @@ of a pair $(A, B)$ instead of square roots of $B$. Used by
    :member-order: bysource
 ```
 
+## Euclidean
+
+Euclidean geodesic and arithmetic mean, the building blocks of the
+Kullback–Leibler and log-Euclidean geometries.
+
+```{dualpath-table} yetanotherspdnet.functions.spd_geometries.euclidean
+```
+
+```{eval-rst}
+.. automodule:: yetanotherspdnet.functions.spd_geometries.euclidean
+   :members:
+   :member-order: bysource
+```
+
 ## Kullback–Leibler (arithmetic and harmonic)
 
 ```{dualpath-table} yetanotherspdnet.functions.spd_geometries.kullback_leibler
@@ -85,3 +100,4 @@ of a pair $(A, B)$ instead of square roots of $B$. Used by
    :members:
    :member-order: bysource
 ```
+

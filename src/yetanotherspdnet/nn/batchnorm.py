@@ -27,15 +27,17 @@ from yetanotherspdnet.functions.spd_geometries.bures_wasserstein import (
     bures_wasserstein_scale,
     bures_wasserstein_std_scalar,
 )
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
+from yetanotherspdnet.functions.spd_geometries.euclidean import (
     ArithmeticMean,
     EuclideanGeodesic,
+    arithmetic_mean,
+    euclidean_geodesic,
+)
+from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     HarmonicCurve,
     HarmonicMean,
     LeftKullbackLeiblerStdScalar,
     RightKullbackLeiblerStdScalar,
-    arithmetic_mean,
-    euclidean_geodesic,
     harmonic_curve,
     harmonic_mean,
     left_kullback_leibler_std_scalar,

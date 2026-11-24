@@ -11,10 +11,8 @@ from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
 from yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd import (
     affine_invariant_mean_gevd,
 )
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
-    arithmetic_mean,
-    harmonic_mean,
-)
+from yetanotherspdnet.functions.spd_geometries.euclidean import arithmetic_mean
+from yetanotherspdnet.functions.spd_geometries.kullback_leibler import harmonic_mean
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     geometric_arithmetic_harmonic_mean,
 )

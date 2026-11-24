@@ -9,7 +9,15 @@ from yetanotherspdnet import _deprecation
 from yetanotherspdnet.functions import spd_linalg
 from yetanotherspdnet.functions.spd_geometries import (
     affine_invariant,
+    euclidean,
+    kullback_leibler,
     kullback_leibler_symmetrized,
+)
+from yetanotherspdnet.model import GBWBNRResNet, RResNet, SPDnet
+from yetanotherspdnet.nn import (
+    BatchNormSPDMean,
+    BatchNormSPDMeanScalarVariance,
+    rresnet_layers,
 )
 from yetanotherspdnet.random.spd import random_SPD
 
@@ -132,3 +140,111 @@ def test_affine_invariant_mean_2points_aliases(manual, spd_batch):
     torch.testing.assert_close(point2.grad, ref2.grad, rtol=0, atol=0)
     # the geometric mean of two points is symmetric in its arguments
     torch.testing.assert_close(out, canonical(spd_batch[1], spd_batch[0], 0.5))
+
+
+# ---------------------------------------------------------------------------
+# moved objects: the old locations forward to the new ones
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "name, manual, args",
+    [
+        ("euclidean_geodesic", False, "geodesic"),
+        ("EuclideanGeodesic", True, "geodesic"),
+        ("arithmetic_mean", False, "mean"),
+        ("ArithmeticMean", True, "mean"),
+    ],
+)
+def test_euclidean_moved_from_kullback_leibler(name, manual, args, spd_batch):
+    alias = getattr(kullback_leibler, name)
+    target = getattr(euclidean, name)
+    if manual:
+        alias, target = alias.apply, target.apply
+    inputs = (spd_batch[0], spd_batch[1], 0.3) if args == "geodesic" else (spd_batch,)
+    with pytest.warns(DeprecationWarning, match=f"spd_geometries.euclidean.{name}"):
+        out = alias(*inputs)
+    torch.testing.assert_close(out, target(*inputs), rtol=0, atol=0)
+
+
+def test_affine_invariant_norm_moved_from_rresnet_layers(spd_batch):
+    tangent = spd_linalg.symmetrize(spd_batch[1] - spd_batch[0])
+    with pytest.warns(DeprecationWarning, match="affine_invariant.affine_invariant_norm"):
+        out = rresnet_layers.affine_invariant_norm(spd_batch[0], tangent)
+    expected = affine_invariant.affine_invariant_norm(spd_batch[0], tangent)
+    torch.testing.assert_close(out, expected, rtol=0, atol=0)
+
+
+# ---------------------------------------------------------------------------
+# the library itself never goes through a deprecated alias
+# ---------------------------------------------------------------------------
+MEAN_TYPES = [
+    "affine_invariant",
+    "affine_invariant_gevd",
+    "log_euclidean",
+    "arithmetic",
+    "harmonic",
+    "geometric_arithmetic_harmonic",
+    "adaptive_geometric_arithmetic_harmonic",
+    "bures_wasserstein",
+]
+
+
+def _train_step(module, data):
+    module.train()
+    out = module(data.clone().requires_grad_(True))
+    out.sum().backward()
+    module.eval()
+    with torch.no_grad():
+        module(data)
+
+
+@pytest.mark.parametrize("use_autograd", [False, True])
+@pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
+@pytest.mark.parametrize("mean_type", MEAN_TYPES)
+@pytest.mark.parametrize(
+    "layer", [BatchNormSPDMean, BatchNormSPDMeanScalarVariance], ids=lambda c: c.__name__
+)
+def test_batchnorm_uses_no_deprecated_alias(
+    layer, mean_type, norm_strategy, use_autograd, dtype, generator
+):
+    data = random_SPD(4, 6, cond=10, dtype=dtype, generator=generator)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        bn = layer(
+            4,
+            mean_type=mean_type,
+            norm_strategy=norm_strategy,
+            use_autograd=use_autograd,
+            dtype=dtype,
+        )
+        _train_step(bn, data)
+
+
+@pytest.mark.parametrize("mean_type", MEAN_TYPES[:-1])
+def test_batchnorm_transport_uses_no_deprecated_alias(mean_type, dtype, generator):
+    data = random_SPD(4, 6, cond=10, dtype=dtype, generator=generator)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        bn = BatchNormSPDMean(
+            4,
+            mean_type=mean_type,
+            norm_and_bias_mode="parallel_transport",
+            dtype=dtype,
+        )
+        _train_step(bn, data)
+
+
+@pytest.mark.parametrize(
+    "model, kwargs",
+    [
+        (SPDnet, {"hidden_layers_size": [3], "batchnorm": True}),
+        (RResNet, {"hidden_layers_size": [3], "n_residual_blocks": [1]}),
+        (GBWBNRResNet, {"hidden_dim": 3}),
+    ],
+    ids=["SPDnet", "RResNet", "GBWBNRResNet"],
+)
+def test_models_use_no_deprecated_alias(model, kwargs, dtype, generator):
+    data = random_SPD(4, 6, cond=10, dtype=dtype, generator=generator)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        net = model(input_dim=4, output_dim=2, dtype=dtype, generator=generator, **kwargs)
+        _train_step(net, data)

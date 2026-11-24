@@ -10,10 +10,8 @@ Tests:
 import pytest
 import torch
 
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
-    ArithmeticMean,
-    HarmonicMean,
-)
+from yetanotherspdnet.functions.spd_geometries.euclidean import ArithmeticMean
+from yetanotherspdnet.functions.spd_geometries.kullback_leibler import HarmonicMean
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
     AdaptiveGeometricArithmeticHarmonicMean,
     GeometricArithmeticHarmonicMean,

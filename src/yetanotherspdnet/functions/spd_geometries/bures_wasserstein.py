@@ -27,7 +27,7 @@ from ..spd_linalg import (
     sqrtm_SPD,
     symmetrize,
 )
-from .kullback_leibler import arithmetic_mean
+from .euclidean import arithmetic_mean
 
 
 # ----------------------------------------

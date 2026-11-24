@@ -1,188 +1,21 @@
-"""Base geometries: Euclidean geodesic, arithmetic mean, harmonic mean/curve, and KL divergence."""
+"""Kullback-Leibler geometries: harmonic curve and mean, left / right KL scalar std.
+
+The Euclidean geodesic and the arithmetic mean (the left KL mean) live in
+:mod:`~yetanotherspdnet.functions.spd_geometries.euclidean`.
+"""
 
 import math
 
 import torch
 from torch.autograd import Function
 
+from ..._deprecation import _deprecated
 from ..scalar_functions import zero_where_zero_std
 from ..spd_linalg import (
     inv_SPD,
     symmetrize,
 )
-
-
-# ------------------
-# Euclidean geodesic
-# ------------------
-def euclidean_geodesic(
-    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
-) -> torch.Tensor:
-    r"""
-    Euclidean geodesic between two symmetric matrices.
-
-    .. math::
-
-        \gamma(t) = (1-t)\,P_1 + t\,P_2, \quad t \in [0, 1]
-
-    Parameters
-    ----------
-    point1 : torch.Tensor of shape (..., n_features, n_features)
-        Symmetric matrices
-
-    point2 : torch.Tensor of shape (..., n_features, n_features)
-        Symmetric matrices
-
-    t : float | torch.Tensor
-        parameter on the path, should be in [0,1]
-
-    Returns
-    -------
-    point : torch.Tensor of shape (..., n_features, n_features)
-        Symmetric matrices
-    """
-    return symmetrize((1 - t) * point1 + t * point2)
-
-
-class EuclideanGeodesic(Function):
-    """
-    Euclidean geodesic of a batch of symmetric matrices
-    """
-
-    @staticmethod
-    def forward(
-        ctx, point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Forward pass of the Euclidean geodesic
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        point1 : torch.Tensor of shape (..., n_features, n_features)
-            Symmetric matrices
-
-        point2 : torch.Tensor of shape (..., n_features, n_features)
-            Symmetric matrices
-
-        t : float | torch.Tensor
-            parameter on the path, should be in [0,1]
-
-        Returns
-        -------
-        point : torch.Tensor of shape (..., n_features, n_features)
-            Symmetric matrices
-        """
-        ctx.t = t
-        return euclidean_geodesic(point1, point2, t)
-
-    @staticmethod
-    def backward(
-        ctx, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, None]:
-        """
-        Backward pass of the Euclidean geodesic
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        grad_output : torch.Tensor of shape (..., n_features, n_features)
-
-        Returns
-        -------
-        grad_input1 : torch.Tensor of shape (..., n_features, n_features)
-
-        grad_input2 : torch.Tensor of shape (..., n_features, n_features)
-        """
-        t = ctx.t
-        return symmetrize((1 - t) * grad_output), symmetrize(t * grad_output), None
-
-
-# ---------------
-# Arithmetic mean
-# ---------------
-def arithmetic_mean(data: torch.Tensor) -> torch.Tensor:
-    r"""
-    Arithmetic (Euclidean) mean of a batch of symmetric matrices.
-
-    .. math::
-
-        \bar{P} = \frac{1}{N}\sum_{i=1}^{N} P_i
-
-    Parameters
-    ----------
-    data : torch.Tensor of shape (..., n_features, n_features)
-        Batch of symmetric matrices. The mean is computed along ... axes
-
-    Returns
-    -------
-    mean : torch.Tensor of shape (n_features, n_features)
-        Arithmetic mean
-    """
-    if data.ndim == 2:
-        return data
-    return symmetrize(torch.mean(data, dim=tuple(range(data.ndim - 2))))
-
-
-class ArithmeticMean(Function):
-    """
-    Arithmetic mean
-    """
-
-    @staticmethod
-    def forward(ctx, data: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the arithmetic mean of a batch of symmetric matrices
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        data : torch.Tensor of shape (..., n_features, n_features)
-            Batch of symmetric matrices. The mean is computed along ... axes
-
-        Returns
-        -------
-        mean : torch.Tensor of shape (n_features, n_features)
-            Arithmetic mean
-        """
-        ctx.shape = data.shape
-        if data.ndim == 2:
-            return symmetrize(data)
-        return arithmetic_mean(data)
-
-    @staticmethod
-    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
-        """
-        Backward pass of the arithmetic mean of a batch of symmetric matrices
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        grad_output : torch.Tensor of shape (n_features, n_features)
-            Gradient of the loss with respect to the arithmetic mean
-
-        Returns
-        -------
-        grad_input : torch.Tensor of shape (..., n_features, n_features)
-            Gradient of the loss with respect to the input batch of symmetric matrices
-        """
-        shape = ctx.shape
-        if len(shape) == 2:
-            return symmetrize(grad_output)
-        n_matrices = math.prod(shape[:-2])
-        grad_input = torch.zeros(
-            shape, dtype=grad_output.dtype, device=grad_output.device
-        )
-        grad_input[..., :, :] = symmetrize(grad_output / n_matrices)
-        return grad_input
+from . import euclidean
 
 
 # ---------------
@@ -299,7 +132,7 @@ class LeftKullbackLeiblerStdScalar(Function):
         grad_input_G = (
             grad_output
             * G_inv
-            @ (reference_point - arithmetic_mean(data))
+            @ (reference_point - euclidean.arithmetic_mean(data))
             @ G_inv
             / 2
             / std_scalar
@@ -324,7 +157,8 @@ def harmonic_curve(
 
         \gamma(t) = \big((1-t)\,P_1^{-1} + t\,P_2^{-1}\big)^{-1}
 
-    the harmonic analogue of :func:`euclidean_geodesic`: a Euclidean
+    the harmonic analogue of
+    :func:`~yetanotherspdnet.functions.spd_geometries.euclidean.euclidean_geodesic`: a Euclidean
     geodesic between the matrix inverses, inverted back.
 
     Parameters
@@ -352,7 +186,7 @@ def _harmonic_curve(
     """Harmonic curve at t and the inverses of point1 and point2."""
     point1_inv = inv_SPD(point1)
     point2_inv = inv_SPD(point2)
-    point_inv = euclidean_geodesic(point1_inv, point2_inv, t)
+    point_inv = euclidean.euclidean_geodesic(point1_inv, point2_inv, t)
     return inv_SPD(point_inv), point1_inv, point2_inv
 
 
@@ -452,7 +286,7 @@ def harmonic_mean(data: torch.Tensor) -> torch.Tensor:
 def _harmonic_mean(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Harmonic mean of a batch (ndim > 2) and the inverses of the batch."""
     inv_data = inv_SPD(data)
-    return inv_SPD(arithmetic_mean(inv_data)), inv_data
+    return inv_SPD(euclidean.arithmetic_mean(inv_data)), inv_data
 
 
 class HarmonicMean(Function):
@@ -631,10 +465,17 @@ class RightKullbackLeiblerStdScalar(Function):
             / n_matrices
         )
         grad_input_G = (
-            grad_output * (arithmetic_mean(data_inv) - G_inv) / 2 / std_scalar
+            grad_output * (euclidean.arithmetic_mean(data_inv) - G_inv) / 2 / std_scalar
         )
         # std = 0: zero subgradient instead of 0/0
         return (
             zero_where_zero_std(grad_input_data, std_scalar),
             zero_where_zero_std(grad_input_G, std_scalar),
         )
+
+
+# moved to spd_geometries.euclidean
+euclidean_geodesic = _deprecated("euclidean_geodesic", euclidean.euclidean_geodesic)
+EuclideanGeodesic = _deprecated("EuclideanGeodesic", euclidean.EuclideanGeodesic)
+arithmetic_mean = _deprecated("arithmetic_mean", euclidean.arithmetic_mean)
+ArithmeticMean = _deprecated("ArithmeticMean", euclidean.ArithmeticMean)

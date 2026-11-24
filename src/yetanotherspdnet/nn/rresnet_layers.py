@@ -3,6 +3,8 @@
 import torch
 from torch import nn
 
+from yetanotherspdnet._deprecation import _deprecated
+from yetanotherspdnet.functions.spd_geometries import affine_invariant
 from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
     AffineInvariantExp,
     affine_invariant_exp,
@@ -280,33 +282,6 @@ class SpectralVectorField(nn.Module):
         )
 
 
-def affine_invariant_norm(base: torch.Tensor, tangent: torch.Tensor) -> torch.Tensor:
-    r"""
-    Affine-invariant norm of tangent vectors.
-
-    :math:`\lVert X^{-1/2} V X^{-1/2} \rVert_F = \lVert L^{-1} V L^{-\top} \rVert_F`
-    with :math:`X = LL^\top`: Cholesky and triangular solves only, so the
-    gradient does not go through an eigendecomposition.
-
-    Parameters
-    ----------
-    base : torch.Tensor of shape (..., n, n)
-        SPD base points
-
-    tangent : torch.Tensor of shape (..., n, n)
-        Symmetric tangent vectors at *base*
-
-    Returns
-    -------
-    norm : torch.Tensor of shape (...)
-        Affine-invariant norms
-    """
-    cholesky = torch.linalg.cholesky(base)
-    half = torch.linalg.solve_triangular(cholesky, tangent, upper=False)
-    whitened = torch.linalg.solve_triangular(cholesky, half.mT, upper=False)
-    return torch.linalg.matrix_norm(whitened)
-
-
 class ResidualBlock(nn.Module):
     """
     Riemannian residual block on SPD manifold.
@@ -431,7 +406,7 @@ class ResidualBlock(nn.Module):
         if self.metric == "log_euclidean":
             return self.expm(self.logm(data) + tangent)
         # unit affine-invariant step (reference implementation)
-        norm = affine_invariant_norm(data, tangent).clamp_min(1e-12)
+        norm = affine_invariant.affine_invariant_norm(data, tangent).clamp_min(1e-12)
         result = self.exp_map(data, tangent / norm[..., None, None])
         return affine_invariant_projx(result)
 
@@ -444,3 +419,9 @@ class ResidualBlock(nn.Module):
             f"ResidualBlock(n_features={self.n_features}, metric={self.metric}, "
             f"vector_field={self.vector_field})"
         )
+
+
+# moved to functions.spd_geometries.affine_invariant
+affine_invariant_norm = _deprecated(
+    "affine_invariant_norm", affine_invariant.affine_invariant_norm
+)

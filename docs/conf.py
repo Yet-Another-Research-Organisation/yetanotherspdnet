@@ -60,6 +60,18 @@ python_display_short_literal_types = True
 python_maximum_signature_line_length = 88  # long signatures: one parameter per line
 autosummary_generate = False  # summary tables only, no stub pages
 
+
+def _skip_deprecated(app, what, name, obj, skip, options):  # noqa: ARG001
+    """Leave deprecated aliases (marked ``__deprecated__``) out of autodoc."""
+    if hasattr(obj, "__deprecated__"):
+        return True
+    return None
+
+
+def setup(app):
+    app.connect("autodoc-skip-member", _skip_deprecated)
+
+
 # Napoleon settings (NumPy style docstrings)
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True

@@ -1706,9 +1706,6 @@ class CongruenceSPD(Function):
             Gradient of the loss with respect to the SPD matrix used for congruence
         """
         data, matrix = ctx.saved_tensors
-        # return matrix @ grad_output @ matrix, torch.sum(
-        #    2 * symmetrize(grad_output @ matrix @ data), dim=tuple(range(data.ndim - 2))
-        # )
         return (
             matrix @ symmetrize(grad_output) @ matrix,
             2
@@ -1883,10 +1880,6 @@ class Whitening(Function):
         """
         data, eigvals_matrix, eigvecs_matrix, inv_sqrtm_matrix = ctx.saved_tensors
         grad_input_data = inv_sqrtm_matrix @ symmetrize(grad_output) @ inv_sqrtm_matrix
-        # syl_right = -torch.sum(
-        #    2 * symmetrize(grad_input_data @ data @ inv_sqrtm_matrix),
-        #    dim=tuple(range(data.ndim - 2)),
-        # )
         syl_right = -2 * symmetrize(
             torch.einsum("...ik,...kl,lj->ij", grad_input_data, data, inv_sqrtm_matrix)
         )
@@ -1981,13 +1974,5 @@ class CongruenceRectangular(Function):
         """
         data, weight = ctx.saved_tensors
         grad_input_data = weight @ grad_output @ weight.transpose(-1, -2)
-        # grad_input_W = 2 * torch.sum(
-        #    grad_output @ W @ data, dim=tuple(range(data.ndim - 2))
-        # )
         grad_input_W = 2 * torch.einsum("...ik,kl,...lj->ij", data, weight, grad_output)
         return grad_input_data, grad_input_W
-
-
-# --------------------------
-# Symmetric Kronecker stuffs
-# --------------------------
