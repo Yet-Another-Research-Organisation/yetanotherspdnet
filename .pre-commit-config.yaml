@@ -45,15 +45,17 @@ repos:
       # Checks for private key files
       - id: detect-private-key
 
-  # MyPy - Optional static type checking (warning only)
+  # MyPy - optional static type checking, informational as in CI: not run on
+  # commit, run it with `pre-commit run mypy --hook-stage manual --all-files`
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.7.1
     hooks:
       - id: mypy
         additional_dependencies: [torch, types-setuptools]
-        args: [--ignore-missing-imports, --no-strict-optional]
-        # Don't fail on mypy errors (just warnings)
-        verbose: true
+        # options come from [tool.mypy] in pyproject.toml (the former
+        # --no-strict-optional contradicted its no_implicit_optional)
+        args: [--config-file=pyproject.toml]
+        stages: [manual]
         # Only check src directory
         files: ^src/
 
