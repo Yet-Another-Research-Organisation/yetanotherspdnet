@@ -76,7 +76,10 @@ def test_autograd_std_identical_matrices_is_finite(name):
     data = point.expand(5, N, N).clone().requires_grad_(True)
     reference = point.clone().requires_grad_(True)
     std = VARIANCE_FUNCTIONS[name](data, reference)
-    assert std.item() == pytest.approx(0.0, abs=1e-7)
+    # the variance is zero up to rounding (about eps * tr X), so the std is zero up to
+    # sqrt(eps * tr X); its exact value depends on the BLAS/LAPACK build
+    tolerance = 10 * (torch.finfo(F64).eps * point.trace().item()) ** 0.5
+    assert std.item() == pytest.approx(0.0, abs=tolerance)
     std.backward()
     assert torch.isfinite(data.grad).all()
     assert torch.isfinite(reference.grad).all()
