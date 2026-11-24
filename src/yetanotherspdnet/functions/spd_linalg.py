@@ -1,6 +1,8 @@
 """Core SPD linear algebra: matrix functions, congruences and vectorization."""
 
-from collections.abc import Callable
+import contextlib
+import contextvars
+from collections.abc import Callable, Iterator
 
 import torch
 from torch.autograd import Function
@@ -256,6 +258,130 @@ class VechBatch(Function):
         return unvech_batch(grad_output, ctx.n_features)
 
 
+# -----------------------------------------
+# Eigendecompositions (optional upcasting)
+# -----------------------------------------
+_EIGH_DTYPE: contextvars.ContextVar[torch.dtype | None] = contextvars.ContextVar(
+    "eigh_dtype", default=None
+)
+
+
+def get_eigh_dtype() -> torch.dtype | None:
+    """
+    Return the dtype of the eigendecompositions set by :func:`eigh_precision`.
+
+    Returns
+    -------
+    torch.dtype or None
+        The decomposition dtype, None for the dtype of the input
+    """
+    return _EIGH_DTYPE.get()
+
+
+@contextlib.contextmanager
+def eigh_precision(dtype: torch.dtype | None) -> Iterator[None]:
+    r"""
+    Compute the eigendecompositions of the library in *dtype* (mixed precision).
+
+    Inside the context, every symmetric eigendecomposition of the library
+    (:func:`symmetric_eigh`, :func:`symmetric_eigvalsh`) of a tensor of another
+    floating dtype is computed on the input cast to *dtype*, and its
+    eigenvalues and eigenvectors are cast back: with ``dtype=torch.float64`` a
+    float32 model gets the eigenvalues of its float32 matrices to float64
+    accuracy (float32 ``eigh`` resolves the eigenvalues only to about
+    :math:`\varepsilon_{32} \lVert X \rVert`, so the small eigenvalues of
+    ill-conditioned matrices lose all their digits, or turn negative), while
+    everything else stays in float32. The layers and models expose it as their
+    ``eigh_dtype`` option. The setting is read when a decomposition is computed;
+    the manual backwards reuse the decompositions of their forward.
+
+    Parameters
+    ----------
+    dtype : torch.dtype or None
+        dtype of the decompositions (None: the dtype of each input)
+
+    Yields
+    ------
+    None
+    """
+    token = _EIGH_DTYPE.set(dtype)
+    try:
+        yield
+    finally:
+        _EIGH_DTYPE.reset(token)
+
+
+def eigh_context(
+    dtype: torch.dtype | None,
+) -> contextlib.AbstractContextManager[None]:
+    """
+    Context of :func:`eigh_precision` for *dtype*, or a no-op for None.
+
+    Unlike ``eigh_precision(None)``, None keeps an enclosing setting (a layer
+    without ``eigh_dtype`` inside a model with one).
+
+    Parameters
+    ----------
+    dtype : torch.dtype or None
+        dtype of the decompositions
+
+    Returns
+    -------
+    contextlib.AbstractContextManager
+        The context manager
+    """
+    if dtype is None:
+        return contextlib.nullcontext()
+    return eigh_precision(dtype)
+
+
+def symmetric_eigh(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Eigendecomposition of symmetric matrices, in the precision of :func:`eigh_precision`.
+
+    ``torch.linalg.eigh`` (ascending eigenvalues), computed in the dtype set by
+    :func:`eigh_precision` when there is one and cast back to the dtype of
+    *data*.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    Returns
+    -------
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors
+    """
+    dtype = _EIGH_DTYPE.get()
+    if dtype is None or dtype == data.dtype:
+        return torch.linalg.eigh(data)
+    eigvals, eigvecs = torch.linalg.eigh(data.to(dtype))
+    return eigvals.to(data.dtype), eigvecs.to(data.dtype)
+
+
+def symmetric_eigvalsh(data: torch.Tensor) -> torch.Tensor:
+    """
+    Eigenvalues of symmetric matrices, in the precision of :func:`eigh_precision`.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    Returns
+    -------
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues, ascending
+    """
+    dtype = _EIGH_DTYPE.get()
+    if dtype is None or dtype == data.dtype:
+        return torch.linalg.eigvalsh(data)
+    return torch.linalg.eigvalsh(data.to(dtype)).to(data.dtype)
+
+
 # -------------------------
 # Operations on eigenvalues
 # -------------------------
@@ -506,7 +632,7 @@ def gevd(
     """
     L = torch.linalg.cholesky(point1)
     L_inv = torch.inverse(L)
-    general_eigvals, U = torch.linalg.eigh(L_inv @ point2 @ L_inv.transpose(-2, -1))
+    general_eigvals, U = symmetric_eigh(L_inv @ point2 @ L_inv.transpose(-2, -1))
     return general_eigvals, (L @ U).transpose(-2, -1), L_inv.transpose(-2, -1) @ U
 
 
@@ -656,7 +782,7 @@ def _invm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Ten
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, inv), eigvals, eigvecs
 
 
@@ -750,7 +876,7 @@ def sqrtm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Ten
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, torch.sqrt), eigvals, eigvecs
 
 
@@ -832,7 +958,7 @@ def inv_sqrtm_SPD(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, inv_sqrt), eigvals, eigvecs
 
 
@@ -916,7 +1042,7 @@ def sqrtm_and_inv_sqrtm_SPD(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return (
         eigh_operation(eigvals, eigvecs, torch.sqrt),
         eigh_operation(eigvals, eigvecs, inv_sqrt),
@@ -1020,7 +1146,7 @@ def powm_SPD(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     pow_fun = lambda x: torch.pow(x, exponent)
     return eigh_operation(eigvals, eigvecs, pow_fun), eigvals, eigvecs
 
@@ -1142,7 +1268,7 @@ def logm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tens
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, torch.log), eigvals, eigvecs
 
 
@@ -1224,7 +1350,7 @@ def expm_symmetric(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, torch.exp), eigvals, eigvecs
 
 
@@ -1312,7 +1438,7 @@ def scaled_softplus_symmetric(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, scaled_softplus), eigvals, eigvecs
 
 
@@ -1398,7 +1524,7 @@ def inv_scaled_softplus_SPD(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, inv_scaled_softplus), eigvals, eigvecs
 
 
@@ -1571,7 +1697,7 @@ def eigh_relu(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     eps = _resolve_bound(eps, eigvals)
     operation = lambda x: torch.clamp(x, min=eps)
     return eigh_operation(eigvals, eigvecs, operation), eigvals, eigvecs
@@ -1674,7 +1800,7 @@ def eigh_clamp(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     min_eigval = _resolve_bound(min_eigval, eigvals)
     max_eigval = _resolve_bound(max_eigval, eigvals)
     operation = lambda x: _clamp(x, min_eigval, max_eigval)
@@ -1780,7 +1906,7 @@ def eigvalsh_symmetric(data: torch.Tensor) -> torch.Tensor:
     eigvals : torch.Tensor of shape (..., n_features)
         Eigenvalues, ascending
     """
-    return torch.linalg.eigvalsh(data)
+    return symmetric_eigvalsh(data)
 
 
 class EigvalshSymmetric(Function):
@@ -1810,7 +1936,7 @@ class EigvalshSymmetric(Function):
         eigvals : torch.Tensor of shape (..., n_features)
             Eigenvalues, ascending
         """
-        eigvals, eigvecs = torch.linalg.eigh(data)
+        eigvals, eigvecs = symmetric_eigh(data)
         ctx.save_for_backward(eigvecs)
         return eigvals
 
@@ -1890,7 +2016,7 @@ def eigh_relu_bias(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     operation = _clamped_bias_operation(bias, eps)
     return eigh_operation(eigvals, eigvecs, operation), eigvals, eigvecs
 

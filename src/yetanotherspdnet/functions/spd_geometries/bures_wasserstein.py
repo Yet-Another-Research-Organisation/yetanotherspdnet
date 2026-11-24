@@ -31,6 +31,7 @@ from ..spd_linalg import (
     solve_sylvester_SPD,
     sqrtm_and_inv_sqrtm_SPD,
     sqrtm_SPD,
+    symmetric_eigh,
     symmetrize,
 )
 from .euclidean import arithmetic_mean
@@ -206,7 +207,7 @@ class LyapunovSolveSPD(Function):
         solution : torch.Tensor of shape (..., n_features, n_features)
             Solutions :math:`Z`
         """
-        eigvals, eigvecs = torch.linalg.eigh(base)
+        eigvals, eigvecs = symmetric_eigh(base)
         solution = solve_sylvester_SPD(eigvals, eigvecs, rhs)
         ctx.save_for_backward(eigvals, eigvecs, solution)
         ctx.base_shape = base.shape
@@ -288,7 +289,7 @@ def bures_wasserstein_parallel_transport_to_identity(
     transported : torch.Tensor of shape (..., n_features, n_features)
         Tangent vectors at identity
     """
-    eigvals, eigvecs = torch.linalg.eigh(source)
+    eigvals, eigvecs = symmetric_eigh(source)
     lam_sum = eigvals.unsqueeze(-1) + eigvals.unsqueeze(-2)
     scale = torch.sqrt(2.0 / lam_sum)
     rotated = eigvecs.transpose(-2, -1) @ tangent_vec @ eigvecs
@@ -324,7 +325,7 @@ def bures_wasserstein_parallel_transport_from_identity(
     transported : torch.Tensor of shape (..., n_features, n_features)
         Tangent vectors at *target*
     """
-    eigvals, eigvecs = torch.linalg.eigh(target)
+    eigvals, eigvecs = symmetric_eigh(target)
     delta_sum = eigvals.unsqueeze(-1) + eigvals.unsqueeze(-2)
     scale = torch.sqrt(delta_sum / 2.0)
     rotated = eigvecs.transpose(-2, -1) @ tangent_vec @ eigvecs
@@ -379,7 +380,7 @@ class ParallelTransportFromIdentityBW(Function):
                 "ParallelTransportFromIdentityBW expects a single target matrix, "
                 f"got shape {tuple(target.shape)}"
             )
-        eigvals, eigvecs = torch.linalg.eigh(target)
+        eigvals, eigvecs = symmetric_eigh(target)
         scale = torch.sqrt((eigvals.unsqueeze(-1) + eigvals.unsqueeze(-2)) / 2.0)
         rotated = eigvecs.transpose(-2, -1) @ tangent_vec @ eigvecs
         ctx.save_for_backward(eigvecs, scale, rotated)
@@ -485,7 +486,7 @@ class ParallelTransportToIdentityBW(Function):
                 "ParallelTransportToIdentityBW expects a single source matrix, "
                 f"got shape {tuple(source.shape)}"
             )
-        eigvals, eigvecs = torch.linalg.eigh(source)
+        eigvals, eigvecs = symmetric_eigh(source)
         scale = torch.sqrt((eigvals.unsqueeze(-1) + eigvals.unsqueeze(-2)) / 2.0)
         rotated = eigvecs.transpose(-2, -1) @ tangent_vec @ eigvecs
         ctx.save_for_backward(eigvecs, scale, rotated)

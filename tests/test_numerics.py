@@ -140,3 +140,63 @@ def test_per_matrix_floor_backward():
     )
     out = EighClamp.apply(data, floor, None)
     torch.testing.assert_close(out, EighReLu.apply(data, floor))
+
+
+# ---------------------------------------------------------------------------
+# mixed precision: eigendecompositions in float64 for float32 data
+# ---------------------------------------------------------------------------
+def test_eigh_precision_context():
+    from yetanotherspdnet.functions.spd_linalg import (
+        eigh_context,
+        eigh_precision,
+        get_eigh_dtype,
+        symmetric_eigh,
+    )
+
+    data = torch.diag(torch.tensor([1e-6, 1.0, 1e2]))
+    assert get_eigh_dtype() is None
+    with eigh_precision(F64):
+        assert get_eigh_dtype() == F64
+        eigvals, eigvecs = symmetric_eigh(data)
+        assert eigvals.dtype == eigvecs.dtype == torch.float32
+        with eigh_context(None):
+            assert get_eigh_dtype() == F64
+        with eigh_precision(None):
+            assert get_eigh_dtype() is None
+    assert get_eigh_dtype() is None
+
+
+def _ill_conditioned(dtype, kappa=1e6, n_matrices=8, seed=0):
+    generator = torch.Generator().manual_seed(seed)
+    q, _ = torch.linalg.qr(
+        torch.randn(n_matrices, N, N, dtype=F64, generator=generator)
+    )
+    lam = kappa ** torch.linspace(-0.5, 0.5, N, dtype=F64)
+    return ((q * lam) @ q.mT).to(dtype)
+
+
+def test_logeig_mixed_precision_is_more_accurate():
+    """float32 LogEig at kappa = 1e6: eigh_dtype=float64 removes the eigh error."""
+    from yetanotherspdnet.nn import LogEig
+
+    x32 = _ill_conditioned(torch.float32)
+    reference = LogEig()(x32.double())  # float64 on the same rounded input
+    err32 = (LogEig()(x32).double() - reference).abs().max()
+    err_mixed = (LogEig(eigh_dtype=F64)(x32).double() - reference).abs().max()
+    assert LogEig(eigh_dtype=F64)(x32).dtype == torch.float32
+    assert err_mixed < 1e-5
+    assert err_mixed < err32
+
+
+def test_model_eigh_dtype_keeps_hash_when_unset():
+    from yetanotherspdnet.model import SPDnet
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", AutogradOnlyWarning)
+        plain = SPDnet(N, [3], 2, dtype=torch.float32)
+        mixed = SPDnet(N, [3], 2, dtype=torch.float32, eigh_dtype=F64)
+    assert "eigh_dtype" not in repr(plain)
+    assert "eigh_dtype=torch.float64" in repr(mixed)
+    out = mixed(_ill_conditioned(torch.float32))
+    assert out.dtype == torch.float32
+    out.sum().backward()

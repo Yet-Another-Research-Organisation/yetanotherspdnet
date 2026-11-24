@@ -16,6 +16,7 @@ from ..functions.spd_linalg import (
     VecBatch,
     VechBatch,
     congruence_rectangular,
+    eigh_context,
     eigh_relu,
     eigh_relu_bias,
     logm_SPD,
@@ -264,7 +265,11 @@ class ReEig(nn.Module):
     """
 
     def __init__(
-        self, eps: float = 1e-4, use_autograd: bool = False, dim: int | None = None
+        self,
+        eps: float = 1e-4,
+        use_autograd: bool = False,
+        dim: int | None = None,
+        eigh_dtype: torch.dtype | None = None,
     ) -> None:
         """
         Build a ReEig layer.
@@ -281,6 +286,12 @@ class ReEig(nn.Module):
             Use torch autograd for the computation of the gradient rather than
             the analytical formula. Default is False.
 
+        eigh_dtype : torch.dtype or None, optional
+            dtype of the eigendecompositions of the forward pass (e.g.
+            ``torch.float64`` in a float32 model: mixed precision, see
+            :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+            Default is None (the dtype of the data).
+
         dim : int, optional
             Dimension of the SPD matrices. Default is None.
             Used for logging purposes.
@@ -293,6 +304,7 @@ class ReEig(nn.Module):
             Autograd path (True) or hand-written Daleckii-Krein backward (False).
         """
         super().__init__()
+        self.eigh_dtype = eigh_dtype
         self.eps = eps
         self.use_autograd = use_autograd
         self.dim = dim
@@ -315,7 +327,8 @@ class ReEig(nn.Module):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of transformed SPD matrices
         """
-        return self.reeig_fun(data, self.eps)
+        with eigh_context(self.eigh_dtype):
+            return self.reeig_fun(data, self.eps)
 
     def __repr__(self) -> str:
         """
@@ -352,6 +365,7 @@ class ReEigBias(nn.Module):
         use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
+        eigh_dtype: torch.dtype | None = None,
     ) -> None:
         r"""
         Build a ReEigBias layer.
@@ -368,6 +382,12 @@ class ReEigBias(nn.Module):
         use_autograd : bool, optional
             Use torch autograd for the computation of the gradient rather than
             the analytical formula. Default is False
+
+        eigh_dtype : torch.dtype or None, optional
+            dtype of the eigendecompositions of the forward pass (e.g.
+            ``torch.float64`` in a float32 model: mixed precision, see
+            :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+            Default is None (the dtype of the data).
 
         device : torch.device, optional
             Device on which the layer is initialized.
@@ -386,6 +406,7 @@ class ReEigBias(nn.Module):
             Autograd path (True) or hand-written backward (False, default).
         """
         super().__init__()
+        self.eigh_dtype = eigh_dtype
         if not (0 < eps < 1):
             raise ValueError(f"eps must be in (0, 1), got {eps}")
         self.n_features = n_features
@@ -412,11 +433,12 @@ class ReEigBias(nn.Module):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
         """
-        if data.shape[-1] != self.n_features:
-            raise ValueError(
-                f"expected matrices of size {self.n_features}, got {data.shape[-1]}"
-            )
-        return self.reeig_bias_fun(data, self.bias, self.eps)
+        with eigh_context(self.eigh_dtype):
+            if data.shape[-1] != self.n_features:
+                raise ValueError(
+                    f"expected matrices of size {self.n_features}, got {data.shape[-1]}"
+                )
+            return self.reeig_bias_fun(data, self.bias, self.eps)
 
     def __repr__(self) -> str:
         """
@@ -442,7 +464,11 @@ class LogEig(nn.Module):
 
     """
 
-    def __init__(self, use_autograd: bool = False) -> None:
+    def __init__(
+        self,
+        use_autograd: bool = False,
+        eigh_dtype: torch.dtype | None = None,
+    ) -> None:
         """
         Build a LogEig layer.
 
@@ -455,12 +481,19 @@ class LogEig(nn.Module):
             Use torch autograd for the computation of the gradient rather than
             the analytical formula. Default is False.
 
+        eigh_dtype : torch.dtype or None, optional
+            dtype of the eigendecompositions of the forward pass (e.g.
+            ``torch.float64`` in a float32 model: mixed precision, see
+            :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+            Default is None (the dtype of the data).
+
         Attributes
         ----------
         use_autograd : bool
             Autograd path (True) or hand-written Daleckii-Krein backward (False).
         """
         super().__init__()
+        self.eigh_dtype = eigh_dtype
         self.use_autograd = use_autograd
         self.logmSPD = select_path(
             lambda data: logm_SPD(data)[0], LogmSPD.apply, self.use_autograd
@@ -480,7 +513,8 @@ class LogEig(nn.Module):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of transformed symmetric matrices
         """
-        return self.logmSPD(data)
+        with eigh_context(self.eigh_dtype):
+            return self.logmSPD(data)
 
     def __repr__(self) -> str:
         """
@@ -497,7 +531,10 @@ class LogEig(nn.Module):
 class Vec(nn.Module):
     r"""Full vectorization of a batch of matrices: ``(..., n, n) -> (..., n * n)``."""
 
-    def __init__(self, use_autograd: bool = False):
+    def __init__(
+        self,
+        use_autograd: bool = False,
+    ):
         """
         Vectorization of a batch of matrices along their last two dimensions.
 

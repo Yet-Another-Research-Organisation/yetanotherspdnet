@@ -23,6 +23,7 @@ from ..functions.spd_linalg import (
     SqrtmSPD,
     Whitening,
     congruence_SPD,
+    eigh_context,
     inv_sqrtm_SPD,
     powm_SPD,
     sqrtm_SPD,
@@ -376,17 +377,18 @@ class BatchNormSPDBase(ABC, nn.Module):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of transformed (normalized then biased) SPD matrices
         """
-        if _use_batch_statistics(self, data):
-            parameters, parameters_batch = self._get_norm_parameters(data)
-            with torch.no_grad():
-                self._update_running_parameters(parameters_batch)
-            self.training_step = self.training_step + 1
-            if self.is_dynamic:
-                self.current_ref_step += 1
-        else:
-            # training over, use overall parameters learnt on all batches
-            parameters = self._get_running_parameters()
-        return self._norm_and_bias(data, parameters)
+        with eigh_context(getattr(self, "eigh_dtype", None)):
+            if _use_batch_statistics(self, data):
+                parameters, parameters_batch = self._get_norm_parameters(data)
+                with torch.no_grad():
+                    self._update_running_parameters(parameters_batch)
+                self.training_step = self.training_step + 1
+                if self.is_dynamic:
+                    self.current_ref_step += 1
+            else:
+                # training over, use overall parameters learnt on all batches
+                parameters = self._get_running_parameters()
+            return self._norm_and_bias(data, parameters)
 
     @abstractmethod
     def _get_norm_parameters(self, data: torch.Tensor) -> tuple[Any, Any]:
@@ -560,6 +562,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
         use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
+        eigh_dtype: torch.dtype | None = None,
     ) -> None:
         """
         Batch normalization layer for SPDnet relying on a SPD mean.
@@ -643,6 +646,12 @@ class BatchNormSPDMean(BatchNormSPDBase):
             the analytical formula.
             Default is False
 
+        eigh_dtype : torch.dtype or None, optional
+            dtype of the eigendecompositions of the forward pass (e.g.
+            ``torch.float64`` in a float32 model: mixed precision, see
+            :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+            Default is None (the dtype of the data).
+
         device: torch.device, optional
             Device on which to store the parameters.
             Default is torch.device("cpu")
@@ -672,6 +681,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
             device,
             dtype,
         )
+        self.eigh_dtype = eigh_dtype
 
     def _init_bias_parameters(self) -> None:
         """Initialize bias parameters and their parametrization."""
@@ -907,6 +917,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         bw_batch_stats_grad: bool = True,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
+        eigh_dtype: torch.dtype | None = None,
     ) -> None:
         r"""
         Batch normalization layer for SPDnet relying on a SPD mean.
@@ -979,6 +990,12 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             the analytical formula.
             Default is False
 
+        eigh_dtype : torch.dtype or None, optional
+            dtype of the eigendecompositions of the forward pass (e.g.
+            ``torch.float64`` in a float32 model: mixed precision, see
+            :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+            Default is None (the dtype of the data).
+
         bw_theta : float, optional
             Power deformation :math:`\theta` of the generalized Bures-Wasserstein
             metric (GBWBN, Wang et al. 2025): data are mapped by
@@ -1036,7 +1053,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             use_autograd=use_autograd,
             device=device,
             dtype=dtype,
+            eigh_dtype=eigh_dtype,
         )
+        self.eigh_dtype = eigh_dtype
 
         # Bures-Wasserstein specific parameters
         if self.mean_type == "bures_wasserstein":
@@ -1298,9 +1317,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of transformed (normalized then biased) SPD matrices
         """
-        if self.mean_type == "bures_wasserstein":
-            return self._forward_bures_wasserstein(data)
-        return super().forward(data)
+        with eigh_context(self.eigh_dtype):
+            if self.mean_type == "bures_wasserstein":
+                return self._forward_bures_wasserstein(data)
+            return super().forward(data)
 
     def _forward_bures_wasserstein(self, data: torch.Tensor) -> torch.Tensor:
         """

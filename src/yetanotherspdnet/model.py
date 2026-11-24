@@ -5,6 +5,7 @@ import zlib
 import torch
 from torch import nn
 
+from yetanotherspdnet.functions.spd_linalg import eigh_context
 from yetanotherspdnet.nn.base import BiMap, LogEig, ReEig, Vec, Vech
 from yetanotherspdnet.nn.batchnorm import (
     BatchNormSPDMean,
@@ -44,6 +45,11 @@ class _ModelMixin:
             self.use_autograd.update(use_autograd)
         # kept for __repr__ (and so for the model hash)
         self._use_autograd_original = use_autograd
+
+    def _eigh_dtype_repr(self) -> str:
+        """``eigh_dtype`` line of the representation, empty when not set."""
+        eigh_dtype = getattr(self, "eigh_dtype", None)
+        return "" if eigh_dtype is None else f"  eigh_dtype={eigh_dtype},\n"
 
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """
@@ -163,6 +169,7 @@ class SPDnet(_ModelMixin, nn.Module):
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
+        eigh_dtype: torch.dtype | None = None,
     ) -> None:
         """
         Build an SPDnet model with hidden layers.
@@ -286,6 +293,12 @@ class SPDnet(_ModelMixin, nn.Module):
             Note that Vech module always uses manual gradient.
             Default is False
 
+        eigh_dtype : torch.dtype or None, optional
+            dtype of the eigendecompositions of the forward pass (e.g.
+            ``torch.float64`` in a float32 model: mixed precision, see
+            :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+            Default is None (the dtype of the data).
+
         device : torch.device, optional
             Device to run model on. Default is torch.device('cpu')
 
@@ -305,6 +318,7 @@ class SPDnet(_ModelMixin, nn.Module):
             Euclidean classification head.
         """
         super().__init__()
+        self.eigh_dtype = eigh_dtype
         self.input_dim = input_dim
         self.hidden_layers_size = hidden_layers_size
         self.output_dim = output_dim
@@ -460,15 +474,16 @@ class SPDnet(_ModelMixin, nn.Module):
         torch.Tensor
             Output tensor of shape (..., output_dim)
         """
-        # Run through SPDNet layers
-        X = self.spdnet_layers(X)
-        # Run through final layer(s)
-        X = self.vectorization(X)
-        X = self.linear(X)
-        # Apply softmax if required
-        if self.softmax:
-            X = self.softmax_layer(X)
-        return X
+        with eigh_context(self.eigh_dtype):
+            # Run through SPDNet layers
+            X = self.spdnet_layers(X)
+            # Run through final layer(s)
+            X = self.vectorization(X)
+            X = self.linear(X)
+            # Apply softmax if required
+            if self.softmax:
+                X = self.softmax_layer(X)
+            return X
 
     def __repr__(self) -> str:
         """Return the string representation of SPDnet."""
@@ -500,6 +515,8 @@ class SPDnet(_ModelMixin, nn.Module):
             f"  vec_type='{self.vec_type}',\n"
             f"  use_logeig={self.use_logeig},\n"
             f"  use_autograd={self._use_autograd_original},\n"
+            # only when set: the hashes of the existing configurations stay valid
+            f"{self._eigh_dtype_repr()}"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f")"
@@ -683,6 +700,12 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
         'bimap', 'logeig', 'batchnorm', 'vec', 'residual'.
         Default is False
 
+    eigh_dtype : torch.dtype or None, optional
+        dtype of the eigendecompositions of the forward pass (e.g.
+        ``torch.float64`` in a float32 model: mixed precision, see
+        :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+        Default is None (the dtype of the data).
+
     device : torch.device, optional
         Device. Default is torch.device("cpu")
 
@@ -731,8 +754,10 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
+        eigh_dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
+        self.eigh_dtype = eigh_dtype
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
@@ -868,12 +893,13 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
         torch.Tensor of shape (..., output_dim)
             Output predictions
         """
-        X = self.spd_layers(X)
-        X = self.vectorization(X)
-        X = self.linear(X)
-        if self.softmax:
-            X = self.softmax_layer(X)
-        return X
+        with eigh_context(self.eigh_dtype):
+            X = self.spd_layers(X)
+            X = self.vectorization(X)
+            X = self.linear(X)
+            if self.softmax:
+                X = self.softmax_layer(X)
+            return X
 
     def __repr__(self) -> str:
         """Return the representation of the module (its hyper-parameters)."""
@@ -910,6 +936,8 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
             f"  vec_type={self.vec_type!r},\n"
             f"  use_logeig={self.use_logeig!r},\n"
             f"  use_autograd={self._use_autograd_original!r},\n"
+            # only when set: the hashes of the existing configurations stay valid
+            f"{self._eigh_dtype_repr()}"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f")"
@@ -1042,6 +1070,12 @@ class RResNet(_ModelMixin, nn.Module):
         'bimap', 'reeig', 'logeig', 'batchnorm', 'vec', 'residual'.
         Default is False
 
+    eigh_dtype : torch.dtype or None, optional
+        dtype of the eigendecompositions of the forward pass (e.g.
+        ``torch.float64`` in a float32 model: mixed precision, see
+        :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+        Default is None (the dtype of the data).
+
     device : torch.device, optional
         Device. Default is torch.device("cpu")
 
@@ -1093,8 +1127,10 @@ class RResNet(_ModelMixin, nn.Module):
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
+        eigh_dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
+        self.eigh_dtype = eigh_dtype
         if len(hidden_layers_size) != len(n_residual_blocks):
             raise ValueError(
                 f"hidden_layers_size and n_residual_blocks must have same length, "
@@ -1258,12 +1294,13 @@ class RResNet(_ModelMixin, nn.Module):
         torch.Tensor of shape (..., output_dim)
             Output predictions
         """
-        X = self.spd_layers(X)
-        X = self.vectorization(X)
-        X = self.linear(X)
-        if self.softmax:
-            X = self.softmax_layer(X)
-        return X
+        with eigh_context(self.eigh_dtype):
+            X = self.spd_layers(X)
+            X = self.vectorization(X)
+            X = self.linear(X)
+            if self.softmax:
+                X = self.softmax_layer(X)
+            return X
 
     def __repr__(self) -> str:
         """Return the representation of the module (its hyper-parameters)."""
@@ -1303,6 +1340,8 @@ class RResNet(_ModelMixin, nn.Module):
             f"  vec_type={self.vec_type!r},\n"
             f"  use_logeig={self.use_logeig!r},\n"
             f"  use_autograd={self._use_autograd_original!r},\n"
+            # only when set: the hashes of the existing configurations stay valid
+            f"{self._eigh_dtype_repr()}"
             f"  device={self.device},\n"
             f"  dtype={self.dtype},\n"
             f")"

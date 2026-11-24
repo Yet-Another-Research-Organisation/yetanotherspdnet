@@ -29,11 +29,15 @@ from ..spd_linalg import (
     eigh_clamp,
     eigh_operation,
     eigh_operation_grad,
+    eigh_precision,
     expm_symmetric,
+    get_eigh_dtype,
     inv_sqrtm_SPD,
     logm_SPD,
     solve_sylvester_SPD,
     sqrtm_and_inv_sqrtm_SPD,
+    symmetric_eigh,
+    symmetric_eigvalsh,
     symmetrize,
 )
 from .euclidean import arithmetic_mean
@@ -95,7 +99,7 @@ def _affine_invariant_geodesic(
         Eigendecomposition of point1^{-1/2} point2 point1^{-1/2}
     """
     point1_sqrtm, point1_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point1)
-    eigvals_middle, eigvecs_middle = torch.linalg.eigh(
+    eigvals_middle, eigvecs_middle = symmetric_eigh(
         point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
     )
     pow_t = lambda x: torch.pow(x, t)
@@ -156,6 +160,8 @@ class AffineInvariantGeodesic(Function):
             point1,
             point2,
         )
+        # the backward recomputes decompositions: same precision as the forward
+        ctx.eigh_dtype = get_eigh_dtype()
         # save_for_backward only accepts tensors: a python t is stored on ctx
         ctx.t_is_tensor = isinstance(t, torch.Tensor)
         if ctx.t_is_tensor:
@@ -227,10 +233,11 @@ class AffineInvariantGeodesic(Function):
 
         if ctx.needs_input_grad[0]:
             # Gradient with respect to point1
-            point2_sqrtm, point2_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point2)
-            eigvals_middle_term2, eigvecs_middle_term2 = torch.linalg.eigh(
-                point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
-            )
+            with eigh_precision(ctx.eigh_dtype):
+                point2_sqrtm, point2_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point2)
+                eigvals_middle_term2, eigvecs_middle_term2 = symmetric_eigh(
+                    point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
+                )
             pow_1_t = lambda x: torch.pow(x, 1 - t)
             pow_1_t_deriv = lambda x: (1 - t) * torch.pow(x, -t)
             grad_input1 = (
@@ -370,14 +377,14 @@ class AffineInvariantMeanIteration(Function):
             eigvecs_mean_iterate,
         ) = sqrtm_and_inv_sqrtm_SPD(mean_iterate)
         transformed_data = mean_iterate_inv_sqrtm @ data @ mean_iterate_inv_sqrtm
-        eigvals_transformed_data, eigvecs_transformed_data = torch.linalg.eigh(
+        eigvals_transformed_data, eigvecs_transformed_data = symmetric_eigh(
             transformed_data
         )
         log_transformed_data = eigh_operation(
             eigvals_transformed_data, eigvecs_transformed_data, torch.log
         )
         log_mean = stepsize * arithmetic_mean(log_transformed_data)
-        eigvals_log_mean, eigvecs_log_mean = torch.linalg.eigh(log_mean)
+        eigvals_log_mean, eigvecs_log_mean = symmetric_eigh(log_mean)
         exp_log_mean = eigh_operation(eigvals_log_mean, eigvecs_log_mean, torch.exp)
         ctx.shape = data.shape
         ctx.stepsize = stepsize
@@ -537,7 +544,7 @@ def affine_invariant_std_scalar(
     n_matrices = math.prod(data.shape[:-2])
     G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
     transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
-    eigvals = torch.linalg.eigvalsh(transformed_data)
+    eigvals = symmetric_eigvalsh(transformed_data)
     variance = torch.sum(torch.log(eigvals) ** 2) / n_matrices
     return std_from_variance(variance)
 
@@ -569,7 +576,7 @@ class AffineInvariantStdScalar(Function):
         n_matrices = math.prod(data.shape[:-2])
         G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
         transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
-        eigvals_transdat, eigvecs_transdat = torch.linalg.eigh(transformed_data)
+        eigvals_transdat, eigvecs_transdat = symmetric_eigh(transformed_data)
         variance = torch.sum(torch.log(eigvals_transdat) ** 2) / n_matrices
         scalar_std = std_from_variance(variance)
         ctx.n_matrices = n_matrices
