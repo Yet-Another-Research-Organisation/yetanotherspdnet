@@ -2450,6 +2450,70 @@ class TestEighReLuBias:
         assert_close(grads[0][1], grads[1][1])
 
 
+class TestPolarFactor:
+    """Orthogonal polar factor W = U V^T of A = U S V^T, with manual backward."""
+
+    def test_matches_scipy(self, device, dtype, generator):
+        from scipy.linalg import polar
+
+        A = torch.randn(4, 5, 5, device=device, dtype=dtype, generator=generator)
+        W = spd_linalg.PolarFactor.apply(A)
+        for a, w in zip(A, W):
+            u, _ = polar(a.cpu().numpy())
+            assert_close(w.cpu(), torch.from_numpy(u))
+        eye = torch.eye(5, device=device, dtype=dtype)
+        assert_close(W @ W.transpose(-2, -1), eye.expand_as(W))
+
+    @pytest.mark.parametrize("case", ["random", "identity", "near_tie", "kappa_1e6"])
+    def test_gradcheck(self, case, device, dtype, generator):
+        n = 5
+        if case == "random":
+            A = torch.randn(3, n, n, device=device, dtype=dtype, generator=generator)
+        elif case == "identity":  # all singular values equal
+            A = torch.eye(n, device=device, dtype=dtype).repeat(2, 1, 1)
+        elif case == "near_tie":
+            S = torch.tensor(
+                [1.0, 1.0, 1.0 + 1e-9, 2.0, 2.0], device=device, dtype=dtype
+            )
+            Q = torch.linalg.qr(
+                torch.randn(n, n, device=device, dtype=dtype, generator=generator)
+            )[0]
+            A = (Q * S) @ Q.transpose(-2, -1)
+        else:
+            A = random_SPD(
+                n, 2, cond=1e6, device=device, dtype=dtype, generator=generator
+            )
+        assert torch.autograd.gradcheck(
+            spd_linalg.PolarFactor.apply, (A.requires_grad_(),)
+        )
+
+    def test_manual_matches_autograd(self, device, dtype, generator):
+        A = torch.randn(3, 5, 5, device=device, dtype=dtype, generator=generator)
+        cotangent = torch.randn(
+            3, 5, 5, device=device, dtype=dtype, generator=generator
+        )
+        grads = []
+        for fun in (
+            lambda a: spd_linalg.polar_factor(a)[0],
+            spd_linalg.PolarFactor.apply,
+        ):
+            a = A.clone().requires_grad_()
+            (fun(a) * cotangent).sum().backward()
+            grads.append(a.grad)
+        assert_close(grads[0], grads[1])
+
+    def test_mixed_precision(self, device, generator):
+        A = torch.randn(
+            3, 5, 5, device=device, dtype=torch.float32, generator=generator
+        )
+        with spd_linalg.eigh_precision(torch.float64):
+            W = spd_linalg.polar_factor(A)[0]
+        assert W.dtype == torch.float32
+        assert_close(
+            W.double(), spd_linalg.polar_factor(A.double())[0], atol=1e-6, rtol=0
+        )
+
+
 # ---------------------------------------------------------------------------
 # congruences with one transformation per matrix
 # ---------------------------------------------------------------------------

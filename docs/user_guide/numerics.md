@@ -144,7 +144,15 @@ are equal. It appears in:
   of the operator $S \mapsto (GS + SG)/2$, whose derivative solves a Sylvester
   equation between operators with denominators
   $b_{ij} + b_{kj}$, $b_{ij} = \sqrt{(\delta_i + \delta_j)/2} > 0$
-  (`ParallelTransportFromIdentityBW`), finite even at $G = I$.
+  (`ParallelTransportFromIdentityBW`), finite even at $G = I$;
+- **the polar factor** $W = UV^\top$ of $A = U\Sigma V^\top$
+  (`spd_linalg.PolarFactor`), through which every Bures–Wasserstein cross
+  term is computed ([section 3](#3-means-as-iterations)): differentiating
+  $A = WH$ gives $dW = U\hat\Omega V^\top$ with
+  $\hat\Omega_{ij} = (M_{ij} - M_{ji})/(\sigma_i + \sigma_j)$,
+  $M = U^\top dA\,V$, a Sylvester equation with positive denominators, finite
+  at repeated singular values (the SVD's own backward has
+  $1/(\sigma_i^2 - \sigma_j^2)$).
 
 ## 3. Means as iterations
 
@@ -155,7 +163,26 @@ are equal. It appears in:
 | arithmetic / harmonic | $\tfrac1N\sum_i X_i$ / $\big(\tfrac1N\sum_i X_i^{-1}\big)^{-1}$ | inverses through Cholesky |
 | GAH | $H \#_{1/2} A = H^{1/2}\big(H^{-1/2} A H^{-1/2}\big)^{1/2} H^{1/2}$ | closed form, close to the Karcher mean at the cost of two cheap means |
 | adaptive GAH | $H \#_t A$, $t = \operatorname{sigmoid}(\tau)$ learned | $t = 1/2$ at initialization |
-| Bures–Wasserstein | $G_{k+1} = G_k^{-1/2}\big(\tfrac1N\sum_i (G_k^{1/2} X_i G_k^{1/2})^{1/2}\big)^2 G_k^{-1/2}$ | from the arithmetic mean, one iteration by default |
+| Bures–Wasserstein | $G_{k+1} = G_k^{-1/2}\big(\tfrac1N\sum_i (G_k^{1/2} X_i G_k^{1/2})^{1/2}\big)^2 G_k^{-1/2} = C_k C_k^\top$, $C_k = \tfrac1N \sum_i X_i^{1/2} W_i$ | from the arithmetic mean, one iteration by default; $W_i$ polar factor of $X_i^{1/2} G_k^{1/2}$ (below) |
+
+**Bures–Wasserstein cross terms.** Every BW operation needs
+$(B^{1/2} X B^{1/2})^{1/2}$. An eigendecomposition of $B^{1/2} X B^{1/2}$ works
+at the product of the condition numbers of $X$ and $B$: its small eigenvalues
+lose their digits from $\kappa \approx 10^{8}$ in float64 and $10^{4}$ in
+float32. The package takes instead the SVD of $A = X^{1/2} B^{1/2} = U\Sigma
+V^\top$ (condition number at most $\sqrt{\kappa(X)\kappa(B)}$):
+$(B^{1/2} X B^{1/2})^{1/2} = V\Sigma V^\top$, and with the polar factor
+$W = UV^\top$ every formula is written without inverse square root:
+$(BX)^{1/2} = B^{1/2} W^\top X^{1/2}$ (log map), $d_{BW}^2 = \lVert X^{1/2} W
+- B^{1/2}\rVert_F^2$ (distance and std, no cancellation near $X = B$; $W$
+minimizes this over orthogonal matrices, so it does not enter the gradient),
+the geodesic $Y_t Y_t^\top$ with $Y_t = (1-t)X_1^{1/2} + tX_2^{1/2}W$, and the
+mean step above. Against a 60-digit reference ($n = 6$, $\kappa(X), \kappa(B)
+\le 10^9$), the float64 relative error at $\kappa = 10^9$ goes from
+$1.3 \cdot 10^{-9}$ with 75 % failures (log map) and 1.0 (std) to
+$3 \cdot 10^{-13}$ and $10^{-14}$; in float32 the operations no longer fail
+up to $\kappa = 10^{7}$ (error $\le 3.4 \cdot 10^{-5}$), where the
+eigendecomposition failed from $10^{4}$ to $10^{6}$.
 
 The iterations are unrolled, and the gradient flows through each of them with
 the manual spectral backwards. A small, fixed number of iterations is
@@ -234,8 +261,13 @@ point would silently move it at every forward pass.
 - **GBWBN** works in Bures–Wasserstein geometry, whose exponential at the
   identity $\mathrm{Exp}_I(V) = (I + V/2)^2$ is only injective when
   $I + V/2 \succ 0$. Outside that domain, a matrix is folded back and can come
-  out numerically singular. The power $\theta < 1$ compresses the spectrum and
-  keeps most matrices inside the domain.
+  out numerically singular. The BW metric is not scale invariant, so folding
+  is driven by how far the eigenvalues are from 1 (their common scale and
+  their spread), not by the condition number as such: $\kappa = 10^2$ data
+  with eigenvalues in $[10^{-2}, 1]$ never fold, the same data times $10^2$
+  fold at the centring step for 99.8 % of the matrices ($\theta = 1$).
+  `bw_init_metric="trace_scale"` absorbs the common scale into $M$ and $G$
+  (0 %), and the power $\theta < 1$ compresses the spread; see {doc}`batchnorm`.
 
 ```{figure} ../_static/diagrams/bw_fold.svg
 :width: 60%
@@ -343,8 +375,9 @@ are multiplied by 190 before an $\epsilon = 0.8$ ReEig).
   nearly singular batches that LAPACK handles on CPU. For matrices of a few
   hundred rows, a CPU run with a few threads is often as fast as a small GPU.
   LAPACK's float32 `eigh` also fails to converge on some batches at
-  $\kappa \ge 10^{4}$ (GBWBN); `eigh_dtype=torch.float64` removes those
-  failures.
+  $\kappa \ge 10^{4}$; `eigh_dtype=torch.float64` removes those convergence
+  failures, not the failures of GBWBN caused by folding (a folded, singular
+  centred matrix, see below).
 - **Tests.** The manual backwards are checked with `torch.autograd.gradcheck`
   in float64 (repeated, nearly repeated eigenvalues, the identity,
   $\kappa = 10^{6}$) and compared with the autograd path; every layer is run in
@@ -377,7 +410,7 @@ output error $\le 10^{-2}$, gradient error $\le 1$; **unsafe**: failures
 | BN mean [AI] | safe | safe | unsafe | unsafe | safe | safe | degraded | unsafe |
 | BN mean [AI (GEVD)] | safe | safe | unsafe | unsafe | safe | safe | degraded | unsafe |
 | BN mean [arithmetic] | safe | safe | safe | safe | safe | safe | safe | safe |
-| BN mean [BW] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN mean [BW] | safe | safe | degraded | unsafe | safe | safe | degraded | degraded |
 | BN mean [GAH] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
 | BN mean [harmonic] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
 | BN mean [LE] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
@@ -387,14 +420,28 @@ output error $\le 10^{-2}$, gradient error $\le 1$; **unsafe**: failures
 | ResidualBlock [congruence] | safe | safe | degraded | degraded | safe | safe | degraded | degraded |
 | ResidualBlock [branch_pt] | safe | unsafe | unsafe | unsafe | safe | unsafe | unsafe | unsafe |
 | ResidualBlock [eigenbasis] | degraded | degraded | degraded | degraded | degraded | degraded | degraded | degraded |
-| GBWBNRResNet | safe | unsafe | degraded | unsafe | safe | degraded | safe | unsafe |
+| GBWBNRResNet | safe | safe | safe | unsafe | safe | safe | unsafe | unsafe |
 | RResNet | safe | safe | degraded | degraded | safe | safe | safe | degraded |
 | SPDnet | safe | safe | safe | degraded | safe | safe | safe | degraded |
 
-The Bures–Wasserstein scalar-variance normalization (GBWBN) is not viable in
-float32 beyond $\kappa \approx 10^{2}$: its cross term
-$\operatorname{tr}\big((B^{1/2} X B^{1/2})^{1/2}\big)$ squares the condition
-number. Use float64 for it (an SVD-based cross term is planned).
+The Bures–Wasserstein rows were measured after the SVD cross term
+([section 3](#3-means-as-iterations)), which removed the failures of the
+cross term itself: the BW operations (mean, geodesic, centring, std) no
+longer fail in float32 up to $\kappa = 10^{6}$ (the geodesic through the
+eigendecomposition of $B^{1/2}XB^{1/2}$ failed at $10^{6}$ and was 50 times
+less accurate at $10^{4}$), and their forward errors are equal or smaller
+everywhere.
+The scalar-variance normalization (GBWBN) stays unsafe in float32 and mixed
+precision from $\kappa = 10^{4}$ at $n = 64$ (12–62 % of the batches): the
+eigenvalues of these batches spread over $[10^{-2}, 10^{2}]$, the centring
+folds (see {doc}`batchnorm`) and returns matrices that are singular to
+rounding, whose square root in the next step has no float32 digits left.
+Use float64 for it, or keep the spectrum close to 1 ($\theta < 1$,
+`bw_init_metric="trace_scale"` for the common scale). `GBWBNRResNet` (a BiMap
+to $n/2$ first) is safe in float32 up to $\kappa = 10^{6}$; in mixed precision
+it still fails on 1 batch in 8 at $\kappa = 10^{6}$ and $n = 64$ (the rows
+of the models were measured on the code with both the SVD cross term and the
+Cholesky-free residual blocks).
 
 The residual blocks no longer fail in float32 at $\kappa = 10^{8}$ (failure
 rate 0.12 before: the Cholesky factorization of the norm and the

@@ -89,6 +89,15 @@ The barycenter is computed by a fixed-point iteration
 (`bures_wasserstein_mean(data, n_iterations=...)`). BW is the geometry of the
 GBWBN batch normalization (see {doc}`batchnorm`).
 
+All these formulas are evaluated through the orthogonal polar factor $W$ of
+$X^{1/2} B^{1/2}$ (one SVD), not through an eigendecomposition of
+$B^{1/2} X B^{1/2}$, whose condition number is the product of those of $X$
+and $B$: $(BX)^{1/2} = B^{1/2} W^\top X^{1/2}$,
+$d_{BW}^2(X, B) = \lVert X^{1/2} W - B^{1/2} \rVert_F^2$, the geodesic is
+$Y_t Y_t^\top$ with $Y_t = (1-t) X_1^{1/2} + t X_2^{1/2} W$, and a step of the
+barycenter iteration is $C C^\top$ with $C = \frac1N \sum_i X_i^{1/2} W_i$ (no
+inverse square root anywhere; see {doc}`numerics`).
+
 ```{note}
 `Exp_I` is only injective on tangent vectors $V$ such that $I + V/2$ is
 positive definite. Batch normalization transports tangent vectors to the

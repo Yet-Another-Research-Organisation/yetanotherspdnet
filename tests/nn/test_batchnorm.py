@@ -2188,11 +2188,14 @@ def _spectral(matrix: torch.Tensor, fun) -> torch.Tensor:
     return (eigvecs * fun(eigvals).unsqueeze(-2)) @ eigvecs.mT
 
 
-def _gbwbn_reference(data, M, G, theta, shift, eps=1e-5):
-    """Algorithm 1 of the GBWBN paper, written independently of the library
-    in the style of the reference code (jjscc/GBWBN): pal1, scale1, pal2, ExpG.
-    Batch statistics: one fixed-point iteration from the arithmetic mean and
-    the Frechet variance of the theta-deformed metric."""
+def _gbwbn_paper_formula(data, M, G, theta, shift, eps=1e-5):
+    """Algorithm 1 of the GBWBN paper (Wang et al., 2025), written independently
+    of the library with eigendecompositions and the paper's formulas. The step
+    names (pal1, scale1, pal2, ExpG) follow the reference code (jjscc/GBWBN),
+    but this is the paper's formula, not the reference code: the variance is
+    measured to the batch mean (the reference code measures it to the identity)
+    and the batch mean is one fixed-point iteration from the arithmetic mean.
+    The variance is the Frechet variance of the theta-deformed metric."""
     eye = torch.eye(data.shape[-1], dtype=data.dtype, device=data.device)
     M_isqrt = _spectral(M, lambda s: s.rsqrt())
     M_sqrt = _spectral(M, torch.sqrt)
@@ -2227,11 +2230,12 @@ def _gbwbn_reference(data, M, G, theta, shift, eps=1e-5):
 
 
 class TestGBWBNConformity:
-    """GBWBN against the paper's Algorithm 1 (Wang et al., 2025)."""
+    """GBWBN against the paper's Algorithm 1 (Wang et al., 2025): the paper's
+    formula, not the reference code (see _gbwbn_paper_formula)."""
 
     @pytest.mark.parametrize("bw_theta", [1.0, 0.75, 0.5, 0.25])
     @pytest.mark.parametrize("use_autograd", [False, True])
-    def test_matches_algorithm_1(self, bw_theta, use_autograd, generator):
+    def test_matches_paper_algorithm_1(self, bw_theta, use_autograd, generator):
         n_features, dtype = 5, torch.float64
         layer = batchnorm.BatchNormSPDMeanScalarVariance(
             n_features,
@@ -2247,7 +2251,7 @@ class TestGBWBNConformity:
             layer.bw_G = G
             layer.stdScalarbias = torch.tensor(1.7, dtype=dtype)
         data = random_SPD(n_features, 8, cond=20, dtype=dtype, generator=generator)
-        expected = _gbwbn_reference(data, M, G, bw_theta, shift=1.7)
+        expected = _gbwbn_paper_formula(data, M, G, bw_theta, shift=1.7)
         assert_close(layer(data), expected, rtol=1e-8, atol=1e-10)
 
     def test_default_theta_is_paper_best(self):
@@ -2381,3 +2385,313 @@ class TestParallelTransportAutograd:
         layer(data).sum().backward()
         grad = layer.parametrizations.Covbias.original.grad
         assert grad is not None and torch.isfinite(grad).all()
+
+
+class TestGBWBNTheta:
+    """bw_theta must be finite and nonzero; a negative theta divides the std by |theta|."""
+
+    @pytest.mark.parametrize("theta", [0, 0.0, float("nan"), float("inf"), "a", None])
+    def test_invalid_theta_raises(self, theta):
+        with pytest.raises(ValueError, match="bw_theta"):
+            batchnorm.BatchNormSPDMeanScalarVariance(
+                4, mean_type="bures_wasserstein", bw_theta=theta
+            )
+
+    def test_negative_theta(self, generator):
+        dtype = torch.float64
+        data = random_SPD(4, 8, cond=10, dtype=dtype, generator=generator)
+        layers = {
+            theta: batchnorm.BatchNormSPDMeanScalarVariance(
+                4, mean_type="bures_wasserstein", bw_theta=theta, dtype=dtype
+            )
+            for theta in (0.5, -0.5)
+        }
+        for layer in layers.values():
+            out = layer(data)
+            assert torch.isfinite(out).all() and is_spd(out)
+        # X^-theta = (X^theta)^-1 and the BW distance between inverses differs,
+        # but the std is positive in both cases
+        assert layers[-0.5].running_std_scalar > 0
+
+
+def _gbwbn(n_features=4, **kwargs):
+    return batchnorm.BatchNormSPDMeanScalarVariance(
+        n_features, mean_type="bures_wasserstein", dtype=torch.float64, **kwargs
+    )
+
+
+class TestGBWBNDynamicParametrization:
+    """parametrization_mode="dynamic" applies to the GBWBN parameters M and G."""
+
+    def test_adaptive_parametrizations(self):
+        from yetanotherspdnet.nn.parametrizations import SPDAdaptiveParametrization
+
+        layer = _gbwbn(parametrization_mode="dynamic")
+        for name in ("bw_M", "bw_G"):
+            parametrization = layer.parametrizations[name][0]
+            assert isinstance(parametrization, SPDAdaptiveParametrization)
+            assert_close(getattr(layer, name), torch.eye(4, dtype=torch.float64))
+
+    def test_reference_update_is_continuous(self, generator):
+        """With a real optimizer.step(), M and G after the reference update equal
+        the values given by the step itself, and the tangent vectors are reset."""
+        import copy
+
+        from yetanotherspdnet.nn.parametrizations import _parametrization_of
+
+        layer = _gbwbn(parametrization_mode="dynamic", n_steps_ref_update=2)
+        optimizer = torch.optim.SGD(layer.parameters(), lr=0.05)
+        layer.register_optimizer_hook(optimizer)
+        names = ("bw_M", "bw_G")
+        for step in range(4):
+            data = random_SPD(4, 8, cond=10, dtype=torch.float64, generator=generator)
+            optimizer.zero_grad()
+            layer(data).diagonal(dim1=-2, dim2=-1).pow(2).sum().backward()
+            # expected values: the SGD step applied to a copy without the hook
+            twin = copy.deepcopy(layer)
+            with torch.no_grad():
+                for name in names:
+                    original = _parametrization_of(twin, name).original
+                    original -= 0.05 * _parametrization_of(layer, name).original.grad
+            expected = {name: getattr(twin, name).detach() for name in names}
+            optimizer.step()
+            updated = step % 2 == 1
+            assert layer.current_ref_step == (0 if updated else 1)
+            for name in names:
+                assert_close(
+                    getattr(layer, name), expected[name], rtol=1e-12, atol=1e-12
+                )
+                original = _parametrization_of(layer, name).original
+                if updated:
+                    assert original.abs().max() == 0
+                    assert_close(
+                        layer.parametrizations[name][0].reference_point, expected[name]
+                    )
+            assert not torch.equal(layer.bw_M, torch.eye(4, dtype=torch.float64))
+
+    def test_static_hook_is_noop(self, generator):
+        layer = _gbwbn()
+        optimizer = torch.optim.SGD(layer.parameters(), lr=0.05)
+        layer.register_optimizer_hook(optimizer)
+        data = random_SPD(4, 8, cond=10, dtype=torch.float64, generator=generator)
+        layer(data).sum().backward()
+        optimizer.step()
+        assert layer.training_step == 1
+
+
+class TestGBWBNRunningStatistics:
+    """The GBWBN running mean is stored in the input space."""
+
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_running_mean_follows_scaled_metric(self, bw_theta, generator):
+        """The BW mean is 1-homogeneous, so after M -> cM the running mean mapped
+        with the new M, M^{-1/2} B_r^theta M^{-1/2}, is exactly the batch mean in
+        the new transformed space; the transformed-space storage of version 1
+        was off by the factor c. (The running std, a distance of the deformed
+        metric, scales by 1/sqrt(c) and is not adjusted.)"""
+        from yetanotherspdnet.functions.spd_geometries.bures_wasserstein import (
+            bures_wasserstein_mean,
+        )
+        from yetanotherspdnet.functions.spd_linalg import powm_SPD
+
+        dtype = torch.float64
+        layer = _gbwbn(bw_theta=bw_theta, momentum=1.0)
+        data = random_SPD(4, 8, cond=10, dtype=dtype, generator=generator)
+        layer(data)  # running statistics with M = I
+        c = 3.0
+        data_pow = powm_SPD(data, bw_theta)[0]
+        running_pow = powm_SPD(layer.running_mean, bw_theta)[0]
+        # running mean seen with M = cI vs batch mean of the data seen with M = cI
+        assert_close(running_pow / c, bures_wasserstein_mean(data_pow / c))
+        # version 1 kept the transformed mean of M = I, c times too large
+        assert not torch.allclose(running_pow, bures_wasserstein_mean(data_pow / c))
+        # through the layer: with the std rescaled by hand, the evaluation output
+        # with M = cI equals the training output with M = cI
+        with torch.no_grad():
+            layer.bw_M = c * torch.eye(4, dtype=dtype)
+            layer.running_std_scalar /= c**0.5
+        layer.eval()
+        eval_output = layer(data)
+        layer.train()
+        assert_close(eval_output, layer(data), rtol=1e-10, atol=1e-12)
+
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_round_trip_same_metric(self, bw_theta, generator):
+        """momentum = 1: the running statistics are the batch statistics, and
+        the input-space storage round trip gives the training output back."""
+        dtype = torch.float64
+        layer = _gbwbn(bw_theta=bw_theta, momentum=1.0)
+        with torch.no_grad():
+            layer.bw_M = random_SPD(4, 1, cond=5, dtype=dtype, generator=generator)
+        data = random_SPD(4, 8, cond=10, dtype=dtype, generator=generator)
+        train_output = layer(data)
+        layer.eval()
+        assert_close(layer(data), train_output, rtol=1e-10, atol=1e-12)
+
+    @pytest.mark.parametrize("mode", ["static", "dynamic"])
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_version_1_checkpoint(self, mode, bw_theta, generator):
+        """A version-1 state dict (running mean in the transformed space of its
+        M, static charts) loads and gives the same evaluation outputs."""
+        from yetanotherspdnet.functions.spd_linalg import powm_SPD, sqrtm_SPD
+
+        dtype = torch.float64
+        layer = _gbwbn(bw_theta=bw_theta, momentum=0.5)
+        with torch.no_grad():
+            layer.bw_M = random_SPD(4, 1, cond=5, dtype=dtype, generator=generator)
+        for _ in range(3):
+            layer(random_SPD(4, 8, cond=10, dtype=dtype, generator=generator))
+        layer.eval()
+        data = random_SPD(4, 8, cond=10, dtype=dtype, generator=generator)
+        expected = layer(data)
+        # the version-1 state dict of the same layer
+        state = layer.state_dict()
+        M_isqrt = torch.linalg.inv(sqrtm_SPD(layer.bw_M.detach())[0])
+        running = state["running_mean"]
+        if bw_theta != 1.0:
+            running = powm_SPD(running, bw_theta)[0]
+        state["running_mean"] = M_isqrt @ running @ M_isqrt
+        del state["bw_state_version"]
+        if mode == "dynamic":
+            state = {
+                k: v
+                for k, v in state.items()
+                if "reference" not in k and "last" not in k
+            }
+        loaded = _gbwbn(bw_theta=bw_theta, parametrization_mode=mode)
+        loaded.load_state_dict(state, strict=True)
+        loaded.eval()
+        assert_close(loaded(data), expected, rtol=1e-9, atol=1e-11)
+        assert_close(loaded.bw_M, layer.bw_M)
+
+    @pytest.mark.parametrize("plain_dict", [False, True])
+    def test_version_2_checkpoint_not_converted(self, plain_dict, generator):
+        """Also when copied into a plain dict (no _metadata), as after
+        stripping a DDP prefix."""
+        dtype = torch.float64
+        layer = _gbwbn(momentum=0.5)
+        with torch.no_grad():
+            layer.bw_M = random_SPD(4, 1, cond=5, dtype=dtype, generator=generator)
+        for _ in range(3):
+            layer(random_SPD(4, 8, cond=10, dtype=dtype, generator=generator))
+        layer.eval()
+        data = random_SPD(4, 8, cond=10, dtype=dtype, generator=generator)
+        state = layer.state_dict()
+        if plain_dict:
+            state = {k: v.clone() for k, v in state.items()}
+        loaded = _gbwbn()
+        loaded.load_state_dict(state, strict=True)
+        loaded.eval()
+        assert_close(loaded.running_mean, layer.running_mean)
+        assert_close(loaded(data), layer(data))
+
+
+class TestGBWBNInitMetric:
+    """bw_init_metric="trace_scale" absorbs the data scale into M and G."""
+
+    def test_invalid_option(self):
+        with pytest.raises(ValueError, match="bw_init_metric"):
+            _gbwbn(bw_init_metric="bad")
+
+    def test_default_state_dict_unchanged(self):
+        assert "bw_metric_initialized" not in _gbwbn().state_dict()
+        assert "bw_state_version" in _gbwbn().state_dict()
+        assert "bw_init_metric" not in repr(_gbwbn())
+        assert "bw_init_metric=trace_scale" in repr(
+            _gbwbn(bw_init_metric="trace_scale")
+        )
+
+    @pytest.mark.parametrize("mode", ["static", "dynamic"])
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_trace_scale_initialization(self, mode, bw_theta, generator):
+        from yetanotherspdnet.functions.spd_geometries.bures_wasserstein import (
+            bures_wasserstein_mean,
+        )
+        from yetanotherspdnet.functions.spd_linalg import powm_SPD
+
+        dtype = torch.float64
+        layer = _gbwbn(
+            bw_theta=bw_theta, bw_init_metric="trace_scale", parametrization_mode=mode
+        )
+        data = 100.0 * random_SPD(4, 8, cond=100, dtype=dtype, generator=generator)
+        out = layer(data)
+        assert torch.isfinite(out).all()
+        c = torch.trace(bures_wasserstein_mean(powm_SPD(data, bw_theta)[0])) / 4
+        eye = torch.eye(4, dtype=dtype)
+        assert_close(layer.bw_M, c * eye)
+        assert_close(layer.bw_G, c ** (1 / bw_theta) * eye)
+        assert bool(layer.bw_metric_initialized)
+        # not initialized again by later batches, nor after a reload
+        layer(2.0 * data)
+        assert_close(layer.bw_M, c * eye)
+        reloaded = _gbwbn(
+            bw_theta=bw_theta, bw_init_metric="trace_scale", parametrization_mode=mode
+        )
+        reloaded.load_state_dict(layer.state_dict())
+        reloaded(3.0 * data)
+        assert_close(reloaded.bw_M, c * eye)
+
+    def test_trace_scale_is_scale_equivariant(self, generator):
+        """With the metric fitted to the first batch, the layer commutes with a
+        rescaling of the data at initialization: f(sX) = s f(X) (theta = 1)."""
+        dtype = torch.float64
+        data = random_SPD(4, 8, cond=100, dtype=dtype, generator=generator)
+        outputs = [
+            _gbwbn(bw_theta=1.0, bw_init_metric="trace_scale")(scale * data) / scale
+            for scale in (1.0, 100.0)
+        ]
+        assert_close(outputs[0], outputs[1])
+
+    def test_no_folding_on_scaled_data(self, generator):
+        """Data of scale 1e2 with theta = 1: with M = G = I, the centring step
+        folds (lambda_min(I + V/2) <= 0) for almost every matrix; with
+        trace_scale none folds."""
+        from yetanotherspdnet.functions.spd_geometries import bures_wasserstein as bw
+
+        dtype = torch.float64
+        eye = torch.eye(4, dtype=dtype)
+        data = 100.0 * random_SPD(4, 16, cond=100, dtype=dtype, generator=generator)
+        folded = {}
+        for init in ("identity", "trace_scale"):
+            layer = _gbwbn(bw_theta=1.0, bw_init_metric=init)
+            layer(data)
+            data_hat = data / layer.bw_M[0, 0]
+            mean = bw.bures_wasserstein_mean(data_hat)
+            tangent = bw.bures_wasserstein_parallel_transport_to_identity(
+                bw.bures_wasserstein_log(data_hat, mean), mean
+            )
+            folded[init] = (torch.linalg.eigvalsh(eye + tangent / 2)[..., 0] <= 0).sum()
+        assert folded["identity"] >= 12
+        assert folded["trace_scale"] == 0
+
+
+class TestGBWBNNumerics:
+    """GBWBN on degenerate and ill-conditioned batches (float64, default options)."""
+
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_scalar_batch_finite(self, bw_theta):
+        """A batch of scalar matrices c_i I: every eigenvalue and singular value
+        is repeated, the parameters start at I."""
+        dtype = torch.float64
+        eye = torch.eye(4, dtype=dtype)
+        data = torch.stack([c * eye for c in (0.5, 1.0, 2.0, 4.0)]).requires_grad_()
+        layer = _gbwbn(bw_theta=bw_theta)
+        out = layer(data)
+        out.square().sum().backward()
+        assert torch.isfinite(out).all() and torch.isfinite(data.grad).all()
+        for name in ("bw_M", "bw_G"):
+            grad = layer.parametrizations[name].original.grad
+            assert torch.isfinite(grad).all()
+
+    @pytest.mark.parametrize("kappa", [1e6, 1e9])
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_ill_conditioned_batch(self, kappa, bw_theta, generator):
+        dtype = torch.float64
+        data = random_SPD(4, 8, cond=kappa, dtype=dtype, generator=generator)
+        data.requires_grad_()
+        layer = _gbwbn(bw_theta=bw_theta)
+        out = layer(data)
+        out.square().sum().backward()
+        assert torch.isfinite(out).all() and torch.isfinite(data.grad).all()
+        layer.eval()
+        assert torch.isfinite(layer(data)).all()

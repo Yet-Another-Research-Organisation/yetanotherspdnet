@@ -365,7 +365,10 @@ def pow_divided_difference(
     Parameters
     ----------
     a, b : torch.Tensor
-        Positive eigenvalues (broadcastable)
+        Eigenvalues (broadcastable); where one is not positive (a singular
+        matrix rounded to a slightly negative eigenvalue) the plain quotient
+        :math:`(a^t - b^t) / (a - b)` is returned, finite for integer
+        :math:`t` like the forward :math:`x^t`
 
     exponent : float | torch.Tensor
         Power exponent :math:`t`
@@ -375,8 +378,16 @@ def pow_divided_difference(
     torch.Tensor
         :math:`(a^t - b^t) / (a - b)`
     """
-    lo, _, gap = _sorted_pair(a, b)
-    return torch.pow(lo, exponent) * torch.expm1(exponent * torch.log1p(gap / lo)) / gap
+    lo, hi, gap = _sorted_pair(a, b)
+    positive = lo > 0
+    safe_lo = torch.where(positive, lo, torch.ones_like(lo))
+    stable = torch.pow(safe_lo, exponent) * torch.expm1(
+        exponent * torch.log1p(gap / safe_lo)
+    )
+    # an eigenvalue <= 0 (a rounded singular matrix): the plain quotient, which
+    # is what the forward x^t computes there (finite for integer t)
+    plain = torch.pow(hi, exponent) - torch.pow(lo, exponent)
+    return torch.where(positive, stable, plain) / gap
 
 
 def std_from_variance(variance: torch.Tensor) -> torch.Tensor:

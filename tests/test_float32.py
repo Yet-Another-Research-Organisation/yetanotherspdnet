@@ -123,11 +123,13 @@ for _mt in MEAN_TYPES:
     )
 
 
-# the precision benchmark rates these unsafe in float32 from kappa = 1e4 (float32
-# eigh convergence failures, BW cross term at kappa^2): tested up to 1e2 only
-MAX_KAPPA = {
+# largest kappa tested per layer by test_float32_matches_float64 (default 1e4).
+# The BW scalar-variance layer folds on these spectra spread around 1 from
+# kappa 1e4 (the centred matrices come close to singular); it is tested at
+# kappa 1e4 by test_bw_scalar_variance_kappa_1e4, on spectra in [1e-4, 1] that
+# stay inside the injectivity domain of Exp_I.
+MAX_KAPPA: dict[str, float] = {
     "BatchNormSPDMeanScalarVariance[bures_wasserstein]": 1e2,
-    "GBWBNRResNet": 1e2,
     # the transport whitens the branch output by X: N = X^{-1/2} Z X^{-1/2}
     # has condition number up to kappa(X) kappa(Z)
     "ResidualBlock[branch_pt]": 1e2,
@@ -187,3 +189,32 @@ def test_float32_matches_float64(name, kappa, mixed):
     assert torch.isfinite(out32).all() and torch.isfinite(grad32).all()
     assert _relative(out32, out64) < fwd_tol
     assert _relative(grad32, grad64) < bwd_tol
+
+
+@pytest.mark.parametrize("mixed", [False, True], ids=["float32", "mixed"])
+def test_bw_scalar_variance_kappa_1e4(mixed):
+    """GBWBN at kappa 1e4 on spectra in [1e-4, 1] (no folding): the SVD cross
+    term keeps float32 and mixed precision close to float64."""
+    generator = torch.Generator().manual_seed(3)
+    q, _ = torch.linalg.qr(torch.randn(BATCH, N, N, dtype=F64, generator=generator))
+    u = torch.rand(BATCH, N, dtype=F64, generator=generator)
+    u[:, 0], u[:, 1] = 0.0, 1.0
+    x = (q * (1e4 ** (-u)).unsqueeze(-2)) @ q.mT
+    x32 = ((x + x.mT) / 2).to(F32)
+    layers = {}
+    for dtype in (F64, F32):
+        torch.manual_seed(0)
+        layers[dtype] = BatchNormSPDMeanScalarVariance(
+            N, mean_type="bures_wasserstein", dtype=dtype
+        )
+    if mixed:
+        layers[F32].eigh_dtype = F64
+    out64 = layers[F64](x32.double())
+    cotangent = torch.randn(
+        out64.shape, dtype=F64, generator=torch.Generator().manual_seed(1)
+    )
+    out64, grad64 = _run(layers[F64].train(), x32.double(), cotangent)
+    out32, grad32 = _run(layers[F32].train(), x32, cotangent)
+    assert torch.isfinite(out32).all() and torch.isfinite(grad32).all()
+    assert _relative(out32, out64) < (1e-5 if mixed else 1e-4)
+    assert _relative(grad32, grad64) < (1e-4 if mixed else 1e-3)
