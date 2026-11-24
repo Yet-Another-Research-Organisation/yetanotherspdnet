@@ -3,6 +3,7 @@
 import contextlib
 import contextvars
 from collections.abc import Callable, Iterator
+from typing import overload
 
 import torch
 from torch.autograd import Function
@@ -1589,6 +1590,16 @@ class InvScaledSoftPlusSPD(Function):
 EigvalBound = float | torch.Tensor | Callable[[torch.Tensor], torch.Tensor] | None
 
 
+@overload
+def spd_floor(
+    eigvals: torch.Tensor, floor: float = ..., rtol: float = ...
+) -> torch.Tensor: ...
+
+
+@overload
+def spd_floor(eigvals: torch.dtype, floor: float = ..., rtol: float = ...) -> float: ...
+
+
 def spd_floor(
     eigvals: torch.Tensor | torch.dtype,
     floor: float = SPD_EIGVAL_FLOOR,
@@ -1597,15 +1608,16 @@ def spd_floor(
     r"""
     Dtype-aware lower bound for the eigenvalues of SPD matrices.
 
-    .. math:: \max\big(\text{floor},\; c\, n\, \varepsilon \max_k |\lambda_k|\big)
+    .. math:: \max\big(\text{floor},\; c\, \varepsilon \max_k |\lambda_k|\big)
 
     per matrix, with :math:`\varepsilon` the machine epsilon of the dtype and
-    :math:`c` = ``rtol`` (``SPD_FLOOR_RTOL`` = 10): an eigenvalue below
-    :math:`n \varepsilon \lVert X \rVert` is not resolved by the decomposition
-    (its backward error), so flooring there only removes rounding noise. In
-    float64 the relative term stays below the default absolute floor 1e-8 for
-    :math:`\max \lambda \lesssim 4 \cdot 10^{6} / n`; in float32 it bounds the
-    condition number by about :math:`10^{6} / n`.
+    :math:`c` = ``rtol`` (``SPD_FLOOR_RTOL`` = 1): rounding the matrix to the
+    dtype already moves its eigenvalues by about :math:`\varepsilon \lVert X
+    \rVert`, so an eigenvalue below that level carries no information and may
+    come out of the decomposition negative. In float64 the relative term
+    exceeds the default absolute floor 1e-8 only for :math:`\max \lambda > 4.5
+    \cdot 10^{7}`; in float32 it bounds the condition number by
+    :math:`1 / \varepsilon_{32} \approx 8 \cdot 10^{6}`.
 
     Parameters
     ----------
@@ -1616,7 +1628,7 @@ def spd_floor(
     floor : float, optional
         Absolute floor. Default is ``SPD_EIGVAL_FLOOR`` (1e-8)
     rtol : float, optional
-        Factor :math:`c`. Default is ``SPD_FLOOR_RTOL`` (10)
+        Factor :math:`c`. Default is ``SPD_FLOOR_RTOL`` (1)
 
     Returns
     -------
@@ -1627,7 +1639,7 @@ def spd_floor(
         return max(floor, rtol * torch.finfo(eigvals).eps)
     eigvals = eigvals.detach()
     eps = torch.finfo(eigvals.dtype).eps
-    relative = rtol * eigvals.shape[-1] * eps * eigvals.abs().amax(-1, keepdim=True)
+    relative = rtol * eps * eigvals.abs().amax(-1, keepdim=True)
     return relative.clamp_min(floor)
 
 

@@ -43,7 +43,7 @@ from yetanotherspdnet.random.stiefel import random_stiefel
 # absolute eigenvalue floor applied to the input of ResidualBlock (lower bound of
 # the eigenvalue clamp of its output, as affine_invariant_projx of the reference
 # code); the floor actually used is spd_floor(eigenvalues, INPUT_EIGVAL_FLOOR),
-# raised to the rounding level c n eps max(lambda) of the dtype
+# raised to the rounding level eps max(lambda) of the dtype
 INPUT_EIGVAL_FLOOR = SPD_EIGVAL_FLOOR
 
 

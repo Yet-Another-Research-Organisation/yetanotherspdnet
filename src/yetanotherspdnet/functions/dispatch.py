@@ -24,7 +24,7 @@ class AutogradOnlyWarning(UserWarning):
     """An operation without manual backward is differentiated by autograd."""
 
 
-# operation -> why it has no manual backward (and the manual alternative, if any)
+#: Operations without manual backward: name -> why (and the manual alternative).
 AUTOGRAD_ONLY: dict[str, str] = {
     "yetanotherspdnet.nn.BiMap(parametrization_mode='static')": (
         "the static Stiefel parametrization is torch.nn.utils.parametrizations."
@@ -104,6 +104,8 @@ class DualPath:
 
     def __post_init__(self) -> None:
         """Check that a missing manual path is listed in :data:`AUTOGRAD_ONLY`."""
+        if self.manual is None and self.autograd is None:
+            raise ValueError("an operation needs at least one implementation")
         if self.manual is None and self.autograd_only not in AUTOGRAD_ONLY:
             raise ValueError(
                 "an operation without manual backward must be listed in "
@@ -135,11 +137,10 @@ class DualPath:
             If ``use_autograd`` is False and the operation has no manual
             backward (once per operation and process).
         """
-        if not use_autograd:
-            if self.manual is None:
-                warn_autograd_only(self.autograd_only)
-                return self.autograd
+        if not use_autograd and self.manual is not None:
             return self.manual
+        if not use_autograd:
+            warn_autograd_only(self.autograd_only)
         if self.autograd is None:
             raise ValueError(self.unsupported_reason)
         return self.autograd

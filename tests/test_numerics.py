@@ -24,9 +24,7 @@ N = 4
 
 def test_spd_floor_dtype():
     assert spd_floor(torch.float64) == 1e-8
-    assert spd_floor(torch.float32) == pytest.approx(
-        10 * torch.finfo(torch.float32).eps
-    )
+    assert spd_floor(torch.float32) == pytest.approx(torch.finfo(torch.float32).eps)
 
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
@@ -35,7 +33,7 @@ def test_spd_floor_eigvals(dtype):
     floor = spd_floor(eigvals)
     assert floor.shape == (2, 1)
     eps = torch.finfo(dtype).eps
-    expected = torch.clamp(10 * 3 * eps * eigvals.amax(-1, keepdim=True), min=1e-8)
+    expected = torch.clamp(eps * eigvals.amax(-1, keepdim=True), min=1e-8)
     torch.testing.assert_close(floor, expected)
     if dtype == torch.float64:
         # unchanged absolute floor at moderate scale
@@ -45,7 +43,7 @@ def test_spd_floor_eigvals(dtype):
 def test_eigh_relu_callable_floor():
     data = torch.diag(torch.tensor([1e-12, 1.0, 1e9], dtype=F64))
     out, _, _ = eigh_relu(data, spd_floor)
-    expected_floor = 10 * 3 * torch.finfo(F64).eps * 1e9
+    expected_floor = torch.finfo(F64).eps * 1e9
     assert torch.linalg.eigvalsh(out)[0].item() == pytest.approx(expected_floor)
     torch.testing.assert_close(EighReLu.apply(data, spd_floor), out)
 
@@ -114,7 +112,7 @@ def test_residual_block_floor_is_dtype_aware():
     data = ((q * lam) @ q.T).expand(3, N, N).clone()
     floored = block.floor(data)
     eigvals = torch.linalg.eigvalsh(floored.double())
-    floor = 10 * N * torch.finfo(torch.float32).eps * 1e3
+    floor = torch.finfo(torch.float32).eps * 1e3
     assert eigvals.min().item() >= 0.5 * floor
 
 

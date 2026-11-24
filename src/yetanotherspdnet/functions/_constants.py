@@ -23,9 +23,11 @@ KARCHER_STEP_DECAY = 0.95
 SPD_EIGVAL_FLOOR = 1e-8
 SPD_EIGVAL_CEILING = 1e8
 
-# spd_linalg.spd_floor: eigenvalues below SPD_FLOOR_RTOL * n * eps(dtype) * max|lambda|
-# are below the rounding noise of the decomposition (backward error ~ n eps ||X||)
-SPD_FLOOR_RTOL = 10.0
+# spd_linalg.spd_floor: eigenvalues below SPD_FLOOR_RTOL * eps(dtype) * max|lambda|
+# are below the rounding of the matrix itself (~ eps ||X||): no information left.
+# A factor n (the backward error bound of eigh) floors real eigenvalues of
+# float32 data at kappa ~ 1e5 (RResNet float32 error 3e-4 -> 2e-2 at kappa 1e6).
+SPD_FLOOR_RTOL = 1.0
 
 # lower bound of the affine-invariant norm of the residual step (ResidualBlock)
 TANGENT_NORM_FLOOR = 1e-12
