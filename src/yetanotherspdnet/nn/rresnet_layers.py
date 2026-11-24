@@ -240,17 +240,37 @@ class SpectralVectorField(nn.Module):
         tangent = (Q * f_eigs.unsqueeze(-2)) @ Q.transpose(-1, -2)
         return tangent
 
+    def _post_optimizer_hook(
+        self, _optimizer: torch.optim.Optimizer, *_args, **_kwargs
+    ) -> None:
+        """
+        Hook that runs after optimizer.step() to handle the dynamic Stiefel
+        parametrization reference point (same logic as BiMap).
+        See torch.optim.Optimizer.register_step_post_hook for the signature.
+
+        Parameters
+        ----------
+        optimizer : torch.optim.Optimizer
+            Torch optimizer used for training
+        """
+        if (
+            self.training
+            and self.is_dynamic
+            and self.current_ref_step >= self.n_steps_ref_update
+        ):
+            with torch.no_grad():
+                # update reference point
+                self.parametrizations.Q[0].update_reference_point()
+                # reset tangent vector to zero, so that Q stays at the new
+                # reference point instead of jumping by the old tangent vector
+                self.parametrizations.Q.original.zero_()
+                # reset counter
+                self.current_ref_step = 0
+
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """Register optimizer hook for dynamic Stiefel parametrization."""
         if self.is_dynamic:
-            stiefel_param = self.parametrizations.Q[0]
-
-            def _hook(_opt):
-                if self.current_ref_step >= self.n_steps_ref_update:
-                    stiefel_param.update_reference_point()
-                    self.current_ref_step = 0
-
-            optimizer.register_step_post_hook(lambda _opt, _args: _hook(_opt))
+            optimizer.register_step_post_hook(self._post_optimizer_hook)
 
     def __repr__(self) -> str:
         return (
