@@ -108,7 +108,7 @@ def my_function(X: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
 | lint | `ruff check .`, `ruff format --check .` | every push and pull request |
 | docs | `sphinx-build -W --keep-going -b html docs docs/_build/html` | every push and pull request |
 | type check | `mypy src` | every push and pull request |
-| documentation site | build and deploy to GitHub Pages | releases, or on demand |
+| documentation site | build and deploy to GitHub Pages | pushes to `main`, releases, or on demand |
 
 ## Getting help
 

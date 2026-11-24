@@ -1,6 +1,10 @@
 name: Documentation
 
+# Deployed on every push to main (the published site follows main), on each release and
+# on demand. Pull requests only build the docs (tests.yml, "Build documentation").
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
