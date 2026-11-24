@@ -32,7 +32,8 @@ extensions = [
     "myst_parser",
     "sphinx_copybutton",
     "sphinx_design",
-    "dualpath",  # _ext/dualpath.py: tables pairing autograd / manual-backward ops
+    "dualpath",  # _ext/dualpath.py: dualpath-table, autograd-only-table, deprecated-table
+    "diagrams",  # _ext/diagrams.py: light / dark pairs of the diagrams
 ]
 
 # MyST Parser configuration (Markdown support)
@@ -41,7 +42,6 @@ myst_enable_extensions = [
     "deflist",
     "dollarmath",
     "amsmath",
-    "linkify",
     "smartquotes",
     "substitution",
 ]
@@ -98,23 +98,49 @@ source_suffix = {
     ".md": "markdown",
 }
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "_diagrams"]
 
 # -- Options for HTML output -------------------------------------------------
-html_theme = "furo"
-html_title = "Yet Another SPDNet"
+# pydata-sphinx-theme, dark by default, one accent colour per section
+# (_static/custom.css keys the accent off <body data-section>, set by
+# _templates/layout.html from the first path segment of the page).
+html_theme = "pydata_sphinx_theme"
+html_title = "yetanotherspdnet"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
-html_theme_options = {
-    "source_repository": "https://github.com/Yet-Another-Research-Organisation/yetanotherspdnet",
-    "source_branch": "main",
-    "source_directory": "docs/",
-    "light_css_variables": {
-        "color-brand-primary": "#3a4a8c",
-        "color-brand-content": "#3a4a8c",
-    },
-    "dark_css_variables": {
-        "color-brand-primary": "#9fb0f0",
-        "color-brand-content": "#9fb0f0",
-    },
+html_favicon = "_static/favicon.svg"
+html_logo = "_static/logo.svg"
+html_show_sourcelink = False
+html_context = {
+    "default_mode": "dark",
+    "github_user": "Yet-Another-Research-Organisation",
+    "github_repo": "yetanotherspdnet",
+    "github_version": "main",
+    "doc_path": "docs",
 }
+html_theme_options = {
+    "logo": {"text": "yetanotherspdnet", "alt_text": "yetanotherspdnet"},
+    "navbar_align": "left",
+    "header_links_before_dropdown": 6,
+    "navbar_end": ["theme-switcher", "navbar-icon-links"],
+    "navbar_persistent": ["search-button"],
+    "icon_links": [
+        {
+            "name": "GitHub",
+            "url": "https://github.com/Yet-Another-Research-Organisation/yetanotherspdnet",
+            "icon": "fa-brands fa-github",
+            "type": "fontawesome",
+        },
+    ],
+    "use_edit_page_button": True,
+    "secondary_sidebar_items": ["page-toc", "edit-this-page"],
+    "show_toc_level": 2,
+    "show_nav_level": 1,
+    "navigation_with_keys": False,
+    "footer_start": ["copyright"],
+    "footer_end": ["sphinx-version", "theme-version"],
+    "pygments_light_style": "tango",
+    "pygments_dark_style": "github-dark",
+}
+# no left sidebar on the landing page and the bibliography
+html_sidebars = {"index": [], "references": []}

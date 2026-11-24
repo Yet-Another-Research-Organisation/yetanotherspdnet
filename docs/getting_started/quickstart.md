@@ -1,20 +1,21 @@
 # Quickstart
 
-Every snippet on this page runs as-is against the current version.
+Every snippet on this page runs as-is, in order, against the current version.
 
 ```{important}
-Work in **float64**. All layers and models default to `torch.float64`, because
-eigendecompositions lose accuracy quickly in float32. `random_SPD` defaults to
-float32, so pass `dtype=torch.float64` explicitly (mixing both raises a dtype
-error in the first layer).
+Layers and models default to **float64**. `random_SPD` follows PyTorch's
+default dtype (float32), so pass `dtype=torch.float64` explicitly: mixing both
+raises a dtype error in the first layer. float32 is discussed in
+{doc}`../numerics/precision`.
 ```
 
 ## SPD matrices and matrix functions
 
 ```python
 import torch
-from yetanotherspdnet.random.spd import random_SPD
+
 from yetanotherspdnet.functions.spd_linalg import expm_symmetric, logm_SPD
+from yetanotherspdnet.random.spd import random_SPD
 
 generator = torch.Generator().manual_seed(0)
 X = random_SPD(
@@ -26,8 +27,8 @@ log_X = logm_SPD(X)[0]  # matrix functions return (result, eigvals, eigvecs)
 print(torch.allclose(expm_symmetric(log_X)[0], X))  # True
 ```
 
-Every function accepts any number of leading batch dimensions
-`(..., n, n)`: `(B, n, n)` for a batch, `(B, T, n, n)` for sequences.
+Every function accepts any number of leading batch dimensions `(..., n, n)`:
+`(B, n, n)` for a batch, `(B, T, n, n)` for sequences.
 
 ## Riemannian means
 
@@ -49,7 +50,7 @@ G_bw = bures_wasserstein_mean(X, n_iterations=10)  # fixed point
 print(G_ai.shape)  # torch.Size([8, 8])
 ```
 
-See {doc}`user_guide/geometries` for the formulas and when to use which.
+{doc}`../user_guide/geometries` gives the formulas and when to use which.
 
 ## Layers
 
@@ -103,7 +104,8 @@ with torch.no_grad():
 
 The orthonormality of the BiMap weights and the positivity of the batch
 normalization biases are handled by `torch.nn.utils.parametrize`, so a plain
-Euclidean optimizer such as Adam or SGD is enough.
+Euclidean optimizer such as Adam or SGD is enough
+({doc}`../user_guide/parametrizations`).
 
 ## Batch normalization on its own
 
@@ -113,8 +115,6 @@ from yetanotherspdnet.nn import BatchNormSPDMeanScalarVariance
 bn = BatchNormSPDMeanScalarVariance(n_features=8, mean_type="log_euclidean")
 print(bn(X).shape)  # torch.Size([32, 8, 8])
 ```
-
-See {doc}`user_guide/batchnorm` for the available geometries and options.
 
 ## Residual networks
 
@@ -132,8 +132,8 @@ print(rresnet(X).shape, gbwbn(X).shape)  # torch.Size([32, 3]) torch.Size([32, 3
 
 | To go further on… | Read |
 |---|---|
-| what happens inside `SPDnet`, and the shape at each layer | {doc}`user_guide/concepts` |
-| the constructor arguments, grouped by role, and published configurations | {doc}`user_guide/models` |
-| BiMap's `parametrization_mode="dynamic"` (needs `model.register_optimizer_hook(optimizer)`) | {doc}`user_guide/layers` |
-| the batch normalization options (geometry, running statistics, GBWBN) | {doc}`user_guide/batchnorm` |
-| why the gradients stay finite on ill-conditioned data | {doc}`user_guide/numerics` |
+| the SPD manifold, the shapes inside a network, the conventions | {doc}`../user_guide/concepts` |
+| the constructor arguments, grouped by role, and published configurations | {doc}`../user_guide/models` |
+| static or dynamic parametrizations (`model.register_optimizer_hook(optimizer)`) | {doc}`../user_guide/parametrizations` |
+| the batch normalization options (geometry, running statistics, GBWBN) | {doc}`../user_guide/batchnorm` |
+| why the gradients stay finite on ill-conditioned data | {doc}`../numerics/index` |

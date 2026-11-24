@@ -1,14 +1,14 @@
 # Installation
 
 The library needs Python 3.11 or later and has a single runtime dependency,
-PyTorch 2.0 or later. Pick the line that matches what you want to do:
+PyTorch 2.0 or later.
 
 | I want to… | Command | Section |
 |---|---|---|
 | use the library | `pip install "yetanotherspdnet @ git+https://github.com/Yet-Another-Research-Organisation/yetanotherspdnet.git"` | [Use](#use-the-library) |
-| run it on a GPU | install the CUDA build of PyTorch first | [GPU](#gpu) |
-| modify it, run the tests | `pip install -e ".[all]"` in a clone | [Develop](#develop) |
-| build this documentation | `pip install -e ".[docs]"`, then `make -C docs html` | [Documentation](#build-the-documentation) |
+| run it on a GPU | install the CUDA build of PyTorch first | [GPU](#cpu-or-gpu-pytorch) |
+| modify it, run the tests | `pip install -e ".[all]"` in a clone | [Extras](#extras) |
+| build this documentation | `pip install -e ".[docs]"`, then `make -C docs html` | {doc}`../development/documentation` |
 
 ## Use the library
 
@@ -19,7 +19,7 @@ uv pip install "yetanotherspdnet @ git+https://github.com/Yet-Another-Research-O
 ```
 
 `main` is the latest released state. Pin a tag or a commit for reproducible
-experiments: `...yetanotherspdnet.git@<tag-or-sha>`. In a `pyproject.toml`:
+experiments, `...yetanotherspdnet.git@<tag-or-sha>`; in a `pyproject.toml`:
 
 ```toml
 dependencies = [
@@ -42,12 +42,13 @@ print(SPDnet(input_dim=8, hidden_layers_size=[4], output_dim=2)(X).shape)
 ```
 
 ```{note}
-Work in float64 (the default of every layer): eigendecompositions of
-ill-conditioned matrices lose accuracy quickly in float32. `random_SPD`
-returns float32 unless told otherwise, hence `dtype=torch.float64` above.
+Layers and models default to float64. `random_SPD` follows PyTorch's default
+dtype (float32) unless told otherwise, hence `dtype=torch.float64` above.
+float32 and mixed precision are possible and measured in
+{doc}`../numerics/precision`.
 ```
 
-## GPU
+## CPU or GPU PyTorch
 
 `pip` installs the PyTorch build of the index it uses, often CPU-only. For a
 GPU, install PyTorch first from the
@@ -60,13 +61,21 @@ pip install "yetanotherspdnet @ git+https://github.com/Yet-Another-Research-Orga
 python -c "import torch; print(torch.cuda.is_available())"   # True
 ```
 
-Every layer and function takes `device` and `dtype`, so a model moves to the
-GPU like any PyTorch model. For matrices of a few hundred rows, a CPU run with
-a few threads is often as fast as a small GPU, and LAPACK's eigendecomposition
-is more robust than cuSOLVER's on nearly singular batches
-({doc}`user_guide/numerics`).
+For a CPU-only machine, the CPU wheels are smaller:
 
-## Develop
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+Every layer and function takes `device` and `dtype`, so a model moves to the
+GPU like any PyTorch model. Two things to know before choosing:
+
+- for matrices of a few hundred rows, a CPU run with a few threads is often as
+  fast as a small GPU (the work is dominated by batched eigendecompositions);
+- LAPACK's eigendecomposition (CPU) is more robust than cuSOLVER's (GPU) on
+  nearly singular batches ({doc}`../numerics/stability`).
+
+## Extras
 
 ```bash
 git clone https://github.com/Yet-Another-Research-Organisation/yetanotherspdnet.git
@@ -79,35 +88,18 @@ pre-commit install           # ruff on every commit, same version as the CI
 |---|---|
 | `test` | pytest, pytest-cov, SciPy (reference implementations used by the tests) |
 | `dev` | ruff (pinned, same version as the CI), mypy, pre-commit |
-| `docs` | Sphinx, MyST, Furo theme, sphinx-design, sphinx-copybutton |
+| `docs` | Sphinx, MyST, pydata-sphinx-theme, sphinx-design, sphinx-copybutton, and numpy + matplotlib for the diagrams |
+| `all` | the three above |
 
-Run the tests:
-
-```bash
-pytest                                              # full suite, coverage enforced (>= 40 %)
-pytest tests/nn/test_base.py::TestBiMap --no-cov    # one class, without coverage
-ruff format . && ruff check .                       # what the CI lint job runs
-```
-
-`pytest` always passes `--cov` (see `pyproject.toml`), so it needs the `test`
-extra; `--no-cov` skips the coverage threshold for a partial run.
-
-## Build the documentation
-
-```bash
-pip install -e ".[docs]"
-make -C docs html              # docs/_build/html/index.html
-python docs/_diagrams/make_diagrams.py   # only after changing a diagram
-```
-
-The online documentation is built from `main` by the `Documentation`
-workflow, at each release or on demand (`gh workflow run docs.yml --ref main`).
+Running the tests and building the documentation are described in
+{doc}`../development/testing` and {doc}`../development/documentation`.
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
-| `ImportError: cannot import name 'functions' from partially initialized module` | An old version installed only the top-level package; reinstall from `main`. |
-| `RuntimeError: expected m1 and m2 to have the same dtype, but got: float != double` | float32 input to a float64 model: create the data with `dtype=torch.float64` (or build the model with `dtype=torch.float32`). |
-| `linalg.eigh: The algorithm failed to converge` on GPU | Nearly singular matrices; run on CPU or check the conditioning of the data (for GBWBN, use `bw_theta < 1`). |
+| `RuntimeError: expected m1 and m2 to have the same dtype, but got: float != double` | float32 input to a float64 model: create the data with `dtype=torch.float64`, or build the model with `dtype=torch.float32` (and maybe `eigh_dtype=torch.float64`). |
+| `linalg.eigh: The algorithm failed to converge` | Nearly singular or very ill-conditioned matrices, mostly on GPU or in float32: run the decompositions on CPU or in float64 (`eigh_dtype`), check the conditioning of the data; for GBWBN see {doc}`../user_guide/batchnorm`. |
+| `AutogradOnlyWarning` | An operation without a manual backward is differentiated by autograd (for instance the static `BiMap` parametrization); the list and the alternatives are in {doc}`../numerics/manual_backward`. |
+| `DeprecationWarning: … is deprecated, use … instead` | A renamed function; see {doc}`../reference/deprecated`. |
 | `pytest: error: unrecognized arguments: --cov=...` | The `test` extra is missing: `pip install -e ".[test]"`. |

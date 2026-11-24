@@ -115,10 +115,12 @@ Y = logeig(reeig(bn(bimap(X))))  # (32, 30, 30) symmetric matrices
 
 [Full Documentation](https://yet-another-research-organisation.github.io/yetanotherspdnet/)
 
-- [Installation Guide](https://yet-another-research-organisation.github.io/yetanotherspdnet/installation.html)
-- [Quick Start Tutorial](https://yet-another-research-organisation.github.io/yetanotherspdnet/quickstart.html)
-- [API Reference](https://yet-another-research-organisation.github.io/yetanotherspdnet/api.html)
-- [Contributing Guide](https://yet-another-research-organisation.github.io/yetanotherspdnet/contributing.html)
+- [Installation](https://yet-another-research-organisation.github.io/yetanotherspdnet/getting_started/installation.html)
+- [Quickstart](https://yet-another-research-organisation.github.io/yetanotherspdnet/getting_started/quickstart.html)
+- [User guide](https://yet-another-research-organisation.github.io/yetanotherspdnet/user_guide/index.html)
+- [Numerics: manual backward, float32, stability](https://yet-another-research-organisation.github.io/yetanotherspdnet/numerics/index.html)
+- [API reference](https://yet-another-research-organisation.github.io/yetanotherspdnet/reference/index.html)
+- [Contributing](https://yet-another-research-organisation.github.io/yetanotherspdnet/development/contributing.html)
 
 ## Development
 
@@ -160,13 +162,13 @@ uv run ruff check --fix src/
 ### Building Documentation
 
 ```bash
-cd docs
-make html
+pip install -e ".[docs]"
+make -C docs html SPHINXOPTS="-W --keep-going"
 ```
 
 ## Contributing
 
-We welcome contributions. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+We welcome contributions. Please see the [contributing guide](https://yet-another-research-organisation.github.io/yetanotherspdnet/development/contributing.html) ([CONTRIBUTING.md](CONTRIBUTING.md) in short).
 
 Pull request checklist:
 

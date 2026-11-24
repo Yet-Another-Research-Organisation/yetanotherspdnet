@@ -1,90 +1,228 @@
 # Batch normalization
 
 Euclidean batch normalization subtracts the batch mean, divides by the batch
-standard deviation, then applies a learned scale and shift. The SPD layers in
-`yetanotherspdnet.nn.batchnorm` do the same on the manifold, in the geometry
-chosen with `mean_type` (see {doc}`geometries`).
+standard deviation, then applies a learned scale and shift. The layers of
+`yetanotherspdnet.nn.batchnorm` do the same on the SPD manifold, in the
+geometry chosen with `mean_type` ({doc}`geometries`). API:
+{doc}`../reference/batchnorm`.
 
-```{figure} ../_static/diagrams/batchnorm_steps.svg
-:width: 100%
+| layer | steps | origin |
+|---|---|---|
+| `BatchNormSPDMean` | centre the batch at its mean, move it to a learned SPD bias | {ref}`[Brooks et al. 2019] <ref-brooks2019>` |
+| `BatchNormSPDMeanScalarVariance` | centre, rescale by a scalar dispersion, bias | {ref}`[Kobler et al. 2022] <ref-kobler2022>` |
+| `BatchNormSPDMeanScalarVariance(mean_type="bures_wasserstein")` | GBWBN: power deformation, Bures–Wasserstein centring, scaling and bias | {ref}`[Wang et al. 2025] <ref-wang2025>` |
 
-2×2 SPD matrices drawn as ellipses: the batch is centred (its mean becomes
-$I$), rescaled along geodesics from $I$, then moved to the learned bias $G$.
+## Mathematics
+
+### Mean only
+
+With $\bar X$ the batch mean in the chosen geometry and $G$ the learned SPD
+bias (`Covbias`), the default `norm_and_bias_mode="whitening"` is
+
+$$
+X_i \longmapsto G\,\bar X^{-1/2} X_i \bar X^{-1/2}\,G :
+$$
+
+whitening by $\bar X^{-1/2}$ (a congruence, so affine-invariant distances
+within the batch are preserved and the Karcher mean becomes $I$), then a
+congruence by $G$, which sends the mean to $G^2$.
+`norm_and_bias_mode="parallel_transport"` transports the batch from $\bar X$ to
+$G$ in the geometry of the mean, so the mean lands on $G$ itself:
+affine-invariant $X \mapsto E X E^\top$,
+$E = G^{1/2}(G^{-1/2}\bar X G^{-1/2})^{-1/2}G^{-1/2}$; log-Euclidean
+$X \mapsto \exp(\log X - \log \bar X + \log G)$.
+
+```{diagram} batchnorm_steps
+:alt: Affine-invariant batch normalization of 2x2 matrices, step by step
+
+2 × 2 SPD matrices drawn as ellipses, computed exactly: the batch and its
+Karcher mean (iterated to a zero gradient), the centred batch (Karcher mean
+$I$), rescaled along the geodesics from $I$ by $s/\sigma$, then biased by the
+congruence with $G$ (mean $G^2$).
 ```
 
-## The two layers
+### Scalar dispersion
 
-`BatchNormSPDMean`
-: **Centring and bias.** Each matrix is transported so that the batch mean
-  $\bar X$ moves to the identity, then moved to a learned SPD bias
-  (`Covbias`, $G$). With the default `norm_and_bias_mode="whitening"` this is
-  $X \mapsto G\,\bar X^{-1/2} X \bar X^{-1/2}\,G$, so the batch mean lands
-  on $G^2$; with `norm_and_bias_mode="parallel_transport"` the batch is
-  parallel-transported from $\bar X$ to $G$ and the mean lands on $G$ (see
-  [Centring and bias](#centring-and-bias)).
-  With `mean_type="adaptive_geometric_arithmetic_harmonic"`, the batch mean
-  is the point $t$ of the affine-invariant geodesic from the harmonic to the
-  arithmetic mean, with $t = \operatorname{sigmoid}(\cdot)$ learned per
-  layer (attribute `t_gah`, $t = 1/2$ gives the GAH mean).
+`BatchNormSPDMeanScalarVariance` inserts, between centring and bias, a
+rescaling of the centred matrices along the geodesics from $I$:
+$C \mapsto C^{s/\sigma}$ (affine-invariant), with $\sigma$ the batch dispersion
+of the geometry (a scalar, $\sigma^2 = \frac1N \sum_i d(\bar X, X_i)^2$ or the
+divergence of {doc}`geometries`) and $s > 0$ learned (`stdScalarbias`). The
+centred batch then has dispersion $s$.
 
-`BatchNormSPDMeanScalarVariance`
-: **Centring, scalar dispersion and bias.** Between centring and bias, the
-  centred matrices are rescaled along geodesics from the identity by
-  $s / \sigma$: $\sigma$ is the batch dispersion (a scalar, from
-  `<geometry>_std_scalar`) and $s$ a learned positive scalar (`stdScalarbias`).
-  With `mean_type="bures_wasserstein"` this is **GBWBN** (Wang et al., 2025),
-  which additionally learns a pre-transform $X \mapsto M^{-1/2} X^\theta M^{-1/2}$
-  and its inverse, and learns its bias $G$ on the input manifold, used as
-  $\hat G = M^{-1/2} G^\theta M^{-1/2}$ in the transformed space.
+### GBWBN
 
-GBWBN options (`bw_theta`, `bw_batch_stats_grad`, `bw_init_metric`):
+With `mean_type="bures_wasserstein"`, the layer is the generalized
+Bures–Wasserstein batch normalization {ref}`[Wang et al. 2025] <ref-wang2025>`
+(their Algorithm 1). A learned SPD metric $M$ and a power $\theta \ne 0$
+deform the data, the Bures–Wasserstein steps act in the deformed space, and
+the result is mapped back:
 
-- `bw_theta` (default 0.5): power deformation $X \mapsto X^\theta$. The
-  variance is that of the deformed metric, $d_{BW}^2(X^\theta, Y^\theta) /
-  \theta^2$ (the std is divided by $|\theta|$). It must be finite and nonzero
-  (`ValueError` otherwise; $X^0 = I$ erases the data). The best value depends
-  on the dataset: 0.5 on HDM05 and 0.75 on NTU in the paper's ablation (its
-  Table 10); 0.5 is also the reference code's default.
-- `bw_batch_stats_grad` (default `True`): whether gradients flow through the
-  batch mean and variance. `True` is a choice of this package, not a
-  prescription of the paper; `False` treats them as constants, as the
-  reference implementation does.
-- `bw_init_metric` (default `"identity"`): `"trace_scale"` sets, on the first
-  training batch, $M = cI$ and $G = c^{1/\theta} I$ with
-  $c = \operatorname{tr}(\bar B)/n$, $\bar B$ the BW mean of the $X_i^\theta$
-  (see [Folding](#folding-and-data-scale)).
+1. deformation: $\hat X_i = M^{-1/2} X_i^{\theta} M^{-1/2}$;
+2. batch barycenter $B$ of the $\hat X_i$ (Bures–Wasserstein fixed point);
+3. centring: $C_i = \mathrm{Exp}_I\big(\Gamma_{B\to I}\,\mathrm{Log}_B(\hat X_i)\big)$;
+4. scaling at $I$: $\mathrm{Exp}_I\big(\tfrac{s}{\sqrt{\sigma^2 + 10^{-5}}}\,\mathrm{Log}_I(C_i)\big)$,
+   with $\sigma^2 = \frac{1}{\theta^2} \frac1N \sum_i d_{BW}(B, \hat X_i)^2$,
+   the variance of the deformed metric;
+5. bias: $\mathrm{Exp}_{\hat G}\big(\Gamma_{I\to\hat G}\,\mathrm{Log}_I(\cdot)\big)$,
+   with $\hat G = M^{-1/2} G^{\theta} M^{-1/2}$ for the learned bias $G$
+   (input space);
+6. inverse deformation: $Y_i = \big(M^{1/2} (\cdot) M^{1/2}\big)^{1/\theta}$.
 
-In the models, pass them as `batchnorm_bw_options={"bw_theta": 0.25}`.
+The Bures–Wasserstein formulas are those of {doc}`geometries`; the transports
+are the exact Levi-Civita transports between $I$ and a point.
 
-`parametrization` and `parametrization_mode` apply to $M$ and $G$ as to the
-bias of the other layers: with `"dynamic"`, the reference points of both move
-to their current values every `n_steps_ref_update` optimizer steps (call
-`layer.register_optimizer_hook(optimizer)`), which keeps the softplus / exp
-chart centred where the parameters are.
+```{diagram} gbwbn_steps
+:alt: The steps of GBWBN on 2x2 matrices
 
-```{note}
-The GBWBN parameters $M$ and $G$ start at the identity, where all
-eigenvalues are equal. Gradients through `torch.linalg.eigh` are undefined
-there, so keep `use_autograd=False` (the default) for this layer: the manual
-backwards (Daleckii–Krein for $M^{\pm 1/2}$ and $M^\theta$, the polar factor
-of the cross terms, implicit differentiation for the Lyapunov solve and the
-transport to $\hat G$) stay finite and exact at the identity.
+GBWBN on a batch of six 2 × 2 matrices, $\theta = 1/2$, computed with the
+formulas of the package. Ellipses: SPD matrices (orange, the reference point of
+each step); crosses: tangent vectors, one segment per eigenvector (blue
+positive, red negative eigenvalue). The script checks that the centred batch
+has barycenter exactly $I$ (no folding here).
 ```
 
-### Folding and data scale
+### Folding: why the data scale matters
 
-The BW exponential at the identity, $\mathrm{Exp}_I(V) = (I + V/2)^2$, is only
-injective on $I + V/2 \succ 0$; outside it the matrix is folded back (two
-tangent vectors give the same point, see {doc}`numerics`), and a folded
-matrix close to singular loses its small eigenvalues to rounding (the cause of
-the remaining float32 failures of this layer). The BW metric is not scale
-invariant: for data of scale $c$, the centring step transports a tangent
-vector of size $\sim c$ from a mean of size $\sim c$ to $I$, which gives a
-vector of size $\sim\sqrt c$. **Folding is driven by how far the eigenvalues
-are from 1, not by the condition number as such**: matrices with
-$\kappa = 10^2$ and eigenvalues in $[10^{-2}, 1]$ never fold, the same matrices
-times $10^2$ almost always do. Measured on random batches (20 batches of 32),
-fraction of folded matrices:
+$\mathrm{Exp}_I(V) = (I + V/2)^2$ is injective only on $I + V/2 \succ 0$.
+Outside, the matrix is *folded*: $V$ and the vector $V'$ with the same
+eigenvectors and $|1 + v_k/2|$ in place of $1 + v_k/2$ give the same point, the
+centred batch no longer has mean $I$, and a matrix close to the boundary
+($1 + v_k/2 \approx 0$) comes out nearly singular. The Bures–Wasserstein metric
+is not scale invariant: for data of scale $c$, the centring transports a
+tangent vector of size $\sim c$ from a mean of size $\sim c$ to $I$, which
+gives a vector of size $\sim \sqrt c$. **Folding is driven by how far the
+eigenvalues are from 1** (their common scale and their spread), not by the
+condition number as such.
+
+```{diagram} gbwbn_folding
+:alt: Folding of the Bures-Wasserstein exponential at the identity
+
+(a) $\mathrm{Exp}_I$ on one eigenvalue: beyond $v = -2$, two tangent vectors
+give the same point. (b) Data multiplied by 100, $\theta = 1$: the centring of
+one matrix leaves the injectivity domain. (c) Smallest eigenvalue of
+$I + V_i/2$ at the centring step against the scale $c$ of the data: without
+initialization, folding starts at $c \approx 5$ ($\theta = 1$) or
+$c \approx 500$ ($\theta = 1/2$) for this batch; `bw_init_metric="trace_scale"` removes the
+dependence on $c$, and only a large spread ($\kappa \approx 10^4$) still folds,
+at $\theta = 1$ but not at $\theta = 1/2$.
+```
+
+## Implementation
+
+- **Manual backwards everywhere** (`use_autograd=False`, the default): the
+  means, the whitening (a Sylvester equation in the backward), the transports,
+  the Lyapunov solve of $\mathrm{Exp}_B$ and the polar factors of the
+  Bures–Wasserstein cross terms are hand-written backwards. They stay finite
+  where autograd through `eigh` is not: at the identity, where the bias, $M$
+  and $G$ start, and on batches of scalar matrices $cI$
+  ({doc}`../numerics/manual_backward`).
+- **Cost.** One mean (see {doc}`geometries`), one $\bar X^{-1/2}$ (one
+  eigendecomposition of an $n \times n$ matrix) and one congruence per matrix
+  for the mean-only layer; the scalar variance adds one eigendecomposition per
+  matrix (the power $C^{s/\sigma}$). GBWBN: $X_i^\theta$, the square roots of
+  the barycenter iteration (one SVD per matrix and iteration), the transports
+  (two eigendecompositions of $n \times n$ matrices), $\mathrm{Exp}_I$ and
+  $\mathrm{Log}_I$ (one square root per matrix) and the inverse power.
+- **Running statistics** follow the geometry: $\bar X_r \leftarrow \bar X_r
+  \#_\mu \bar X$ on the geodesic of the geometry (step `momentum` $\mu$) and
+  $\sigma_r^2 \leftarrow (1-\mu)\sigma_r^2 + \mu\,\sigma^2$. GBWBN stores its
+  running mean **in the input space**, $B_r = (M^{1/2} \hat B_r
+  M^{1/2})^{1/\theta}$, and maps it with the current $M$ when it is used, so it
+  is not left in the coordinates of an old $M$ when $M$ is trained. This is
+  exact when $M$ changes by a factor (the Bures–Wasserstein mean is
+  1-homogeneous); for a general change of $M$ it is the natural convention,
+  not an invariance.
+- **Checkpoints.** GBWBN state dicts saved before that change (version 1) are
+  converted when loaded (running mean mapped to the input space with the
+  checkpoint's own $M$, missing reference points of dynamic layers set to $I$),
+  so old checkpoints load with `strict=True`. New state dicts carry a
+  `bw_state_version` buffer and are never converted twice.
+- **Guards.** The exponent $s/\sigma$ uses $\max(\sigma, 3.2 \cdot 10^{-3})$,
+  as bounded as the GBWBN factor $s/\sqrt{\sigma^2 + 10^{-5}}$, and the
+  standard deviations are $\sqrt{\max(v, 0)}$: a batch of identical matrices
+  gives finite outputs and gradients.
+
+| mode | statistics used | running statistics |
+|---|---|---|
+| `model.train()`, batch of ≥ 2 matrices | batch mean (and dispersion) | updated with `momentum` |
+| `model.train()`, a single matrix | running mean (and dispersion) | **not** updated, a `UserWarning` is emitted |
+| `model.eval()` | running mean (and dispersion) | not updated |
+
+A batch of one matrix has no statistics (its mean is itself, its dispersion
+zero); normalizing with them would map every input to the identity. Use
+`drop_last=True` in the `DataLoader` to avoid such batches.
+
+### Package, paper and reference code (GBWBN)
+
+| | paper (Algorithm 1) | reference code (jjscc/GBWBN) | this package |
+|---|---|---|---|
+| variance | to the batch mean | to the identity (`cal_var`) | to the batch mean |
+| $M$, $G$ | Riemannian SGD | Riemannian SGD, mixing affine-invariant and BW updates | softplus / exp parametrization, any PyTorch optimizer, static or dynamic chart |
+| gradient through the batch statistics | not specified | none | yes (`bw_batch_stats_grad=True`), optional |
+| $\theta$ | hyper-parameter (ablation in Table 10) | class attribute shared by all layers (`Power_op._power`), which corrupts its gradient | per layer, validated |
+| running-mean momentum | — | 0.1 | 0.01 for the layer, 0.1 in `GBWBNRResNet` |
+| running mean | — | transformed space | input space |
+| cross term $(B^{1/2}XB^{1/2})^{1/2}$ | — | eigendecomposition | SVD (polar factor) |
+
+The conformity test of the package (`TestGBWBNConformity`) compares the layer
+with the paper's formulas, not with the reference code.
+
+## Options and strategy
+
+`mean_type`
+: The geometry ({doc}`geometries`). `"affine_invariant"` for fidelity,
+  `"geometric_arithmetic_harmonic"` (default of `SPDnet`) or
+  `"log_euclidean"` for speed, `"bures_wasserstein"` with the scalar variance
+  for GBWBN. `mean_options={"n_iterations": 5}` for the iterative means.
+
+`momentum`
+: Step of the running statistics on the geodesic (0.01 by default). Larger
+  values (0.1) follow a drifting distribution faster but are noisier.
+
+`norm_strategy`, `minibatch_mode`, `minibatch_momentum`, `minibatch_maxstep`
+: `"classical"` normalizes each batch with its own mean. `"minibatch"`
+  normalizes with a smoothed mean
+  $m_k = m_{k-1} \#_{\mu_k} \bar X_k$ ($\#$ the geodesic of the geometry),
+  which reduces the noise of small batches; $\mu_k$ is `"constant"`, decays
+  towards (`"decay"`) or grows from (`"growth"`) `minibatch_momentum` over
+  `minibatch_maxstep` steps.
+
+`norm_and_bias_mode`
+: `"whitening"` (default, one $\bar X^{-1/2}$, mean sent to $G^2$) or
+  `"parallel_transport"` (mean sent to $G$, distances preserved in the
+  geometry; not for `"bures_wasserstein"` nor for the scalar-variance layer).
+  The two parametrize the bias differently ($G^2$ versus $G$), so a trained
+  `Covbias` is not interchangeable. With `use_autograd=True` the
+  affine-invariant and log-Euclidean transports raise a `ValueError`: they take
+  square roots or logarithms of the bias, which starts at the identity, where
+  autograd through `eigh` gives NaN gradients.
+
+`parametrization`, `parametrization_mode`, `n_steps_ref_update`
+: How the bias (and $M$, $G$) stay SPD ({doc}`parametrizations`). The
+  `"dynamic"` mode needs `layer.register_optimizer_hook(optimizer)`.
+
+GBWBN: `bw_theta`, `bw_batch_stats_grad`, `bw_init_metric`
+: In the models, `batchnorm_bw_options={"bw_theta": 0.25, ...}`.
+
+  - `bw_theta` (default 0.5): power deformation $X \mapsto X^\theta$. It must
+    be finite and nonzero ($X^0 = I$ erases the data). $\theta < 1$
+    compresses the spread of the eigenvalues ($[10^{-2}, 10^{2}] \to
+    [10^{-1}, 10]$ at $\theta = 1/2$), which reduces folding. The best value
+    depends on the dataset: 0.5 on HDM05 and 0.75 on NTU in the paper's
+    ablation (Table 10); 0.5 is also the reference code's default.
+  - `bw_batch_stats_grad` (default `True`): gradients flow through the batch
+    mean and variance. `True` is a choice of this package, not a prescription
+    of the paper; `False` treats them as constants, as the reference code.
+  - `bw_init_metric` (default `"identity"`): `"trace_scale"` sets, on the
+    first training batch, $M = cI$ and $G = c^{1/\theta} I$ with
+    $c = \operatorname{tr}(\bar B)/n$, $\bar B$ the barycenter of the
+    $X_i^\theta$: the deformed data $X_i^\theta / c$ have unit scale and
+    $\hat G = I$. The layer is then scale-equivariant at initialization
+    ($f(sX) = s f(X)$), and its outputs keep the scale of the data.
+
+**Against folding.** Measured on random batches (20 batches of 32), fraction
+of folded matrices:
 
 | data ($\kappa$, eigenvalues) | $n$ | $\theta$ | `"identity"` | `"trace_scale"` |
 |---|---|---|---|---|
@@ -97,117 +235,28 @@ fraction of folded matrices:
 | $10^4$, $[10^{-2}, 10^{2}]$ | 64 | 1 | 100 % | 100 % |
 | $10^6$, $[10^{-3}, 10^{3}]$ | 64 | 0.5 | 100 % | 57 % |
 
-`bw_init_metric="trace_scale"` removes the common scale: the transformed data
-$X_i^\theta / c$ have unit scale, and $\hat G = G^\theta / c = I$
-(initializing $M$ alone would move the folding to the bias step: 97 % at
-scale $10^2$, $\theta = 1$). The spread of the eigenvalues on both sides of 1
-remains, and $\theta < 1$ is what compresses it ($X^\theta$ maps $[10^{-2},
-10^{2}]$ to $[10^{-1}, 10]$ at $\theta = 1/2$). With `"trace_scale"`, the
-layer is scale-equivariant at initialization ($f(sX) = s f(X)$) and its
-outputs keep the scale of the data instead of being centred at $I$.
+Initializing $M$ alone would move the folding to the bias step (97 % at scale
+$10^2$, $\theta = 1$). In practice: rescale the data or use
+`bw_init_metric="trace_scale"`, keep $\theta < 1$ when the spectrum is wide,
+use float64 (folded matrices close to singular have no float32 digits left,
+{doc}`../numerics/precision`), and keep `use_autograd=False` ($M$ and $G$
+start at the identity, where the manual backwards are finite).
 
-### Running statistics
+```python
+import torch
 
-The running mean is stored **in the input space**,
-$B_r = (M^{1/2} \hat B_r M^{1/2})^{1/\theta}$, and mapped with the current $M$
-when it is used (each running update, and evaluation). It is thus not left in
-the coordinates of an old $M$ when $M$ is trained. This is exact when $M$
-changes by a factor ($M \to cM$: the BW mean is 1-homogeneous); for a general
-change of $M$ it is the natural convention but not an invariance (the BW mean
-does not commute with congruences). The running standard deviation is a
-distance of the deformed metric of each update and is kept as is. With
-`norm_strategy="minibatch"`, the smoothed mean of the previous batch stays in
-the transformed space (it changes every step anyway).
+from yetanotherspdnet.nn import BatchNormSPDMeanScalarVariance
+from yetanotherspdnet.random.spd import random_SPD
 
-Checkpoints saved before this change (state dict version 1) are converted
-when loaded: the running mean is mapped to the input space with the
-checkpoint's own $M$, and the missing reference points of dynamic layers are
-set to $I$ (the chart those versions used), so old checkpoints load with
-`strict=True` and evaluate as before. New state dicts carry a `bw_state_version` buffer, so they are never
-converted again, even when copied into a plain dict.
-
-### Package, paper and reference code
-
-| | paper (Algorithm 1) | reference code (jjscc/GBWBN) | this package |
-|---|---|---|---|
-| variance | to the batch mean | to the identity (`cal_var`) | to the batch mean |
-| $M$, $G$ | Riemannian SGD | Riemannian SGD, mixing affine-invariant and BW updates | softplus / exp parametrization, any PyTorch optimizer, static or dynamic chart |
-| gradient through the batch statistics | not specified | none | yes (`bw_batch_stats_grad=True`), optional |
-| $\theta$ | hyper-parameter (ablation in Table 10) | stored in a class attribute shared by all layers (`Power_op._power`), which corrupts its gradient | per layer, validated |
-| running-mean momentum | — | 0.1 | 0.01 for the layer; 0.1 in `GBWBNRResNet` |
-| running mean | — | transformed space | input space |
-| cross term $(B^{1/2}XB^{1/2})^{1/2}$ | — | eigendecomposition | SVD (polar factor) |
-
-The conformity test of the package compares the layer with the paper's
-formulas (`TestGBWBNConformity`), not with the reference code.
-
-In the models (`SPDnet`, `RResNet`, `GBWBNRResNet`) these correspond to
-`batchnorm_type="mean_only"` and `batchnorm_type="mean_var_scalar"`, and every
-layer option is exposed with a `batchnorm_` prefix.
-
-## Training and evaluation
-
-| Mode | Statistics used | Running statistics |
-|---|---|---|
-| `model.train()`, batch of ≥ 2 matrices | batch mean (and dispersion) | updated with `momentum` |
-| `model.train()`, a single matrix | running mean (and dispersion) | **not** updated, a `UserWarning` is emitted |
-| `model.eval()` | running mean (and dispersion) | not updated |
-
-A batch of one matrix has no batch statistics: its mean is the matrix itself
-and its dispersion is zero, so normalizing with them would map every input to
-the identity. Such batches (for instance a last incomplete batch of size 1)
-are therefore normalized like in evaluation mode. Use `drop_last=True` in
-your `DataLoader` to avoid them entirely.
-
-## Centring and bias
-
-`norm_and_bias_mode` chooses how `BatchNormSPDMean` moves the batch from its
-mean $\bar X$ to the bias:
-
-`"whitening"` (default)
-: Whitening by the mean, then congruence by `Covbias`:
-  $X \mapsto G\,\bar X^{-1/2} X \bar X^{-1/2}\,G$. The mean is sent to $G^2$.
-  Only $\bar X^{-1/2}$ needs an eigendecomposition.
-
-`"parallel_transport"`
-: Parallel transport from $\bar X$ to $G$ in the geometry of the mean: the
-  mean is sent to $G$ itself, and distances to the mean are preserved in that
-  geometry. Affine-invariant: $X \mapsto E X E^\top$ with
-  $E = G^{1/2}(G^{-1/2}\bar X G^{-1/2})^{-1/2}G^{-1/2}$; log-Euclidean:
-  $X \mapsto \exp(\log X - \log \bar X + \log G)$. The arithmetic,
-  harmonic and (adaptive) GAH means use the affine-invariant transport,
-  computed through a generalized eigendecomposition
-  (`spd_geometries.affine_invariant_gevd`). Not available for
-  `"bures_wasserstein"`, nor for `BatchNormSPDMeanScalarVariance`.
-  With `use_autograd=True` the affine-invariant and log-Euclidean transports
-  raise a `ValueError`: they take square roots or logarithms of the bias,
-  which starts at the identity, where autograd through `torch.linalg.eigh`
-  gives NaN gradients. The default hand-written backward has no such issue.
-
-The two modes parametrize the bias differently ($G^2$ versus $G$), so a
-trained `Covbias` is not interchangeable between them.
-
-## Main options
-
-`momentum`
-: Update rate of the running statistics:
-  `running = geodesic(running, batch, momentum)`.
-
-`norm_strategy`
-: `"classical"` normalizes each batch with its own mean.
-  `"minibatch"` normalizes with a smoothed mean
-  `m_k = geodesic(m_{k-1}, batch_mean, minibatch_momentum_k)`, where $m_{k-1}$
-  is the mean used for the previous batch. This reduces the noise of small
-  batches. The step `minibatch_momentum_k` follows `minibatch_mode`
-  (`"constant"`, `"decay"` towards `minibatch_momentum`, or `"growth"` from it)
-  over `minibatch_maxstep` steps.
-
-`parametrization`, `parametrization_mode`
-: How the SPD bias stays SPD: `"softplus"` or `"exp"` maps on the
-  eigenvalues. The `"dynamic"` mode re-centres the parametrization on the
-  current value every `n_steps_ref_update` optimizer steps. It requires
-  `layer.register_optimizer_hook(optimizer)` after creating the optimizer.
-
-`mean_options`
-: Extra arguments of the mean function, for instance
-  `{"n_iterations": 5}` for the affine-invariant and Bures–Wasserstein means.
+gbwbn = BatchNormSPDMeanScalarVariance(
+    n_features=8,
+    mean_type="bures_wasserstein",
+    bw_theta=0.5,
+    bw_init_metric="trace_scale",
+    parametrization_mode="dynamic",
+)
+optimizer = torch.optim.Adam(gbwbn.parameters(), lr=1e-3)
+gbwbn.register_optimizer_hook(optimizer)
+X = 100 * random_SPD(n_features=8, n_matrices=32, cond=100, dtype=torch.float64)
+print(gbwbn(X).shape)  # torch.Size([32, 8, 8])
+```

@@ -1,139 +1,145 @@
-# Layers and parametrizations
+# Layers
 
-The SPDNet layers of `yetanotherspdnet.nn`, what they compute, and how their
-parameters are kept on their manifold. API: {doc}`../reference/layers`,
-{doc}`../reference/parametrizations`.
+The SPDNet layers of `yetanotherspdnet.nn` and the layers that build SPD
+matrices from raw samples. API: {doc}`../reference/layers`. The constraints on
+their parameters (orthonormal weights) are in {doc}`parametrizations`.
 
-## BiMap: the linear layer
+## Mathematics
 
-`BiMap` maps a batch of SPD matrices to smaller SPD matrices by a congruence,
+### BiMap: the linear layer
+
+`BiMap` maps SPD matrices to smaller SPD matrices by a congruence
+{ref}`[Huang & Van Gool 2017] <ref-huang2017>`,
 
 $$
 X \in \mathcal{S}^{++}_{n_{in}} \;\longmapsto\; W^\top X W \in \mathcal{S}^{++}_{n_{out}},
-\qquad W \in \mathbb{R}^{n_{in} \times n_{out}},\; n_{out} \le n_{in}.
+\qquad W \in \mathbb{R}^{n_{in} \times n_{out}},\ n_{out} \le n_{in}.
 $$
 
-The output stays SPD as long as $W$ has full column rank. SPDNet constrains
-$W$ to the **Stiefel manifold** $\mathrm{St}(n_{in}, n_{out}) = \{W : W^\top W = I\}$,
-which rules out degenerate weights and keeps the scale of the data under
-control (`parametrized=True`, the default).
+The output is SPD as long as $W$ has full column rank:
+$y^\top W^\top X W y = (Wy)^\top X (Wy) > 0$ for $y \ne 0$. SPDNet constrains
+$W$ to the Stiefel manifold
+$\mathrm{St}(n_{in}, n_{out}) = \{W : W^\top W = I\}$, which rules out
+degenerate weights and bounds the spectrum of the output by that of the input
+(Cauchy interlacing: $\lambda_{\min}(X) \le \lambda_k(W^\top X W) \le
+\lambda_{\max}(X)$).
 
-### Static vs dynamic parametrization
+### ReEig and ReEigBias: the non-linearities
 
-A plain optimizer step $W \leftarrow W - \eta \nabla_W \mathcal{L}$ leaves the
-Stiefel manifold. `BiMap` keeps $W$ on it with a **parametrization**: the
-optimizer updates an unconstrained tensor $\Xi$, and the layer uses
-$W = \varphi(\Xi) \in \mathrm{St}$.
+`ReEig` is the SPD analogue of ReLU: with $X = U \operatorname{diag}(\lambda)
+U^\top$,
 
-| | `parametrization_mode="static"` | `parametrization_mode="dynamic"` |
+$$
+\mathrm{ReEig}(X) = U \operatorname{diag}\big(\max(\lambda_i, \epsilon)\big) U^\top .
+$$
+
+Besides the non-linearity, it keeps the conditioning of the output bounded
+after a dimension reduction. `ReEigBias` adds a learned shift $b_i$ per
+eigenvalue (in ascending order) and a two-sided clamp,
+$U \operatorname{diag}\big(\operatorname{clamp}(\lambda_i + b_i, \epsilon,
+1/\epsilon)\big) U^\top$: it starts as a two-sided ReEig ($b = 0$) and caps
+the condition number at $\epsilon^{-2}$.
+
+```{diagram} reeig
+:alt: ReEig and ReEigBias as maps of the eigenvalues
+:width: 60%
+
+ReEig clamps the eigenvalues below $\epsilon$; ReEigBias shifts them by a
+learned $b$ and clamps them to $[\epsilon, 1/\epsilon]$.
+```
+
+### LogEig, Vec, Vech: back to vectors
+
+`LogEig` computes $\log X = U \operatorname{diag}(\log \lambda_i) U^\top$. The
+logarithm is a diffeomorphism from $\mathcal{S}^{++}_n$ onto the vector space
+$\mathrm{Sym}_n$, where a Euclidean classifier makes sense (it is the chart of
+the log-Euclidean geometry, {ref}`[Arsigny et al. 2007] <ref-arsigny2007>`).
+`Vec` flattens all $n^2$ entries; `Vech` keeps the upper triangle,
+$n(n+1)/2$ entries, which carry all the information of a symmetric matrix.
+
+### From samples to SPD matrices
+
+`SampleCovariance` maps samples `(..., n_samples, p)` to
+$\frac1n \sum_i (x_i - \bar x)(x_i - \bar x)^\top$. `MEstimation` solves
+the fixed point of an M-estimator of scatter,
+
+$$
+\Sigma = \frac1n \sum_{i=1}^n u\!\left(x_i^\top \Sigma^{-1} x_i\right) x_i x_i^\top,
+$$
+
+whose weight $u$ down-weights outlying samples: Tyler
+{ref}`[Tyler 1987] <ref-tyler1987>`, $u(q) = p/q$ (scale invariant, so the
+trace or the determinant is normalized at each iteration); Student-t,
+$u(q) = (p + \nu)/(\nu + q)$; Huber. They are the first layer of a network fed
+with raw signals or with CNN feature maps (covariance pooling).
+
+## Implementation
+
+| layer | eigendecompositions (forward) | backward |
 |---|---|---|
-| Trained tensor | $\Xi \in \mathbb{R}^{n_{in}\times n_{out}}$ | $\Xi \in T_{W_{ref}}\mathrm{St}$, a tangent vector |
-| Weight | $W = \varphi(\Xi)$, `torch.nn.utils.parametrizations.orthogonal` | $W = \mathrm{qf}\big(W_{ref} + P_{W_{ref}}(\Xi)\big)$ |
-| Reference point | none | $W_{ref}$, moved every `n_steps_ref_update` steps |
-| Needs | nothing | `layer.register_optimizer_hook(optimizer)` |
+| `BiMap` | 0 | manual (`CongruenceRectangular`); the static Stiefel parametrization itself is differentiated by autograd |
+| `ReEig`, `ReEigBias` | 1 | Daleckii–Krein, $f'(\lambda) = \mathbb 1[\lambda > \epsilon]$ |
+| `LogEig` | 1 | Daleckii–Krein with the closed-form divided differences of $\log$ |
+| `Vec`, `Vech` | 0 | manual (index maps) |
+| `SampleCovariance` | 0 | autograd (products) |
+| `MEstimation` | 0 (Cholesky solves) | implicit differentiation at the fixed point (`use_autograd=False`) or unrolled iterations |
 
-**Static.** $\varphi$ is fixed for the whole training. It is simple, but the
-parametrization distorts the geometry more and more as $W$ moves away from
-where $\varphi$ is well conditioned.
+The Daleckii–Krein backward of ReEig gives no gradient to the clamped
+directions, and the divided differences between a clamped and an unclamped
+eigenvalue interpolate between 0 and 1: it stays finite when several
+eigenvalues are clamped to the same $\epsilon$, where autograd through `eigh`
+divides by zero ({doc}`../numerics/manual_backward`).
 
-**Dynamic.** The trained tensor is a tangent vector at a reference point
-$W_{ref}$. It is projected on the tangent space,
+The implicit backward of `MEstimation` solves the adjoint equation
+$w = g + J_\Sigma^\top w$ by iteration with vector-Jacobian products only, so
+its memory does not grow with the number of iterations
+({doc}`../numerics/manual_backward`).
 
-$$
-P_{W}(\Xi) = \Xi - W\,\mathrm{sym}(W^\top \Xi), \qquad \mathrm{sym}(A) = \tfrac12 (A + A^\top),
-$$
+`ReEig`, `ReEigBias` and `LogEig` take `eigh_dtype`: with
+`eigh_dtype=torch.float64` in a float32 model the eigendecomposition runs in
+float64 and its result is cast back ({doc}`../numerics/precision`).
 
-then retracted on the manifold with the Q factor of a QR decomposition (or
-the polar factor, `parametrization_options={"mapping": "polar"}`). Every
-`n_steps_ref_update` optimizer steps, the reference point jumps to the
-current weight and the tangent vector is reset:
+## Options and strategy
 
-$$
-W_{ref} \leftarrow W, \qquad \Xi \leftarrow 0 .
-$$
+`ReEig(eps)`
+: The threshold must match the **scale of the data**: eigenvalues below it are
+  erased. The layer default is $10^{-4}$; the models use `reeig_eps=1e-3`.
+  Published configurations rescale the data instead: HDM05 covariances are
+  multiplied by 190 before an $\epsilon = 0.8$ ReEig, HyperLeaf uses
+  $\epsilon = 0.01$ ({doc}`models`). Look at the spectrum of a few input
+  matrices after the first BiMap before choosing.
 
-Each step is then a small move around the current point, where the
-retraction is accurate: a Riemannian optimizer implemented with a standard
-Euclidean one.
+`ReEigBias`
+: Use it after estimators that can produce very large eigenvalues, or when
+  the condition number must be capped ($1/\epsilon$ on both sides).
 
-```{figure} ../_static/diagrams/parametrization.svg
-:width: 85%
+`Vec` or `Vech`
+: `Vech` (`vec_type="vech"` in the models) halves the size of the linear
+  layer with the same information; `Vec` matches older SPDNet code.
 
-Static: one chart around the initial weight, increasingly distorted. Dynamic:
-the chart follows the weight.
-```
-
-```{warning}
-Without `register_optimizer_hook`, the reference point never moves and the
-dynamic mode silently behaves like a static parametrization around the
-initial weight. The models forward the call to every dynamic layer:
-`model.register_optimizer_hook(optimizer)`.
-```
+`MEstimation`
+: Pass the weight as a partial,
+  `functools.partial(student_function, n_features=p, nu=3.0)`; Tyler's weight
+  needs `normalize="trace"` or `"determinant"`; `shrinkage` regularizes small
+  sample sizes ($n < p$). Keep `use_autograd=False` (implicit backward) unless
+  the number of iterations is tiny.
 
 ```python
+import functools
+
 import torch
-from yetanotherspdnet.nn import BiMap
 
-layer = BiMap(n_in=64, n_out=32, parametrization_mode="dynamic", n_steps_ref_update=100)
-optimizer = torch.optim.SGD(layer.parameters(), lr=1e-2)
-layer.register_optimizer_hook(optimizer)  # moves W_ref every 100 steps
+from yetanotherspdnet.functions.m_estimators import student_function
+from yetanotherspdnet.nn import BiMap, LogEig, MEstimation, ReEig, Vech
+
+p = 16
+pooling = torch.nn.Sequential(
+    MEstimation(functools.partial(student_function, n_features=p, nu=3.0)),
+    BiMap(p, 8),
+    ReEig(eps=1e-4),
+    LogEig(),
+    Vech(),
+)
+samples = torch.randn(4, 200, p, dtype=torch.float64)  # 4 sets of 200 samples
+print(pooling(samples).shape)  # torch.Size([4, 36])
 ```
-
-### The same idea for SPD parameters
-
-The bias of the batch normalization (and the GBWBN matrices $M$, $G$) must
-stay SPD. `SPDParametrization` maps a symmetric $S$ to $f(S)$, with $f$
-applied to the eigenvalues: $\exp$ (`"exp"`) or the scaled softplus
-$\lambda \mapsto \log_2(1 + 2^\lambda)$ (`"softplus"`, the default, equal to 1
-at 0). Its dynamic version, `SPDAdaptiveParametrization`, works around a
-reference point $R$:
-
-$$
-B = R^{1/2}\, f\big(R^{-1/2} S R^{-1/2}\big)\, R^{1/2},
-$$
-
-with $R \leftarrow B$ every `n_steps_ref_update` steps
-(`batchnorm_parametrization_mode="dynamic"` in the models).
-
-## ReEig and ReEigBias: the non-linearities
-
-`ReEig` is the SPD analogue of ReLU: it clamps the small eigenvalues,
-
-$$
-X = U \operatorname{diag}(\lambda) U^\top \;\longmapsto\;
-U \operatorname{diag}\big(\max(\lambda_i, \epsilon)\big) U^\top .
-$$
-
-Besides the non-linearity, it keeps the output conditioning bounded after a
-dimension reduction.
-
-```{figure} ../_static/diagrams/reeig.svg
-:width: 55%
-
-ReEig and ReEigBias as maps of the eigenvalues.
-```
- The threshold $\epsilon$ (`reeig_eps`) must match the
-scale of the data: eigenvalues below it are erased.
-
-`ReEigBias` adds a learned shift $b_i$ per eigenvalue (in ascending order) and
-a two-sided clamp,
-$U \operatorname{diag}\big(\operatorname{clamp}(\lambda_i + b_i, \epsilon, 1/\epsilon)\big) U^\top$;
-it starts as a two-sided ReEig ($b = 0$) and caps the condition number, which
-helps after estimators that can produce large eigenvalues.
-
-## LogEig, Vec, Vech: back to vectors
-
-`LogEig` computes $U \log(\Lambda) U^\top$. The logarithm maps the SPD
-manifold onto the vector space of symmetric matrices, where a Euclidean
-classifier makes sense. `Vec` flattens all $n^2$ entries; `Vech` keeps the
-upper triangle, $n(n+1)/2$ entries, which carry all the information of a
-symmetric matrix.
-
-## From samples to SPD matrices
-
-`SampleCovariance` and `MEstimation` map raw samples `(..., n_samples, p)` to
-SPD matrices `(..., p, p)`, differentiably with respect to the samples. The
-M-estimator down-weights outlying samples; see
-{doc}`../reference/m_estimators` for the estimators and their two gradient
-paths. They are the first layer of a network fed with raw signals or with CNN
-feature maps (covariance pooling).

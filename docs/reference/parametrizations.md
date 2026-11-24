@@ -5,7 +5,7 @@
 standard optimizer updates an unconstrained tensor. The *adaptive* variants
 work around a reference point that moves during training (the `"dynamic"`
 mode of `BiMap` and of the batch normalization bias); see
-{doc}`../user_guide/layers`.
+{doc}`../user_guide/parametrizations`.
 
 ```{eval-rst}
 .. currentmodule:: yetanotherspdnet.nn.parametrizations
@@ -18,6 +18,7 @@ mode of `BiMap` and of the batch normalization bias); see
    StiefelAdaptiveParametrization
    ScalarSoftPlusParametrization
    ScalarSigmoidParametrization
+   recenter_dynamic_parametrization
 ```
 
 ```{eval-rst}
@@ -43,4 +44,8 @@ mode of `BiMap` and of the batch normalization bias); see
 ```{eval-rst}
 .. autoclass:: yetanotherspdnet.nn.parametrizations.ScalarSigmoidParametrization
    :members: forward, right_inverse
+```
+
+```{eval-rst}
+.. autofunction:: yetanotherspdnet.nn.parametrizations.recenter_dynamic_parametrization
 ```
