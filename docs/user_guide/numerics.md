@@ -262,11 +262,12 @@ point would silently move it at every forward pass.
   identity $\mathrm{Exp}_I(V) = (I + V/2)^2$ is only injective when
   $I + V/2 \succ 0$. Outside that domain, a matrix is folded back and can come
   out numerically singular. The BW metric is not scale invariant, so folding
-  is driven by the **scale** of the data, not by their conditioning: at scale
-  $10^2$ with $\theta = 1$, 99.8 % of the matrices fold at the centring step,
-  at any $\kappa$. The power $\theta < 1$ compresses the scale (1.1 % at
-  $\theta = 0.5$), and `bw_init_metric="trace_scale"` absorbs it into $M$ and
-  $G$ (0 %); see {doc}`batchnorm`.
+  is driven by how far the eigenvalues are from 1 (their common scale and
+  their spread), not by the condition number as such: $\kappa = 10^2$ data
+  with eigenvalues in $[10^{-2}, 1]$ never fold, the same data times $10^2$
+  fold at the centring step for 99.8 % of the matrices ($\theta = 1$).
+  `bw_init_metric="trace_scale"` absorbs the common scale into $M$ and $G$
+  (0 %), and the power $\theta < 1$ compresses the spread; see {doc}`batchnorm`.
 
 ```{figure} ../_static/diagrams/bw_fold.svg
 :width: 60%
@@ -394,17 +395,30 @@ output error $\le 10^{-2}$, gradient error $\le 1$; **unsafe**: failures
 | BN mean [AI] | safe | safe | unsafe | unsafe | safe | safe | degraded | unsafe |
 | BN mean [AI (GEVD)] | safe | safe | unsafe | unsafe | safe | safe | degraded | unsafe |
 | BN mean [arithmetic] | safe | safe | safe | safe | safe | safe | safe | safe |
-| BN mean [BW] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN mean [BW] | safe | safe | degraded | unsafe | safe | safe | degraded | degraded |
 | BN mean [GAH] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
 | BN mean [harmonic] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
 | BN mean [LE] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
 | ResidualBlock [AI] | safe | safe | degraded | unsafe | safe | safe | degraded | degraded |
 | ResidualBlock [LE] | safe | safe | degraded | unsafe | safe | safe | degraded | degraded |
-| GBWBNRResNet | safe | unsafe | degraded | unsafe | safe | degraded | safe | unsafe |
+| GBWBNRResNet | safe | safe | safe | unsafe | safe | degraded | unsafe | unsafe |
 | RResNet | safe | safe | degraded | unsafe | safe | safe | safe | degraded |
 | SPDnet | safe | safe | safe | degraded | safe | safe | safe | degraded |
 
-The Bures–Wasserstein scalar-variance normalization (GBWBN) is not viable in
-float32 beyond $\kappa \approx 10^{2}$: its cross term
-$\operatorname{tr}\big((B^{1/2} X B^{1/2})^{1/2}\big)$ squares the condition
-number. Use float64 for it (an SVD-based cross term is planned).
+The Bures–Wasserstein rows were measured after the SVD cross term
+([section 3](#3-means-as-iterations)), which removed the failures of the
+cross term itself: the BW operations (mean, geodesic, centring, std) no
+longer fail in float32 up to $\kappa = 10^{6}$ (the geodesic through the
+eigendecomposition of $B^{1/2}XB^{1/2}$ failed at $10^{6}$ and was 50 times
+less accurate at $10^{4}$), and their forward errors are equal or smaller
+everywhere.
+The scalar-variance normalization (GBWBN) stays unsafe in float32 and mixed
+precision from $\kappa = 10^{4}$ at $n = 64$ (12–62 % of the batches): the
+eigenvalues of these batches spread over $[10^{-2}, 10^{2}]$, the centring
+folds (see {doc}`batchnorm`) and returns matrices that are singular to
+rounding, whose square root in the next step has no float32 digits left.
+Use float64 for it, or keep the spectrum close to 1 ($\theta < 1$,
+`bw_init_metric="trace_scale"` for the common scale). `GBWBNRResNet` (a BiMap
+to $n/2$ first) is safe in float32 up to $\kappa = 10^{6}$; its mixed-precision
+failures at $10^{6}$ (1 batch in 8) come from the Cholesky of the residual
+block.

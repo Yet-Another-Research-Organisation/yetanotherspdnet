@@ -75,28 +75,36 @@ transport to $\hat G$) stay finite and exact at the identity.
 
 The BW exponential at the identity, $\mathrm{Exp}_I(V) = (I + V/2)^2$, is only
 injective on $I + V/2 \succ 0$; outside it the matrix is folded back (two
-tangent vectors give the same point, see {doc}`numerics`). The BW metric is
-not scale invariant: for data of scale $c$, the centring step transports a
-tangent vector of size $\sim c$ from a mean of size $\sim c$ to $I$, which
-gives a vector of size $\sim\sqrt c$, so **folding is driven by the scale of
-the data, not by their conditioning**. Measured on random batches
-($n = 8$, $\kappa = 10^2$, 20 batches of 32), fraction of folded matrices:
+tangent vectors give the same point, see {doc}`numerics`), and a folded
+matrix close to singular loses its small eigenvalues to rounding (the cause of
+the remaining float32 failures of this layer). The BW metric is not scale
+invariant: for data of scale $c$, the centring step transports a tangent
+vector of size $\sim c$ from a mean of size $\sim c$ to $I$, which gives a
+vector of size $\sim\sqrt c$. **Folding is driven by how far the eigenvalues
+are from 1, not by the condition number as such**: matrices with
+$\kappa = 10^2$ and eigenvalues in $[10^{-2}, 1]$ never fold, the same matrices
+times $10^2$ almost always do. Measured on random batches (20 batches of 32),
+fraction of folded matrices:
 
-| data scale | $\theta$ | `"identity"` | `"trace_scale"` |
-|---|---|---|---|
-| $10^{-2}$, $1$ | 1 and 0.5 | 0 | 0 |
-| $10^{2}$ | 1 | 99.8 % | 0 |
-| $10^{2}$ | 0.5 | 1.1 % | 0 |
-| $10^{4}$ | 1 | 99.8 % | 0 |
-| $10^{4}$ | 0.5 | 98.3 % | 0 |
+| data ($\kappa$, eigenvalues) | $n$ | $\theta$ | `"identity"` | `"trace_scale"` |
+|---|---|---|---|---|
+| $10^2$, $[10^{-2}, 1]$ (and $\times 10^{-2}$) | 8 | 1 and 0.5 | 0 | 0 |
+| $10^2$, $[1, 10^{2}]$ | 8 | 1 | 99.8 % | 0 |
+| $10^2$, $[1, 10^{2}]$ | 8 | 0.5 | 1.1 % | 0 |
+| $10^2$, $[10^{2}, 10^{4}]$ | 8 | 0.5 | 98.3 % | 0 |
+| $10^2$, $[10^{-1}, 10]$ | 64 | 1 | 22 % | 0 |
+| $10^4$, $[10^{-2}, 10^{2}]$ | 64 | 0.5 | 22 % | 0 |
+| $10^4$, $[10^{-2}, 10^{2}]$ | 64 | 1 | 100 % | 100 % |
+| $10^6$, $[10^{-3}, 10^{3}]$ | 64 | 0.5 | 100 % | 57 % |
 
-$\theta < 1$ helps because $X^\theta$ compresses the scale, and
-`bw_init_metric="trace_scale"` removes the scale altogether: the transformed
-data $X_i^\theta / c$ have unit scale, and $\hat G = G^\theta / c = I$
+`bw_init_metric="trace_scale"` removes the common scale: the transformed data
+$X_i^\theta / c$ have unit scale, and $\hat G = G^\theta / c = I$
 (initializing $M$ alone would move the folding to the bias step: 97 % at
-scale $10^2$, $\theta = 1$). With it, the layer is scale-equivariant at
-initialization ($f(sX) = s f(X)$) and its outputs keep the scale of the data
-instead of being centred at $I$.
+scale $10^2$, $\theta = 1$). The spread of the eigenvalues on both sides of 1
+remains, and $\theta < 1$ is what compresses it ($X^\theta$ maps $[10^{-2},
+10^{2}]$ to $[10^{-1}, 10]$ at $\theta = 1/2$). With `"trace_scale"`, the
+layer is scale-equivariant at initialization ($f(sX) = s f(X)$) and its
+outputs keep the scale of the data instead of being centred at $I$.
 
 ### Running statistics
 
