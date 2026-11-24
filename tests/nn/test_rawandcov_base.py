@@ -6,7 +6,7 @@ from torch.testing import assert_close
 
 import yetanotherspdnet.nn.rawandcov_base as nn_rawandcov
 from utils import is_orthogonal, is_spd
-from yetanotherspdnet.nn.base import BiMap
+from yetanotherspdnet.nn.base import BiMap, ReEig
 
 
 # ----------
@@ -134,3 +134,63 @@ class TestBiMapTwoStream:
         )
         X, Sigma = _raw_and_cov((3,), 10, 30, device, dtype, None)
         assert_close(bimap(Sigma), two(Sigma, X)[0])
+
+
+# ----------------
+# ReEigTwoStream
+# ----------------
+class TestReEigTwoStream:
+    """
+    Test suite for the ReEigTwoStream module
+    """
+
+    @pytest.mark.parametrize("mode", ["projection", "whitening_Q", "whitening_Sigma"])
+    def test_initialization(self, mode):
+        """No parameter, attributes and representation."""
+        layer = nn_rawandcov.ReEigTwoStream(eps=1e-3, mode=mode, dim=10)
+        assert layer.eps == 1e-3
+        assert layer.mode == mode
+        assert len(list(layer.parameters())) == 0
+        assert repr(layer).startswith("ReEigTwoStream(")
+
+    def test_invalid_mode(self):
+        """Unknown mode is not allowed."""
+        with pytest.raises(AssertionError):
+            nn_rawandcov.ReEigTwoStream(mode="unknown")
+
+    @pytest.mark.parametrize("mode", ["projection", "whitening_Q", "whitening_Sigma"])
+    @pytest.mark.parametrize("batch_shape", [(), (6,), (2, 3)])
+    def test_forward_backward(self, mode, batch_shape, device, dtype, generator):
+        """Forward (shapes, SPD, same SPD stream as ReEig) and gradients."""
+        n_features, n_samples, eps = 10, 30, 0.5
+        layer = nn_rawandcov.ReEigTwoStream(eps=eps, mode=mode)
+        X, Sigma = _raw_and_cov(
+            batch_shape, n_features, n_samples, device, dtype, generator
+        )
+        Sigma.requires_grad_(True)
+        X.requires_grad_(True)
+
+        Q, V = layer(Sigma, X)
+        assert Q.shape == Sigma.shape
+        assert V.shape == X.shape
+        assert is_spd(Q)
+        assert_close(Q, ReEig(eps=eps)(Sigma))
+
+        (Q.sum() + V.pow(2).sum()).backward()
+        assert Sigma.grad is not None and Sigma.grad.shape == Sigma.shape
+        assert X.grad is not None and X.grad.shape == X.shape
+
+    def test_bimap_then_reeig(self, device, dtype, generator):
+        """The two-stream layers can be chained: BiMap -> ReEig."""
+        n_in, n_out, n_samples = 20, 8, 50
+        bimap = nn_rawandcov.BiMapTwoStream(
+            n_in, n_out, device=device, dtype=dtype, generator=generator
+        )
+        reeig = nn_rawandcov.ReEigTwoStream(eps=0.5, mode="whitening_Q")
+        X, Sigma = _raw_and_cov((4,), n_in, n_samples, device, dtype, generator)
+
+        Q, V = reeig(*bimap(Sigma, X))
+        assert Q.shape == (4, n_out, n_out)
+        assert V.shape == (4, n_out, n_samples)
+        (Q.sum() + V.pow(2).sum()).backward()
+        assert next(bimap.parameters()).grad is not None

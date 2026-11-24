@@ -4,7 +4,11 @@ import torch
 from torch import nn
 from torch.nn.utils import parametrizations
 
-from ..functions.rawandcov_linalg import CongruenceAndProjection
+from ..functions.rawandcov_linalg import (
+    CongruenceAndProjection,
+    EighReLuAndProjection,
+    EighReLuAndWhitening,
+)
 from ..random.stiefel import _init_weights_stiefel
 
 
@@ -126,3 +130,84 @@ class BiMapTwoStream(nn.Module):
             f"parametrization_options={self.parametrization_options}, "
             f"device={self.device}, dtype={self.dtype}, generator={self.generator})"
         )
+
+
+class ReEigTwoStream(nn.Module):
+    r"""
+    Two-stream ReEig layer: :math:`(\Sigma, X) \mapsto (Q, V)` with
+    :math:`Q = U \max(\varepsilon I, \Lambda) U^\top` and, depending on
+    ``mode``,
+
+    - ``"projection"``: :math:`V = U\, \mathrm{ReLU}(U^\top X)`;
+    - ``"whitening_Q"``: :math:`V = Q^{1/2}\, \mathrm{ReLU}(Q^{-1/2} X)`;
+    - ``"whitening_Sigma"``:
+      :math:`V = \Sigma^{1/2}\, \mathrm{ReLU}(\Sigma^{-1/2} X)`,
+
+    where :math:`\Sigma = U \Lambda U^\top`. The SPD stream is the classical
+    ReEig layer. The layer has no parameter.
+    """
+
+    _MODES = ("projection", "whitening_Q", "whitening_Sigma")
+
+    def __init__(
+        self, eps: float = 1e-4, mode: str = "whitening_Q", dim: int | None = None
+    ) -> None:
+        """
+        Build a two-stream ReEig layer.
+
+        Parameters
+        ----------
+        eps : float, optional
+            Value of rectification of the eigenvalues. Default is 1e-4
+
+        mode : str, optional
+            Transformation of the raw data: "projection", "whitening_Q" or
+            "whitening_Sigma". Default is "whitening_Q"
+
+        dim : int, optional
+            Dimension of the SPD matrices. Default is None.
+            Used for logging purposes.
+        """
+        super().__init__()
+        assert mode in self._MODES, f"mode must be one of {self._MODES}"
+        self.eps = eps
+        self.mode = mode
+        self.dim = dim
+
+    def forward(
+        self, data_cov: torch.Tensor, data_raw: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the two-stream ReEig layer
+
+        Parameters
+        ----------
+        data_cov : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        data_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data associated with the SPD matrices
+
+        Returns
+        -------
+        data_cov_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices with rectified eigenvalues
+
+        data_raw_transformed : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of transformed raw data
+        """
+        if self.mode == "projection":
+            return EighReLuAndProjection.apply(data_cov, data_raw, self.eps)
+        whitening = "Q" if self.mode == "whitening_Q" else "Sigma"
+        return EighReLuAndWhitening.apply(data_cov, data_raw, self.eps, whitening)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"ReEigTwoStream(eps={self.eps}, mode={self.mode!r}, dim={self.dim})"
