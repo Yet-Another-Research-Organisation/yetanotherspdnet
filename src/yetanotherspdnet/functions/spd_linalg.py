@@ -2303,7 +2303,7 @@ def congruence_SPD(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
     data : torch.Tensor of shape (..., n_features, n_features)
         Batch of SPD matrices
 
-    matrix : torch.Tensor of shape (n_features, n_features)
+    matrix : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
     Returns
@@ -2330,7 +2330,7 @@ class CongruenceSPD(Function):
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
 
-        matrix : torch.Tensor of shape (n_features, n_features)
+        matrix : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
             SPD matrix
 
         Returns
@@ -2359,18 +2359,17 @@ class CongruenceSPD(Function):
         grad_input_data : torch.Tensor of shape (..., n_features, n_features)
             Gradient of the loss with respect to the input batch of SPD matrices
 
-        grad_input_bias : torch.Tensor of shape (n_features, n_features)
+        grad_input_bias : torch.Tensor of the shape of matrix
             Gradient of the loss with respect to the SPD matrix used for congruence
         """
         data, matrix = ctx.saved_tensors
+        grad_output = symmetrize(grad_output)
+        grad_input_matrix = 2 * symmetrize(
+            torch.einsum("...ik,...kl,...lj->...ij", grad_output, matrix, data)
+        )
         return (
-            matrix @ symmetrize(grad_output) @ matrix,
-            2
-            * symmetrize(
-                torch.einsum(
-                    "...ik,kl,...lj->ij", symmetrize(grad_output), matrix, data
-                )
-            ),
+            (matrix @ grad_output @ matrix).sum_to_size(data.shape),
+            grad_input_matrix.sum_to_size(matrix.shape),
         )
 
 
@@ -2383,7 +2382,7 @@ def congruence_SPD_sqrtm(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tens
     data : torch.Tensor of shape (..., n_features, n_features)
         Batch of SPD matrices
 
-    matrix : torch.Tensor of shape (n_features, n_features)
+    matrix : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
         SPD matrix
 
     Returns
@@ -2411,7 +2410,7 @@ class CongruenceSPDSqrtm(Function):
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
 
-        matrix : torch.Tensor of shape (n_features, n_features)
+        matrix : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
             SPD matrix
 
         Returns
@@ -2441,18 +2440,20 @@ class CongruenceSPDSqrtm(Function):
         grad_input_data : torch.Tensor of shape (..., n_features, n_features)
             Gradient of the loss with respect to the input batch of SPD matrices
 
-        grad_input_matrix : torch.Tensor of shape (n_features, n_features)
+        grad_input_matrix : torch.Tensor of the shape of matrix
             Gradient of the loss with respect to the SPD matrix used for whitening
         """
         data, eigvals_matrix, eigvecs_matrix, matrix_sqrtm = ctx.saved_tensors
         grad_input_data = matrix_sqrtm @ symmetrize(grad_output) @ matrix_sqrtm
+        # per-sample right-hand side, summed over the batch dimensions the
+        # matrix does not have (one matrix for the batch, or one per sample)
         syl_right = 2 * symmetrize(
-            torch.einsum("...ik, kl, ...lj->ij", data, matrix_sqrtm, grad_output)
-        )
+            torch.einsum("...ik,...kl,...lj->...ij", data, matrix_sqrtm, grad_output)
+        ).sum_to_size(matrix_sqrtm.shape)
         grad_input_matrix = solve_sylvester_SPD(
             torch.sqrt(eigvals_matrix), eigvecs_matrix, syl_right
         )
-        return grad_input_data, grad_input_matrix
+        return grad_input_data.sum_to_size(data.shape), grad_input_matrix
 
 
 def whitening(data: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
@@ -2558,7 +2559,7 @@ def congruence_rectangular(data: torch.Tensor, weight: torch.Tensor) -> torch.Te
     data : torch.Tensor of shape (..., n_in, n_in)
         Batch of SPD matrices
 
-    weight : torch.Tensor of shape (n_in, n_out)
+    weight : torch.Tensor of shape (n_in, n_out) or (..., n_in, n_out)
         Rectangular matrix (e.g., weights),
         n_in > n_out is expected
 
@@ -2590,7 +2591,7 @@ class CongruenceRectangular(Function):
         data : torch.Tensor of shape (..., n_in, n_in)
             Batch of SPD matrices
 
-        weight : torch.Tensor of shape (n_out, n_in)
+        weight : torch.Tensor of shape (n_in, n_out) or (..., n_in, n_out)
             Rectangular matrix (e.g., weights),
             n_in > n_out is expected
 
@@ -2620,10 +2621,17 @@ class CongruenceRectangular(Function):
         grad_input_data : torch.Tensor of shape (..., n_in, n_in)
             Gradient of the loss with respect to the input batch of SPD matrices
 
-        grad_input_W : torch.Tensor of shape (n_in, n_out)
+        grad_input_W : torch.Tensor of the shape of weight
             Gradient of the loss with respect to the (full-rank) rectangular matrix W
         """
         data, weight = ctx.saved_tensors
         grad_input_data = weight @ grad_output @ weight.transpose(-1, -2)
-        grad_input_W = 2 * torch.einsum("...ik,kl,...lj->ij", data, weight, grad_output)
-        return grad_input_data, grad_input_W
+        # per-sample products, summed over the batch dimensions the weight
+        # does not have (one weight for the batch, or one per matrix)
+        grad_input_W = 2 * torch.einsum(
+            "...ik,...kl,...lj->...ij", data, weight, grad_output
+        )
+        return (
+            grad_input_data.sum_to_size(data.shape),
+            grad_input_W.sum_to_size(weight.shape),
+        )
