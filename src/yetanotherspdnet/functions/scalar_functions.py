@@ -235,3 +235,171 @@ def zero_where_zero_std(grad: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
         grad where std > 0, zeros where std == 0
     """
     return torch.where(std > 0, grad, torch.zeros_like(grad))
+
+
+# ---------------------------------------------------------------------------
+# Divided differences (f(a) - f(b)) / (a - b) without cancellation
+# ---------------------------------------------------------------------------
+# Each kernel takes broadcastable eigenvalue tensors a, b and returns the divided
+# difference of its function. It is symmetric in (a, b) by construction (it works
+# on lo = min(a, b), hi = max(a, b)), accurate to a few ulps for any gap
+# a - b != 0, and may be undefined (0 / 0) at exact ties, which
+# spd_linalg._aux_eigh_operation_grad replaces with the derivative.
+
+
+def _sorted_pair(
+    a: torch.Tensor, b: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return lo = min(a, b), hi = max(a, b) and the gap hi - lo >= 0."""
+    lo = torch.minimum(a, b)
+    hi = torch.maximum(a, b)
+    return lo, hi, hi - lo
+
+
+def sqrt_divided_difference(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    r"""
+    Divided difference of the square root, :math:`1 / (\sqrt a + \sqrt b)`.
+
+    Exact also at ties (:math:`1 / (2\sqrt a)`).
+
+    Parameters
+    ----------
+    a, b : torch.Tensor
+        Positive eigenvalues (broadcastable)
+
+    Returns
+    -------
+    torch.Tensor
+        :math:`(\sqrt a - \sqrt b) / (a - b)`
+    """
+    return 1 / (torch.sqrt(a) + torch.sqrt(b))
+
+
+def inv_sqrt_divided_difference(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    r"""
+    Divided difference of :math:`x^{-1/2}`, :math:`-1 / (\sqrt a \sqrt b (\sqrt a + \sqrt b))`.
+
+    Exact also at ties.
+
+    Parameters
+    ----------
+    a, b : torch.Tensor
+        Positive eigenvalues (broadcastable)
+
+    Returns
+    -------
+    torch.Tensor
+        :math:`(a^{-1/2} - b^{-1/2}) / (a - b)`
+    """
+    sqrt_a, sqrt_b = torch.sqrt(a), torch.sqrt(b)
+    return -1 / (sqrt_a * sqrt_b * (sqrt_a + sqrt_b))
+
+
+def inv_divided_difference(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    r"""
+    Divided difference of :math:`x^{-1}`, :math:`-1 / (ab)`.
+
+    Exact also at ties.
+
+    Parameters
+    ----------
+    a, b : torch.Tensor
+        Nonzero eigenvalues (broadcastable)
+
+    Returns
+    -------
+    torch.Tensor
+        :math:`(a^{-1} - b^{-1}) / (a - b)`
+    """
+    return -1 / (a * b)
+
+
+def log_divided_difference(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    r"""
+    Divided difference of the logarithm, :math:`\operatorname{log1p}(d / l) / d`.
+
+    With :math:`l = \min(a, b)` and :math:`d = |a - b|`; 0 / 0 at ties.
+
+    Parameters
+    ----------
+    a, b : torch.Tensor
+        Positive eigenvalues (broadcastable)
+
+    Returns
+    -------
+    torch.Tensor
+        :math:`(\log a - \log b) / (a - b)`
+    """
+    lo, _, gap = _sorted_pair(a, b)
+    return torch.log1p(gap / lo) / gap
+
+
+def exp_divided_difference(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    r"""
+    Divided difference of the exponential, :math:`e^{l} \operatorname{expm1}(d) / d`.
+
+    With :math:`l = \min(a, b)` and :math:`d = |a - b|`; 0 / 0 at ties.
+
+    Parameters
+    ----------
+    a, b : torch.Tensor
+        Eigenvalues (broadcastable)
+
+    Returns
+    -------
+    torch.Tensor
+        :math:`(e^a - e^b) / (a - b)`
+    """
+    lo, _, gap = _sorted_pair(a, b)
+    return torch.exp(lo) * torch.expm1(gap) / gap
+
+
+def pow_divided_difference(
+    a: torch.Tensor, b: torch.Tensor, exponent: float | torch.Tensor
+) -> torch.Tensor:
+    r"""
+    Divided difference of :math:`x^t`, :math:`l^t \operatorname{expm1}(t \operatorname{log1p}(d / l)) / d`.
+
+    With :math:`l = \min(a, b)` and :math:`d = |a - b|`; 0 / 0 at ties.
+
+    Parameters
+    ----------
+    a, b : torch.Tensor
+        Positive eigenvalues (broadcastable)
+
+    exponent : float | torch.Tensor
+        Power exponent :math:`t`
+
+    Returns
+    -------
+    torch.Tensor
+        :math:`(a^t - b^t) / (a - b)`
+    """
+    lo, _, gap = _sorted_pair(a, b)
+    return torch.pow(lo, exponent) * torch.expm1(exponent * torch.log1p(gap / lo)) / gap
+
+
+def std_from_variance(variance: torch.Tensor) -> torch.Tensor:
+    r"""
+    Return :math:`\sqrt{\max(v, 0)}`, with a zero subgradient at :math:`v \le 0`.
+
+    Rounding can make a variance slightly negative (clamped to 0), and
+    :math:`\sqrt{\cdot}` has an infinite derivative at 0, which autograd turns
+    into NaN (``inf * 0``) for a batch of identical matrices. The value is
+    exactly ``torch.sqrt(torch.clamp(variance, min=0))``; the gradient is the
+    zero subgradient where the variance is not positive, as in the
+    hand-written backwards (:func:`zero_where_zero_std`).
+
+    Parameters
+    ----------
+    variance : torch.Tensor
+        Variance(s)
+
+    Returns
+    -------
+    std : torch.Tensor
+        Standard deviation(s)
+    """
+    positive = variance > 0
+    safe = torch.where(positive, variance, torch.ones_like(variance))
+    return torch.where(positive, torch.sqrt(safe), torch.zeros_like(variance))

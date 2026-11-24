@@ -6,20 +6,32 @@ import torch
 from torch import nn
 
 from yetanotherspdnet._deprecation import _deprecated
-from yetanotherspdnet.functions._constants import SPD_EIGVAL_FLOOR, TANGENT_NORM_FLOOR
+from yetanotherspdnet.functions._constants import (
+    SPD_EIGVAL_CEILING,
+    SPD_EIGVAL_FLOOR,
+    TANGENT_NORM_FLOOR,
+)
+from yetanotherspdnet.functions.dispatch import select_path
 from yetanotherspdnet.functions.spd_geometries import affine_invariant
 from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
     AffineInvariantExp,
+    AffineInvariantNorm,
     affine_invariant_exp,
-    affine_invariant_projx,
 )
 from yetanotherspdnet.functions.spd_linalg import (
+    EighClamp,
     EighReLu,
+    EigvalshSymmetric,
     ExpmSymmetric,
     LogmSPD,
+    eigh_clamp,
+    eigh_context,
     eigh_relu,
+    eigvalsh_symmetric,
     expm_symmetric,
     logm_SPD,
+    spd_floor,
+    symmetrize,
 )
 from yetanotherspdnet.nn.parametrizations import (
     StiefelAdaptiveParametrization,
@@ -28,9 +40,16 @@ from yetanotherspdnet.nn.parametrizations import (
 from yetanotherspdnet.random.stiefel import random_stiefel
 
 
-# eigenvalue floor applied to the input of ResidualBlock (lower bound of
-# affine_invariant_projx, which bounds the output)
+# absolute eigenvalue floor applied to the input of ResidualBlock (lower bound of
+# the eigenvalue clamp of its output, as affine_invariant_projx of the reference
+# code); the floor actually used is spd_floor(eigenvalues, INPUT_EIGVAL_FLOOR),
+# raised to the rounding level eps max(lambda) of the dtype
 INPUT_EIGVAL_FLOOR = SPD_EIGVAL_FLOOR
+
+
+def _input_floor(eigvals: torch.Tensor) -> torch.Tensor:
+    """Dtype-aware floor of the ResidualBlock eigenvalues (see spd_floor)."""
+    return spd_floor(eigvals, floor=INPUT_EIGVAL_FLOOR)
 
 
 class SpectralVectorField(nn.Module):
@@ -78,6 +97,12 @@ class SpectralVectorField(nn.Module):
     use_autograd : bool, optional
         Use torch autograd for gradient computation. Default is False
 
+    eigh_dtype : torch.dtype or None, optional
+        dtype of the eigendecompositions of the forward pass (e.g.
+        ``torch.float64`` in a float32 model: mixed precision, see
+        :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+        Default is None (the dtype of the data).
+
     device : torch.device, optional
         Device. Default is torch.device("cpu")
 
@@ -101,8 +126,10 @@ class SpectralVectorField(nn.Module):
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
+        eigh_dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
+        self.eigh_dtype = eigh_dtype
         self.n_features = n_features
         self.spectrum_type = spectrum_type
         if spectrum_type not in ("conv1d", "mlp"):
@@ -110,6 +137,9 @@ class SpectralVectorField(nn.Module):
                 f"spectrum_type must be 'conv1d' or 'mlp', got {spectrum_type}"
             )
         self.use_autograd = use_autograd
+        self.eigvalsh = select_path(
+            eigvalsh_symmetric, EigvalshSymmetric.apply, use_autograd
+        )
 
         # Learnable orthogonal matrix Q on Stiefel(n, n)
         self.Q = nn.Parameter(
@@ -224,28 +254,29 @@ class SpectralVectorField(nn.Module):
         tangent : torch.Tensor of shape (..., n, n)
             Symmetric tangent vectors at each input point
         """
-        if self.training and self.is_dynamic:
-            self.current_ref_step += 1
+        with eigh_context(self.eigh_dtype):
+            if self.training and self.is_dynamic:
+                self.current_ref_step += 1
 
-        batch_shape = data.shape[:-2]
-        n = self.n_features
+            batch_shape = data.shape[:-2]
+            n = self.n_features
 
-        # Extract eigenvalues (sorted ascending)
-        eigenvalues = torch.linalg.eigvalsh(data)  # (..., n)
+            # Extract eigenvalues (sorted ascending)
+            eigenvalues = self.eigvalsh(data)  # (..., n)
 
-        # Apply spectrum mapping
-        flat_eigs = eigenvalues.reshape(-1, n)  # (B, n)
-        if self.spectrum_type == "conv1d":
-            # Conv1d expects (B, C, L) with C=1
-            f_eigs = self.spectrum_map(flat_eigs.unsqueeze(1)).squeeze(1)
-        else:
-            f_eigs = self.spectrum_map(flat_eigs)
-        f_eigs = f_eigs.reshape(*batch_shape, n)  # (..., n)
+            # Apply spectrum mapping
+            flat_eigs = eigenvalues.reshape(-1, n)  # (B, n)
+            if self.spectrum_type == "conv1d":
+                # Conv1d expects (B, C, L) with C=1
+                f_eigs = self.spectrum_map(flat_eigs.unsqueeze(1)).squeeze(1)
+            else:
+                f_eigs = self.spectrum_map(flat_eigs)
+            f_eigs = f_eigs.reshape(*batch_shape, n)  # (..., n)
 
-        # Construct tangent vector: Q @ diag(f_eigs) @ Q^T
-        Q = self.Q  # (n, n) orthogonal
-        tangent = (Q * f_eigs.unsqueeze(-2)) @ Q.transpose(-1, -2)
-        return tangent
+            # Construct tangent vector: Q @ diag(f_eigs) @ Q^T
+            Q = self.Q  # (n, n) orthogonal
+            tangent = (Q * f_eigs.unsqueeze(-2)) @ Q.transpose(-1, -2)
+            return tangent
 
     def _post_optimizer_hook(
         self, _optimizer: torch.optim.Optimizer, *_args, **_kwargs
@@ -300,7 +331,8 @@ class ResidualBlock(nn.Module):
     SpectralVectorField), following Katsman et al., *Riemannian Residual
     Neural Networks* (NeurIPS 2023) and their reference implementation:
 
-    - ``metric="affine_invariant"``: X_new = projx(Exp_X(V / ||V||_X)), a step
+    - ``metric="affine_invariant"``: X_new = clamp(Exp_X(V / ||V||_X)), with the eigenvalues clamped to
+      [1e-8, 1e8] (projx of the reference implementation), a step
       of unit affine-invariant length. Without this normalization,
       ||V||_X = ||X^{-1/2} V X^{-1/2}||_F grows like 1 / lambda_min(X) and the
       matrix exponential overflows on ill-conditioned inputs.
@@ -332,6 +364,12 @@ class ResidualBlock(nn.Module):
     use_autograd : bool, optional
         Use autograd for exp map gradient. Default is False
 
+    eigh_dtype : torch.dtype or None, optional
+        dtype of the eigendecompositions of the forward pass (e.g.
+        ``torch.float64`` in a float32 model: mixed precision, see
+        :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+        Default is None (the dtype of the data).
+
     metric : str, optional
         "affine_invariant" (default) or "log_euclidean", see above
 
@@ -359,8 +397,10 @@ class ResidualBlock(nn.Module):
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
         generator: torch.Generator | None = None,
+        eigh_dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
+        self.eigh_dtype = eigh_dtype
         if metric not in ("affine_invariant", "log_euclidean"):
             raise ValueError(
                 f"metric must be 'affine_invariant' or 'log_euclidean', got {metric}"
@@ -384,15 +424,25 @@ class ResidualBlock(nn.Module):
         )
 
         # Select implementations (autograd or manual backward)
-        if use_autograd:
-            self.exp_map = affine_invariant_exp
-            self.logm = lambda x: logm_SPD(x)[0]
-            self.expm = lambda x: expm_symmetric(x)[0]
-            self.floor = lambda x: eigh_relu(x, INPUT_EIGVAL_FLOOR)[0]
-        else:
-            self.exp_map = AffineInvariantExp.apply
-            self.logm, self.expm = LogmSPD.apply, ExpmSymmetric.apply
-            self.floor = lambda x: EighReLu.apply(x, INPUT_EIGVAL_FLOOR)
+        self.exp_map = select_path(
+            affine_invariant_exp, AffineInvariantExp.apply, use_autograd
+        )
+        self.logm = select_path(lambda x: logm_SPD(x)[0], LogmSPD.apply, use_autograd)
+        self.expm = select_path(
+            lambda x: expm_symmetric(x)[0], ExpmSymmetric.apply, use_autograd
+        )
+        floor = select_path(
+            lambda x, eps: eigh_relu(x, eps)[0], EighReLu.apply, use_autograd
+        )
+        self.floor = lambda x: floor(x, _input_floor)
+        self.norm = select_path(
+            affine_invariant.affine_invariant_norm,
+            AffineInvariantNorm.apply,
+            use_autograd,
+        )
+        self.clamp = select_path(
+            lambda x, lo, hi: eigh_clamp(x, lo, hi)[0], EighClamp.apply, use_autograd
+        )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -408,20 +458,21 @@ class ResidualBlock(nn.Module):
         result : torch.Tensor of shape (..., n, n)
             Updated SPD matrices after one residual step
         """
-        # the input may be numerically singular (e.g. a Bures-Wasserstein batch
-        # normalization folds matrices outside the injectivity domain of its
-        # exponential): floor its eigenvalues, a no-op on well-conditioned
-        # inputs, so that the Cholesky of the norm and the logarithm are defined
-        data = self.floor(data)
-        tangent = self.vector_field(data)
-        if self.metric == "log_euclidean":
-            return self.expm(self.logm(data) + tangent)
-        # unit affine-invariant step (reference implementation)
-        norm = affine_invariant.affine_invariant_norm(data, tangent).clamp_min(
-            TANGENT_NORM_FLOOR
-        )
-        result = self.exp_map(data, tangent / norm[..., None, None])
-        return affine_invariant_projx(result)
+        with eigh_context(self.eigh_dtype):
+            # the input may be numerically singular (e.g. a Bures-Wasserstein batch
+            # normalization folds matrices outside the injectivity domain of its
+            # exponential): floor its eigenvalues, a no-op on well-conditioned
+            # inputs, so that the Cholesky of the norm and the logarithm are defined
+            data = self.floor(data)
+            tangent = self.vector_field(data)
+            if self.metric == "log_euclidean":
+                return self.expm(self.logm(data) + tangent)
+            # unit affine-invariant step (reference implementation)
+            norm = self.norm(data, tangent).clamp_min(TANGENT_NORM_FLOOR)
+            result = self.exp_map(data, tangent / norm[..., None, None])
+            # projection onto the SPD matrices with spectrum in [1e-8, 1e8], as
+            # projx of the reference implementation
+            return self.clamp(symmetrize(result), _input_floor, SPD_EIGVAL_CEILING)
 
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """Register optimizer hooks for dynamic parametrizations."""

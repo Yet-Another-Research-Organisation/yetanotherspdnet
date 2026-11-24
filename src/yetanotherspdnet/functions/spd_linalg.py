@@ -1,23 +1,37 @@
 """Core SPD linear algebra: matrix functions, congruences and vectorization."""
 
-from collections.abc import Callable
+import contextlib
+import contextvars
+from collections.abc import Callable, Iterator
+from typing import overload
 
 import torch
 from torch.autograd import Function
 
 from yetanotherspdnet._deprecation import _deprecated
-from yetanotherspdnet.functions._constants import EIGVAL_TIE_THRESHOLD
+from yetanotherspdnet.functions._constants import (
+    EIGVAL_TIE_GENERIC_FACTOR,
+    EIGVAL_TIE_RTOL,
+    SPD_EIGVAL_FLOOR,
+    SPD_FLOOR_RTOL,
+)
 from yetanotherspdnet.functions.scalar_functions import (
+    exp_divided_difference,
     inv,
     inv_derivative,
+    inv_divided_difference,
     inv_scaled_softplus,
     inv_scaled_softplus_derivative,
     inv_sqrt,
     inv_sqrt_derivative,
+    inv_sqrt_divided_difference,
+    log_divided_difference,
+    pow_divided_difference,
     pow_exponent_derivative,
     scaled_softplus,
     scaled_softplus_derivative,
     sqrt_derivative,
+    sqrt_divided_difference,
 )
 
 
@@ -245,6 +259,130 @@ class VechBatch(Function):
         return unvech_batch(grad_output, ctx.n_features)
 
 
+# -----------------------------------------
+# Eigendecompositions (optional upcasting)
+# -----------------------------------------
+_EIGH_DTYPE: contextvars.ContextVar[torch.dtype | None] = contextvars.ContextVar(
+    "eigh_dtype", default=None
+)
+
+
+def get_eigh_dtype() -> torch.dtype | None:
+    """
+    Return the dtype of the eigendecompositions set by :func:`eigh_precision`.
+
+    Returns
+    -------
+    torch.dtype or None
+        The decomposition dtype, None for the dtype of the input
+    """
+    return _EIGH_DTYPE.get()
+
+
+@contextlib.contextmanager
+def eigh_precision(dtype: torch.dtype | None) -> Iterator[None]:
+    r"""
+    Compute the eigendecompositions of the library in *dtype* (mixed precision).
+
+    Inside the context, every symmetric eigendecomposition of the library
+    (:func:`symmetric_eigh`, :func:`symmetric_eigvalsh`) of a tensor of another
+    floating dtype is computed on the input cast to *dtype*, and its
+    eigenvalues and eigenvectors are cast back: with ``dtype=torch.float64`` a
+    float32 model gets the eigenvalues of its float32 matrices to float64
+    accuracy (float32 ``eigh`` resolves the eigenvalues only to about
+    :math:`\varepsilon_{32} \lVert X \rVert`, so the small eigenvalues of
+    ill-conditioned matrices lose all their digits, or turn negative), while
+    everything else stays in float32. The layers and models expose it as their
+    ``eigh_dtype`` option. The setting is read when a decomposition is computed;
+    the manual backwards reuse the decompositions of their forward.
+
+    Parameters
+    ----------
+    dtype : torch.dtype or None
+        dtype of the decompositions (None: the dtype of each input)
+
+    Yields
+    ------
+    None
+    """
+    token = _EIGH_DTYPE.set(dtype)
+    try:
+        yield
+    finally:
+        _EIGH_DTYPE.reset(token)
+
+
+def eigh_context(
+    dtype: torch.dtype | None,
+) -> contextlib.AbstractContextManager[None]:
+    """
+    Context of :func:`eigh_precision` for *dtype*, or a no-op for None.
+
+    Unlike ``eigh_precision(None)``, None keeps an enclosing setting (a layer
+    without ``eigh_dtype`` inside a model with one).
+
+    Parameters
+    ----------
+    dtype : torch.dtype or None
+        dtype of the decompositions
+
+    Returns
+    -------
+    contextlib.AbstractContextManager
+        The context manager
+    """
+    if dtype is None:
+        return contextlib.nullcontext()
+    return eigh_precision(dtype)
+
+
+def symmetric_eigh(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Eigendecomposition of symmetric matrices, in the precision of :func:`eigh_precision`.
+
+    ``torch.linalg.eigh`` (ascending eigenvalues), computed in the dtype set by
+    :func:`eigh_precision` when there is one and cast back to the dtype of
+    *data*.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    Returns
+    -------
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors
+    """
+    dtype = _EIGH_DTYPE.get()
+    if dtype is None or dtype == data.dtype:
+        return torch.linalg.eigh(data)
+    eigvals, eigvecs = torch.linalg.eigh(data.to(dtype))
+    return eigvals.to(data.dtype), eigvecs.to(data.dtype)
+
+
+def symmetric_eigvalsh(data: torch.Tensor) -> torch.Tensor:
+    """
+    Eigenvalues of symmetric matrices, in the precision of :func:`eigh_precision`.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    Returns
+    -------
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues, ascending
+    """
+    dtype = _EIGH_DTYPE.get()
+    if dtype is None or dtype == data.dtype:
+        return torch.linalg.eigvalsh(data)
+    return torch.linalg.eigvalsh(data.to(dtype)).to(data.dtype)
+
+
 # -------------------------
 # Operations on eigenvalues
 # -------------------------
@@ -285,16 +423,47 @@ def eigh_operation(
     return result
 
 
+# closed-form divided differences of the matrix functions of this module,
+# looked up by the scalar ``operation`` when no ``divided_difference`` is given
+_DIVIDED_DIFFERENCES: dict[Callable, Callable] = {
+    torch.sqrt: sqrt_divided_difference,
+    inv_sqrt: inv_sqrt_divided_difference,
+    inv: inv_divided_difference,
+    torch.log: log_divided_difference,
+    torch.exp: exp_divided_difference,
+}
+
+
 def _aux_eigh_operation_grad(
     eigvals: torch.Tensor,
     operation: Callable,
     operation_deriv: Callable,
+    divided_difference: Callable | None = None,
 ) -> torch.Tensor:
-    """
-    Build the Daleckii-Krein matrix of a function applied on eigenvalues.
+    r"""
+    Build the Daleckii-Krein (Loewner) matrix of a function applied on eigenvalues.
 
     It is multiplied (Hadamard product) with the transformed output gradient to get the
-    input gradient of a function applied on the eigenvalues of a symmetric matrix.
+    input gradient of a function applied on the eigenvalues of a symmetric matrix:
+    :math:`L_{ij} = (f(\lambda_i) - f(\lambda_j)) / (\lambda_i - \lambda_j)`, and
+    :math:`f'` at ties.
+
+    Two regimes:
+
+    - a closed-form, non-cancelling divided difference is known (given as
+      ``divided_difference``, or looked up for ``torch.sqrt``, ``inv_sqrt``, ``inv``,
+      ``torch.log``, ``torch.exp``): it is used for every pair, and the derivative
+      only replaces it at rounding-level ties,
+      :math:`|\lambda_i - \lambda_j| \le c\, n\, \varepsilon \max_k |\lambda_k|`
+      (:math:`c` = ``EIGVAL_TIE_RTOL``, :math:`\varepsilon` the machine epsilon of
+      the dtype);
+    - otherwise the quotient is used down to the gap
+      :math:`(24\varepsilon)^{1/3} \max(|\lambda_i|, |\lambda_j|)` where its
+      cancellation error equals the error of the derivative at the midpoint, and
+      :math:`f'((\lambda_i + \lambda_j) / 2)` below it.
+
+    In both cases the near-tie value is the derivative at the midpoint, so the
+    matrix is exactly symmetric.
 
     Parameters
     ----------
@@ -307,24 +476,38 @@ def _aux_eigh_operation_grad(
     operation_deriv : Callable
         Derivative of the function to apply on eigenvalues
 
+    divided_difference : Callable, optional
+        ``divided_difference(a, b)`` returning :math:`(f(a) - f(b)) / (a - b)`
+        without cancellation (see the kernels of
+        :mod:`~yetanotherspdnet.functions.scalar_functions`). Default: looked up
+        from ``operation``, else the generic quotient.
+
     Returns
     -------
     aux_mat : torch.Tensor of shape (..., n_features, n_features)
         Matrix to be multiplied (Hadamard product) with transformed output gradient
     """
-    eigvals_transformed = operation(eigvals)
-    eigvals_deriv = operation_deriv(eigvals)
+    if divided_difference is None:
+        divided_difference = _DIVIDED_DIFFERENCES.get(operation)
+    finfo = torch.finfo(eigvals.dtype)
+    lam_i = eigvals.unsqueeze(-1)
+    lam_j = eigvals.unsqueeze(-2)
+    gap = torch.abs(lam_i - lam_j)
+    midpoint_deriv = operation_deriv((lam_i + lam_j) / 2)
 
-    denominator = eigvals.unsqueeze(-1) - eigvals.unsqueeze(-2)
-    numerator = eigvals_transformed.unsqueeze(-1) - eigvals_transformed.unsqueeze(-2)
+    if divided_difference is not None:
+        n_features = eigvals.shape[-1]
+        scale = eigvals.abs().amax(dim=-1, keepdim=True).unsqueeze(-1)
+        tie_tol = EIGVAL_TIE_RTOL * n_features * finfo.eps * scale.clamp_min(finfo.tiny)
+        tie = gap <= tie_tol
+        return torch.where(tie, midpoint_deriv, divided_difference(lam_i, lam_j))
 
-    # (near-)repeated eigenvalues: use the derivative instead of the quotient
-    null_denominator = torch.abs(denominator) < EIGVAL_TIE_THRESHOLD
-
-    numerator = torch.where(null_denominator, eigvals_deriv.unsqueeze(-1), numerator)
-    denominator = torch.where(null_denominator, torch.ones_like(numerator), denominator)
-
-    return numerator / denominator
+    pair_scale = torch.maximum(lam_i.abs(), lam_j.abs()).clamp_min(finfo.tiny)
+    tie = gap <= (EIGVAL_TIE_GENERIC_FACTOR * finfo.eps) ** (1 / 3) * pair_scale
+    transformed = operation(eigvals)
+    numerator = transformed.unsqueeze(-1) - transformed.unsqueeze(-2)
+    denominator = torch.where(tie, torch.ones_like(gap), lam_i - lam_j)
+    return torch.where(tie, midpoint_deriv, numerator / denominator)
 
 
 def eigh_operation_grad(
@@ -333,6 +516,7 @@ def eigh_operation_grad(
     eigvecs: torch.Tensor,
     operation: Callable,
     operation_deriv: Callable,
+    divided_difference: Callable | None = None,
 ) -> torch.Tensor:
     """
     Backpropagate through a function applied on the eigenvalues.
@@ -356,12 +540,18 @@ def eigh_operation_grad(
     operation_deriv : Callable
         Derivative of the function to apply on eigenvalues
 
+    divided_difference : Callable, optional
+        Closed-form divided difference of the function, see
+        :func:`_aux_eigh_operation_grad`
+
     Returns
     -------
     grad_input : torch.Tensor of shape (..., n_features, n_features)
         Gradient of the loss with respect to the input batch of symmetric matrices
     """
-    aux_mat = _aux_eigh_operation_grad(eigvals, operation, operation_deriv)
+    aux_mat = _aux_eigh_operation_grad(
+        eigvals, operation, operation_deriv, divided_difference
+    )
     middle_term = aux_mat * (
         eigvecs.transpose(-1, -2) @ symmetrize(grad_output) @ eigvecs
     )
@@ -443,7 +633,7 @@ def gevd(
     """
     L = torch.linalg.cholesky(point1)
     L_inv = torch.inverse(L)
-    general_eigvals, U = torch.linalg.eigh(L_inv @ point2 @ L_inv.transpose(-2, -1))
+    general_eigvals, U = symmetric_eigh(L_inv @ point2 @ L_inv.transpose(-2, -1))
     return general_eigvals, (L @ U).transpose(-2, -1), L_inv.transpose(-2, -1) @ U
 
 
@@ -490,6 +680,7 @@ def gevd_operation_grad(
     general_eigvecs_inv: torch.Tensor,
     operation: Callable,
     operation_derivative: Callable,
+    divided_difference: Callable | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     r"""
     Backpropagate through a function applied on generalized eigenvalues.
@@ -519,6 +710,10 @@ def gevd_operation_grad(
     operation_derivative : Callable
         Derivative of the function to apply on generalized eigenvalues
 
+    divided_difference : Callable, optional
+        Closed-form divided difference of the function, see
+        :func:`_aux_eigh_operation_grad`
+
     Returns
     -------
     grad_point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
@@ -531,7 +726,7 @@ def gevd_operation_grad(
         general_eigvecs @ symmetrize(grad_output) @ general_eigvecs.transpose(-1, -2)
     )
     aux_mat_point2 = _aux_eigh_operation_grad(
-        general_eigvals, operation, operation_derivative
+        general_eigvals, operation, operation_derivative, divided_difference
     )
     middle_term_point2 = aux_mat_point2 * grad_out_cong
     grad_point2 = (
@@ -588,7 +783,7 @@ def _invm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Ten
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, inv), eigvals, eigvecs
 
 
@@ -682,7 +877,7 @@ def sqrtm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Ten
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, torch.sqrt), eigvals, eigvecs
 
 
@@ -764,7 +959,7 @@ def inv_sqrtm_SPD(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, inv_sqrt), eigvals, eigvecs
 
 
@@ -848,7 +1043,7 @@ def sqrtm_and_inv_sqrtm_SPD(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return (
         eigh_operation(eigvals, eigvecs, torch.sqrt),
         eigh_operation(eigvals, eigvecs, inv_sqrt),
@@ -952,7 +1147,7 @@ def powm_SPD(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     pow_fun = lambda x: torch.pow(x, exponent)
     return eigh_operation(eigvals, eigvecs, pow_fun), eigvals, eigvecs
 
@@ -1025,8 +1220,9 @@ class PowmSPD(Function):
             exponent = ctx.exponent
         pow_fun = lambda x: torch.pow(x, exponent)
         pow_deriv = lambda x: exponent * torch.pow(x, exponent - 1)
+        pow_dd = lambda a, b: pow_divided_difference(a, b, exponent)
         grad_input_data = eigh_operation_grad(
-            grad_output, eigvals, eigvecs, pow_fun, pow_deriv
+            grad_output, eigvals, eigvecs, pow_fun, pow_deriv, pow_dd
         )
         grad_input_exponent = None
         if ctx.exponent_is_tensor and ctx.needs_input_grad[1]:
@@ -1073,7 +1269,7 @@ def logm_SPD(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tens
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, torch.log), eigvals, eigvecs
 
 
@@ -1155,7 +1351,7 @@ def expm_symmetric(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, torch.exp), eigvals, eigvecs
 
 
@@ -1243,7 +1439,7 @@ def scaled_softplus_symmetric(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, scaled_softplus), eigvals, eigvecs
 
 
@@ -1329,7 +1525,7 @@ def inv_scaled_softplus_SPD(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     return eigh_operation(eigvals, eigvecs, inv_scaled_softplus), eigvals, eigvecs
 
 
@@ -1389,6 +1585,94 @@ class InvScaledSoftPlusSPD(Function):
 # -----------------------------------------------------
 # ReLu activation function on eigenvalues of SPD matrix
 # -----------------------------------------------------
+# a bound of the eigenvalues: a number, a tensor broadcasting against the
+# eigenvalues, or a callable computing it from the (detached) eigenvalues
+EigvalBound = float | torch.Tensor | Callable[[torch.Tensor], torch.Tensor] | None
+
+
+@overload
+def spd_floor(
+    eigvals: torch.Tensor, floor: float = ..., rtol: float = ...
+) -> torch.Tensor: ...
+
+
+@overload
+def spd_floor(eigvals: torch.dtype, floor: float = ..., rtol: float = ...) -> float: ...
+
+
+def spd_floor(
+    eigvals: torch.Tensor | torch.dtype,
+    floor: float = SPD_EIGVAL_FLOOR,
+    rtol: float = SPD_FLOOR_RTOL,
+) -> torch.Tensor | float:
+    r"""
+    Dtype-aware lower bound for the eigenvalues of SPD matrices.
+
+    .. math:: \max\big(\text{floor},\; c\, \varepsilon \max_k |\lambda_k|\big)
+
+    per matrix, with :math:`\varepsilon` the machine epsilon of the dtype and
+    :math:`c` = ``rtol`` (``SPD_FLOOR_RTOL`` = 1): rounding the matrix to the
+    dtype already moves its eigenvalues by about :math:`\varepsilon \lVert X
+    \rVert`, so an eigenvalue below that level carries no information and may
+    come out of the decomposition negative. In float64 the relative term
+    exceeds the default absolute floor 1e-8 only for :math:`\max \lambda > 4.5
+    \cdot 10^{7}`; in float32 it bounds the condition number by
+    :math:`1 / \varepsilon_{32} \approx 8 \cdot 10^{6}`.
+
+    Parameters
+    ----------
+    eigvals : torch.Tensor of shape (..., n_features) or torch.dtype
+        Eigenvalues (the result is per matrix, of shape (..., 1), detached), or a
+        dtype (the result is the float :math:`\max(\text{floor}, c\,\varepsilon)`,
+        for unit-scale matrices)
+    floor : float, optional
+        Absolute floor. Default is ``SPD_EIGVAL_FLOOR`` (1e-8)
+    rtol : float, optional
+        Factor :math:`c`. Default is ``SPD_FLOOR_RTOL`` (1)
+
+    Returns
+    -------
+    torch.Tensor of shape (..., 1) or float
+        Lower bound of the eigenvalues
+    """
+    if isinstance(eigvals, torch.dtype):
+        return max(floor, rtol * torch.finfo(eigvals).eps)
+    eigvals = eigvals.detach()
+    eps = torch.finfo(eigvals.dtype).eps
+    relative = rtol * eps * eigvals.abs().amax(-1, keepdim=True)
+    return relative.clamp_min(floor)
+
+
+def _resolve_bound(bound: EigvalBound, eigvals: torch.Tensor):
+    """Evaluate a callable eigenvalue bound on the (detached) eigenvalues."""
+    if callable(bound):
+        return bound(eigvals.detach())
+    return bound
+
+
+def _pairwise_bound(bound):
+    """Per-matrix bound of shape (..., 1) -> (..., 1, 1), for Loewner-shaped inputs."""
+    return bound.unsqueeze(-1) if isinstance(bound, torch.Tensor) else bound
+
+
+def _clamp(
+    eigvals: torch.Tensor,
+    min_eigval: float | torch.Tensor | None,
+    max_eigval: float | torch.Tensor | None,
+) -> torch.Tensor:
+    """torch.clamp accepting a number and a tensor bound together."""
+    if isinstance(min_eigval, torch.Tensor) or isinstance(max_eigval, torch.Tensor):
+        as_tensor = lambda b: (
+            None
+            if b is None
+            else torch.as_tensor(b, dtype=eigvals.dtype, device=eigvals.device)
+        )
+        return torch.clamp(
+            eigvals, min=as_tensor(min_eigval), max=as_tensor(max_eigval)
+        )
+    return torch.clamp(eigvals, min=min_eigval, max=max_eigval)
+
+
 def eigh_relu(
     data: torch.Tensor, eps: float
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -1410,8 +1694,9 @@ def eigh_relu(
     data : torch.Tensor of shape (..., n_features, n_features)
         Batch of SPD matrices
 
-    eps : float
-        Value for the rectification of the eigenvalues
+    eps : float | torch.Tensor | Callable
+        Value for the rectification of the eigenvalues: a number, a tensor of
+        shape (..., 1), or a callable of the eigenvalues (e.g. :func:`spd_floor`)
 
     Returns
     -------
@@ -1424,7 +1709,8 @@ def eigh_relu(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
+    eps = _resolve_bound(eps, eigvals)
     operation = lambda x: torch.clamp(x, min=eps)
     return eigh_operation(eigvals, eigvecs, operation), eigvals, eigvecs
 
@@ -1445,8 +1731,8 @@ class EighReLu(Function):
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
 
-        eps : float
-            Value for the rectification of the eigenvalues
+        eps : float | torch.Tensor | Callable
+            Value for the rectification of the eigenvalues (see :func:`eigh_relu`)
 
         Returns
         -------
@@ -1455,7 +1741,7 @@ class EighReLu(Function):
         """
         data_transformed, eigvals, eigvecs = eigh_relu(data, eps)
         ctx.save_for_backward(eigvals, eigvecs)
-        ctx.eps = eps
+        ctx.eps = _resolve_bound(eps, eigvals)
         return data_transformed
 
     @staticmethod
@@ -1479,13 +1765,213 @@ class EighReLu(Function):
         eps = ctx.eps
         eigvals, eigvecs = ctx.saved_tensors
         operation = lambda x: torch.clamp(x, min=eps)
-        operation_deriv = lambda x: (x > eps).type(x.dtype)
+        # the derivative is evaluated on (..., n, n) midpoints
+        eps_pairwise = _pairwise_bound(eps)
+        operation_deriv = lambda x: (x > eps_pairwise).type(x.dtype)
         return (
             eigh_operation_grad(
                 grad_output, eigvals, eigvecs, operation, operation_deriv
             ),
             None,
         )
+
+
+def eigh_clamp(
+    data: torch.Tensor,
+    min_eigval: float | torch.Tensor | None = None,
+    max_eigval: float | torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    r"""
+    Clamp the eigenvalues of symmetric matrices to :math:`[\lambda_-, \lambda_+]`.
+
+    .. math::
+
+        U \operatorname{diag}\big(\min(\max(\lambda, \lambda_-), \lambda_+)\big) U^\top
+
+    A projection onto the SPD matrices with bounded spectrum (with
+    ``max_eigval=None`` it is :func:`eigh_relu`).
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    min_eigval, max_eigval : float | torch.Tensor | Callable | None
+        Bounds of the eigenvalues (None: no bound); tensors broadcast against
+        the eigenvalues, of shape (..., n_features); a callable is evaluated on
+        the detached eigenvalues (e.g. :func:`spd_floor`)
+
+    Returns
+    -------
+    data_transformed : torch.Tensor of shape (..., n_features, n_features)
+        Batch of matrices with clamped eigenvalues
+
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues of matrices in data
+
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors of matrices in data
+    """
+    eigvals, eigvecs = symmetric_eigh(data)
+    min_eigval = _resolve_bound(min_eigval, eigvals)
+    max_eigval = _resolve_bound(max_eigval, eigvals)
+    operation = lambda x: _clamp(x, min_eigval, max_eigval)
+    return eigh_operation(eigvals, eigvecs, operation), eigvals, eigvecs
+
+
+def _clamp_derivative(
+    eigvals: torch.Tensor,
+    min_eigval: float | torch.Tensor | None,
+    max_eigval: float | torch.Tensor | None,
+) -> torch.Tensor:
+    """1 strictly inside the bounds, 0 outside (subgradient 0 at a bound)."""
+    inside = torch.ones_like(eigvals, dtype=torch.bool)
+    if min_eigval is not None:
+        inside = inside & (eigvals > min_eigval)
+    if max_eigval is not None:
+        inside = inside & (eigvals < max_eigval)
+    return inside.to(eigvals.dtype)
+
+
+class EighClamp(Function):
+    """Clamp the eigenvalues of symmetric matrices, with a Daleckii-Krein backward."""
+
+    @staticmethod
+    def forward(
+        ctx,
+        data: torch.Tensor,
+        min_eigval: float | torch.Tensor | None = None,
+        max_eigval: float | torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Forward pass of the eigenvalue clamp.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        min_eigval, max_eigval : float | torch.Tensor | Callable | None
+            Bounds of the eigenvalues (see :func:`eigh_clamp`), not differentiated
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Batch of matrices with clamped eigenvalues
+        """
+        data_transformed, eigvals, eigvecs = eigh_clamp(data, min_eigval, max_eigval)
+        ctx.save_for_backward(eigvals, eigvecs)
+        ctx.bounds = (
+            _resolve_bound(min_eigval, eigvals),
+            _resolve_bound(max_eigval, eigvals),
+        )
+        return data_transformed
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None, None]:
+        """
+        Backward pass of the eigenvalue clamp.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the output batch
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input batch
+        """
+        eigvals, eigvecs = ctx.saved_tensors
+        min_eigval, max_eigval = ctx.bounds
+        operation = lambda x: _clamp(x, min_eigval, max_eigval)
+        # the derivative is evaluated on (..., n, n) midpoints
+        bounds_pairwise = (_pairwise_bound(min_eigval), _pairwise_bound(max_eigval))
+        operation_deriv = lambda x: _clamp_derivative(x, *bounds_pairwise)
+        grad_input = eigh_operation_grad(
+            grad_output, eigvals, eigvecs, operation, operation_deriv
+        )
+        return grad_input, None, None
+
+
+def eigvalsh_symmetric(data: torch.Tensor) -> torch.Tensor:
+    r"""
+    Eigenvalues of symmetric matrices, in ascending order.
+
+    ``torch.linalg.eigvalsh``, differentiated by autograd. Its gradient
+    :math:`U \operatorname{diag}(\bar\lambda) U^\top` has no eigenvalue gap, but
+    see :class:`EigvalshSymmetric` for the manual-backward twin.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    Returns
+    -------
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues, ascending
+    """
+    return symmetric_eigvalsh(data)
+
+
+class EigvalshSymmetric(Function):
+    r"""
+    Eigenvalues of symmetric matrices, with the backward :math:`U \operatorname{diag}(\bar\lambda) U^\top`.
+
+    The derivative of a simple eigenvalue is :math:`d\lambda_i = u_i^\top dX u_i`;
+    for repeated eigenvalues the formula gives the gradient of their (symmetric)
+    sum, the only differentiable combination.
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor) -> torch.Tensor:
+        """
+        Eigenvalues of a batch of symmetric matrices.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        Returns
+        -------
+        eigvals : torch.Tensor of shape (..., n_features)
+            Eigenvalues, ascending
+        """
+        eigvals, eigvecs = symmetric_eigh(data)
+        ctx.save_for_backward(eigvecs)
+        return eigvals
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
+        """
+        Gradient with respect to the matrices.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        grad_output : torch.Tensor of shape (..., n_features)
+            Gradient of the loss with respect to the eigenvalues
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the matrices
+        """
+        (eigvecs,) = ctx.saved_tensors
+        return (eigvecs * grad_output.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)
 
 
 def _clamped_bias_operation(bias: torch.Tensor, eps: float) -> Callable:
@@ -1542,7 +2028,7 @@ def eigh_relu_bias(
     eigvecs : torch.Tensor of shape (..., n_features, n_features)
         Eigenvectors of matrices in data
     """
-    eigvals, eigvecs = torch.linalg.eigh(data)
+    eigvals, eigvecs = symmetric_eigh(data)
     operation = _clamped_bias_operation(bias, eps)
     return eigh_operation(eigvals, eigvecs, operation), eigvals, eigvecs
 

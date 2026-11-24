@@ -7,7 +7,11 @@ import torch
 from torch.autograd import Function
 
 from yetanotherspdnet._deprecation import _mark_deprecated
-from yetanotherspdnet.functions.scalar_functions import inv, zero_where_zero_std
+from yetanotherspdnet.functions.scalar_functions import (
+    inv,
+    std_from_variance,
+    zero_where_zero_std,
+)
 
 from ..spd_linalg import (
     ExpmSymmetric,
@@ -191,7 +195,7 @@ def _log_euclidean_std_scalar(
     logm_data, eigvals_data, eigvecs_data = logm_SPD(data)
     logm_G, eigvals_G, eigvecs_G = logm_SPD(reference_point)
     variance = torch.sum((logm_data - logm_G) ** 2) / n_matrices
-    std_scalar = torch.sqrt(torch.clamp(variance, min=0.0))
+    std_scalar = std_from_variance(variance)
     return (
         std_scalar,
         logm_data,

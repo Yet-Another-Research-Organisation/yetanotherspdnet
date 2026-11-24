@@ -14,8 +14,10 @@ from yetanotherspdnet.functions._constants import (
 from yetanotherspdnet.functions.scalar_functions import (
     inv,
     inv_sqrt,
+    pow_divided_difference,
     pow_exponent_derivative,
     sqrt_derivative,
+    std_from_variance,
     zero_where_zero_std,
 )
 
@@ -24,13 +26,18 @@ from ..spd_linalg import (
     InvSqrtmSPD,
     SqrtmAndInvSqrtmSPD,
     congruence_rectangular,
+    eigh_clamp,
     eigh_operation,
     eigh_operation_grad,
+    eigh_precision,
     expm_symmetric,
+    get_eigh_dtype,
     inv_sqrtm_SPD,
     logm_SPD,
     solve_sylvester_SPD,
     sqrtm_and_inv_sqrtm_SPD,
+    symmetric_eigh,
+    symmetric_eigvalsh,
     symmetrize,
 )
 from .euclidean import arithmetic_mean
@@ -92,7 +99,7 @@ def _affine_invariant_geodesic(
         Eigendecomposition of point1^{-1/2} point2 point1^{-1/2}
     """
     point1_sqrtm, point1_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point1)
-    eigvals_middle, eigvecs_middle = torch.linalg.eigh(
+    eigvals_middle, eigvecs_middle = symmetric_eigh(
         point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
     )
     pow_t = lambda x: torch.pow(x, t)
@@ -153,6 +160,8 @@ class AffineInvariantGeodesic(Function):
             point1,
             point2,
         )
+        # the backward recomputes decompositions: same precision as the forward
+        ctx.eigh_dtype = get_eigh_dtype()
         # save_for_backward only accepts tensors: a python t is stored on ctx
         ctx.t_is_tensor = isinstance(t, torch.Tensor)
         if ctx.t_is_tensor:
@@ -217,16 +226,18 @@ class AffineInvariantGeodesic(Function):
                     eigvecs_middle_term1,
                     pow_t,
                     pow_t_deriv,
+                    lambda a, b: pow_divided_difference(a, b, t),
                 )
                 @ point1_inv_sqrtm
             )
 
         if ctx.needs_input_grad[0]:
             # Gradient with respect to point1
-            point2_sqrtm, point2_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point2)
-            eigvals_middle_term2, eigvecs_middle_term2 = torch.linalg.eigh(
-                point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
-            )
+            with eigh_precision(ctx.eigh_dtype):
+                point2_sqrtm, point2_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point2)
+                eigvals_middle_term2, eigvecs_middle_term2 = symmetric_eigh(
+                    point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
+                )
             pow_1_t = lambda x: torch.pow(x, 1 - t)
             pow_1_t_deriv = lambda x: (1 - t) * torch.pow(x, -t)
             grad_input1 = (
@@ -237,6 +248,7 @@ class AffineInvariantGeodesic(Function):
                     eigvecs_middle_term2,
                     pow_1_t,
                     pow_1_t_deriv,
+                    lambda a, b: pow_divided_difference(a, b, 1 - t),
                 )
                 @ point2_inv_sqrtm
             )
@@ -365,14 +377,14 @@ class AffineInvariantMeanIteration(Function):
             eigvecs_mean_iterate,
         ) = sqrtm_and_inv_sqrtm_SPD(mean_iterate)
         transformed_data = mean_iterate_inv_sqrtm @ data @ mean_iterate_inv_sqrtm
-        eigvals_transformed_data, eigvecs_transformed_data = torch.linalg.eigh(
+        eigvals_transformed_data, eigvecs_transformed_data = symmetric_eigh(
             transformed_data
         )
         log_transformed_data = eigh_operation(
             eigvals_transformed_data, eigvecs_transformed_data, torch.log
         )
         log_mean = stepsize * arithmetic_mean(log_transformed_data)
-        eigvals_log_mean, eigvecs_log_mean = torch.linalg.eigh(log_mean)
+        eigvals_log_mean, eigvecs_log_mean = symmetric_eigh(log_mean)
         exp_log_mean = eigh_operation(eigvals_log_mean, eigvecs_log_mean, torch.exp)
         ctx.shape = data.shape
         ctx.stepsize = stepsize
@@ -532,9 +544,9 @@ def affine_invariant_std_scalar(
     n_matrices = math.prod(data.shape[:-2])
     G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
     transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
-    eigvals = torch.linalg.eigvalsh(transformed_data)
+    eigvals = symmetric_eigvalsh(transformed_data)
     variance = torch.sum(torch.log(eigvals) ** 2) / n_matrices
-    return torch.sqrt(torch.clamp(variance, min=0.0))
+    return std_from_variance(variance)
 
 
 class AffineInvariantStdScalar(Function):
@@ -564,13 +576,11 @@ class AffineInvariantStdScalar(Function):
         n_matrices = math.prod(data.shape[:-2])
         G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
         transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
-        eigvals_transdat, eigvecs_transdat = torch.linalg.eigh(transformed_data)
+        eigvals_transdat, eigvecs_transdat = symmetric_eigh(transformed_data)
         variance = torch.sum(torch.log(eigvals_transdat) ** 2) / n_matrices
-        scalar_std = torch.sqrt(torch.clamp(variance, min=0.0))
+        scalar_std = std_from_variance(variance)
         ctx.n_matrices = n_matrices
         ctx.save_for_backward(
-            data,
-            reference_point,
             G_inv_sqrtm,
             eigvals_transdat,
             eigvecs_transdat,
@@ -601,22 +611,21 @@ class AffineInvariantStdScalar(Function):
         """
         n_matrices = ctx.n_matrices
         (
-            data,
-            reference_point,
             G_inv_sqrtm,
             eigvals_transdat,
             eigvecs_transdat,
             scalar_std,
         ) = ctx.saved_tensors
 
-        data_inv_sqrtm = inv_sqrtm_SPD(data)[0]
-
-        transformed_G = data_inv_sqrtm @ reference_point @ data_inv_sqrtm
-        eigvals_transG, eigvecs_transG = torch.linalg.eigh(transformed_G)
-
+        # with C_i = G^{-1/2} X_i G^{-1/2}:
+        # d sigma / dX_i = G^{-1/2} C_i^{-1} log(C_i) G^{-1/2} / (N sigma)
+        # d sigma / dG = -G^{-1/2} mean_i(log C_i) G^{-1/2} / sigma
+        # (the second from d^2(G, X) = ||log(X^{-1/2} G X^{-1/2})||^2 and the
+        # similarity X^{-1/2} f(X^{-1/2} G X^{-1/2}) X^{1/2} = f(X^{-1} G)), so
+        # both reuse the decomposition of the forward
         log_inv = lambda x: torch.log(x) / x
         middle_term_data = eigh_operation(eigvals_transdat, eigvecs_transdat, log_inv)
-        middle_term_G = eigh_operation(eigvals_transG, eigvecs_transG, log_inv)
+        log_transdat = eigh_operation(eigvals_transdat, eigvecs_transdat, torch.log)
 
         grad_input_data = (
             grad_output
@@ -627,8 +636,10 @@ class AffineInvariantStdScalar(Function):
             / scalar_std
         )
         grad_input_G = (
-            grad_output
-            * arithmetic_mean(data_inv_sqrtm @ middle_term_G @ data_inv_sqrtm)
+            -grad_output
+            * G_inv_sqrtm
+            @ arithmetic_mean(log_transdat)
+            @ G_inv_sqrtm
             / scalar_std
         )
         # std = 0: zero subgradient instead of 0/0
@@ -980,9 +991,106 @@ def affine_invariant_norm(base: torch.Tensor, tangent: torch.Tensor) -> torch.Te
         Affine-invariant norms
     """
     cholesky = torch.linalg.cholesky(base)
-    half = torch.linalg.solve_triangular(cholesky, tangent, upper=False)
-    whitened = torch.linalg.solve_triangular(cholesky, half.mT, upper=False)
-    return torch.linalg.matrix_norm(whitened)
+    return torch.linalg.matrix_norm(_whiten_cholesky(cholesky, tangent))
+
+
+def _whiten_cholesky(cholesky: torch.Tensor, mat: torch.Tensor) -> torch.Tensor:
+    r""":math:`L^{-1} M L^{-\top}` for symmetric :math:`M` (triangular solves)."""
+    half = torch.linalg.solve_triangular(cholesky, mat, upper=False)
+    return torch.linalg.solve_triangular(cholesky, half.mT, upper=False)
+
+
+def _unwhiten_cholesky(cholesky: torch.Tensor, mat: torch.Tensor) -> torch.Tensor:
+    r""":math:`L^{-\top} M L^{-1}` for symmetric :math:`M` (triangular solves)."""
+    upper = cholesky.mT
+    half = torch.linalg.solve_triangular(upper, mat, upper=True)
+    return torch.linalg.solve_triangular(upper, half.mT, upper=True)
+
+
+class AffineInvariantNorm(Function):
+    r"""
+    Affine-invariant norm of tangent vectors, with a hand-written backward.
+
+    With :math:`W = L^{-1} V L^{-\top}` (:math:`X = LL^\top`) and
+    :math:`\nu = \lVert W \rVert_F`:
+
+    .. math::
+
+        \bar V = \frac{\bar\nu}{\nu} X^{-1} V X^{-1}
+            = \frac{\bar\nu}{\nu} L^{-\top} W L^{-1},
+        \qquad
+        \bar X = -\frac{\bar\nu}{\nu} X^{-1} V X^{-1} V X^{-1}
+            = -\frac{\bar\nu}{\nu} L^{-\top} W^2 L^{-1}
+
+    (zero subgradient at :math:`\nu = 0`). The Cholesky factor of the forward
+    is reused: no decomposition is differentiated.
+    """
+
+    @staticmethod
+    def forward(ctx, base: torch.Tensor, tangent: torch.Tensor) -> torch.Tensor:
+        r"""
+        Affine-invariant norms :math:`\lVert X^{-1/2} V X^{-1/2} \rVert_F`.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        base : torch.Tensor of shape (..., n, n)
+            SPD base points
+
+        tangent : torch.Tensor of shape (..., n, n)
+            Symmetric tangent vectors at *base*
+
+        Returns
+        -------
+        norm : torch.Tensor of shape (...)
+            Affine-invariant norms
+        """
+        cholesky = torch.linalg.cholesky(base)
+        whitened = _whiten_cholesky(cholesky, tangent)
+        norm = torch.linalg.matrix_norm(whitened)
+        ctx.save_for_backward(cholesky, whitened, norm)
+        ctx.shapes = (base.shape, tangent.shape)
+        return norm
+
+    @staticmethod
+    def backward(
+        ctx, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """
+        Gradients with respect to the base points and the tangent vectors.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        grad_output : torch.Tensor of shape (...)
+            Gradient of the loss with respect to the norms
+
+        Returns
+        -------
+        grad_base : torch.Tensor of shape (..., n, n)
+            Gradient with respect to the base points
+
+        grad_tangent : torch.Tensor of shape (..., n, n)
+            Gradient with respect to the tangent vectors
+        """
+        cholesky, whitened, norm = ctx.saved_tensors
+        base_shape, tangent_shape = ctx.shapes
+        safe_norm = torch.where(norm > 0, norm, torch.ones_like(norm))
+        factor = torch.where(norm > 0, grad_output / safe_norm, torch.zeros_like(norm))[
+            ..., None, None
+        ]
+        grad_base = grad_tangent = None
+        if ctx.needs_input_grad[1]:
+            grad_tangent = factor * _unwhiten_cholesky(cholesky, whitened)
+            grad_tangent = grad_tangent.sum_to_size(tangent_shape)
+        if ctx.needs_input_grad[0]:
+            grad_base = -factor * _unwhiten_cholesky(cholesky, whitened @ whitened)
+            grad_base = symmetrize(grad_base).sum_to_size(base_shape)
+        return grad_base, grad_tangent
 
 
 # ----------------------------
@@ -1021,24 +1129,17 @@ def affine_invariant_log(base: torch.Tensor, point: torch.Tensor) -> torch.Tenso
 # -------------------------------------------
 # Affine-invariant projection onto SPD
 # -------------------------------------------
-def affine_invariant_projx(data: torch.Tensor) -> torch.Tensor:
-    """
-    Project matrices onto the SPD manifold.
+def _projx(data: torch.Tensor) -> torch.Tensor:
+    """Symmetrize, then clamp the eigenvalues to [1e-8, 1e8] (reference RResNet)."""
+    return eigh_clamp(symmetrize(data), SPD_EIGVAL_FLOOR, SPD_EIGVAL_CEILING)[0]
 
-    Symmetrize and clamp the eigenvalues to [1e-8, 1e8] (as in the reference RResNet
-    implementation, which also bounds the conditioning).
 
-    Parameters
-    ----------
-    data : torch.Tensor of shape (..., n, n)
-        Batch of matrices
-
-    Returns
-    -------
-    projected : torch.Tensor of shape (..., n, n)
-        Batch of SPD matrices
-    """
-    data = symmetrize(data)
-    eigvals, eigvecs = torch.linalg.eigh(data)
-    eigvals = eigvals.clamp(min=SPD_EIGVAL_FLOOR, max=SPD_EIGVAL_CEILING)
-    return (eigvecs * eigvals.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)
+affine_invariant_projx = _deprecated(
+    "affine_invariant_projx",
+    eigh_clamp,
+    note=(
+        "affine_invariant_projx(x) is eigh_clamp(symmetrize(x), 1e-8, 1e8)[0]; "
+        "EighClamp is its manual-backward twin."
+    ),
+    call=_projx,
+)

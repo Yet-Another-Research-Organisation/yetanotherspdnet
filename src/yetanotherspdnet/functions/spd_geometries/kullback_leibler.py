@@ -10,7 +10,7 @@ import torch
 from torch.autograd import Function
 
 from ..._deprecation import _deprecated
-from ..scalar_functions import zero_where_zero_std
+from ..scalar_functions import std_from_variance, zero_where_zero_std
 from ..spd_linalg import (
     inv_SPD,
     symmetrize,
@@ -70,7 +70,7 @@ def _left_kullback_leibler_std_scalar(
     logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
     var = (trace - logdet_data) / n_matrices + logdet_G - n_features
     # clamp to avoid small numerical errors yielding small negative variance
-    return torch.sqrt(torch.clamp(var, min=0.0)), G_inv, L_data
+    return std_from_variance(var), G_inv, L_data
 
 
 class LeftKullbackLeiblerStdScalar(Function):
@@ -390,7 +390,7 @@ def _right_kullback_leibler_std_scalar(
     logdet_G = 2 * L_G.diagonal(dim1=-2, dim2=-1).log().sum()
     var = (trace + logdet_data) / n_matrices - logdet_G - n_features
     # clamp to avoid small numerical errors yielding small negative variance
-    return torch.sqrt(torch.clamp(var, min=0.0)), L_G, data_inv
+    return std_from_variance(var), L_G, data_inv
 
 
 class RightKullbackLeiblerStdScalar(Function):

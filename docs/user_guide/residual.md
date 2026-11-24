@@ -24,7 +24,9 @@ network (with BatchNorm1d) and $Q$ a learned orthogonal matrix
 : $X_{\text{new}} = \operatorname{projx}\big(\mathrm{Exp}_X(V / \lVert V \rVert_X)\big)$
   with $\lVert V \rVert_X = \lVert X^{-1/2} V X^{-1/2} \rVert_F$: every block
   moves by exactly one unit of affine-invariant distance, and `projx` clamps
-  the eigenvalues to $[10^{-8}, 10^{8}]$. This is what the reference code does.
+  the eigenvalues to $[10^{-8}, 10^{8}]$. This is what the reference code does;
+  here the clamp is `EighClamp` (manual Daleckii–Krein backward) and its lower
+  bound follows the dtype (`spd_floor`, see {doc}`numerics`).
 
 `"log_euclidean"`
 : $X_{\text{new}} = \exp\big(\log X + V\big)$, the variant that performs best
@@ -45,8 +47,10 @@ factorization of $X$. After a batch normalization, $X$ can be numerically
 singular: the Bures–Wasserstein steps of GBWBN fold matrices that leave the
 injectivity domain of their exponential (see {doc}`batchnorm`), and very
 ill-conditioned batches reach the limit of float64 precision. The block
-therefore floors the eigenvalues of its input at $10^{-8}$ (the lower bound
-of `projx`), with the hand-differentiated ReEig. On well-conditioned inputs
+therefore floors the eigenvalues of its input at
+$\max(10^{-8}, \varepsilon \max\lambda)$ (`spd_floor`; $10^{-8}$
+in float64 at moderate scale, the lower bound of `projx`), with the
+hand-differentiated ReEig. On well-conditioned inputs
 the floor is exactly the identity, values and gradients.
 
 ## Why the normalization matters

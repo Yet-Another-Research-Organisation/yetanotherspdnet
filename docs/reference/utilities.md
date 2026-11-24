@@ -5,6 +5,14 @@ Daleckii–Krein backwards), projections and retractions on the Stiefel
 manifold (used by the `BiMap` parametrizations), and random generators for
 tests and synthetic data.
 
+## Gradient paths
+
+```{eval-rst}
+.. automodule:: yetanotherspdnet.functions.dispatch
+   :members:
+   :member-order: bysource
+```
+
 ## Scalar functions
 
 ```{eval-rst}

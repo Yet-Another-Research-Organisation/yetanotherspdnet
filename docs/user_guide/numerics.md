@@ -30,8 +30,33 @@ f'(\lambda_i) & \lambda_i = \lambda_j,
 $$
 
 where $\circ$ is the entrywise product and $L$ the *Loewner matrix* of divided
-differences (`eigh_operation_grad`; ties are detected with
-$|\lambda_i - \lambda_j| < 10^{-6}$).
+differences (`eigh_operation_grad`).
+
+**Computing the divided differences.** The plain quotient cancels when
+$\lambda_i \approx \lambda_j$: its rounding error is about
+$\varepsilon |\lambda| / |\lambda_i - \lambda_j|$. For the functions of the
+library it is replaced by closed forms that never cancel ($l = \min$, $d =
+|\lambda_i - \lambda_j|$):
+
+| $f$ | divided difference |
+|---|---|
+| $\sqrt x$ | $1 / (\sqrt{\lambda_i} + \sqrt{\lambda_j})$ |
+| $x^{-1/2}$ | $-1 / \big(\sqrt{\lambda_i}\sqrt{\lambda_j}(\sqrt{\lambda_i} + \sqrt{\lambda_j})\big)$ |
+| $x^{-1}$ | $-1 / (\lambda_i \lambda_j)$ |
+| $\log x$ | $\operatorname{log1p}(d / l) / d$ |
+| $\exp x$ | $e^{l} \operatorname{expm1}(d) / d$ |
+| $x^t$ | $l^t \operatorname{expm1}\big(t \operatorname{log1p}(d / l)\big) / d$ |
+
+and the derivative at the midpoint $f'((\lambda_i + \lambda_j)/2)$ is only used
+at rounding-level ties, $d \le c\, n\, \varepsilon \max_k |\lambda_k|$ with
+$c = 1$ (`EIGVAL_TIE_RTOL`) and $\varepsilon$ the machine epsilon of the dtype.
+Other functions (softplus, ReEig's clamp) use the quotient down to
+$d = (24 \varepsilon)^{1/3} \max(|\lambda_i|, |\lambda_j|)$, where its
+rounding error equals the $O(d^2)$ error of the midpoint derivative, and the
+midpoint derivative below. The midpoint keeps $L$ exactly symmetric. The former
+absolute threshold $|\lambda_i - \lambda_j| < 10^{-6}$ made the gradient of
+$\sqrt{\cdot}$ 10.7 % wrong for eigenvalues $10^{-7}$ and $5 \cdot 10^{-7}$;
+the kernels are now within $10^{-10}$ relative of a 50-digit reference.
 
 Autograd through `torch.linalg.eigh` instead differentiates the eigenvectors,
 which involves $1/(\lambda_i - \lambda_j)$: infinite for equal eigenvalues.
@@ -72,6 +97,28 @@ lists the pairs.
 by writing one large backward: the whitening, the means and the batch
 normalizations are compositions of manually differentiated steps, so each
 piece stays exact.
+
+**Manual backward is the norm.** With `use_autograd=False` (the default of
+every layer, model and parametrization) no matrix decomposition (`eigh`,
+`eigvalsh`, Cholesky, generalized eigendecomposition) is differentiated by
+autograd: each one sits inside a `torch.autograd.Function` with a hand-written
+backward. Autograd still differentiates the elementary operations between
+them (products, sums, polynomials such as the Bures–Wasserstein
+$\mathrm{Exp}_I(S) = (I + S/2)^2$), which is exact. The layers pick their
+implementations through one helper, `functions.dispatch.select_path` /
+`DualPath`. The test suite walks the autograd graph of every layer and model
+built with the defaults and fails if it finds a decomposition node outside the
+explicit list below (`functions.dispatch.AUTOGRAD_ONLY`).
+
+| operation without manual backward | why, and the manual alternative |
+|---|---|
+| `BiMap(parametrization_mode="static")` | torch's `parametrizations.orthogonal` (Householder product); its backward has no eigenvalue gap. `parametrization_mode="dynamic"` uses the manual QR / polar retractions. |
+| `spd_linalg.inv_SPD` | Cholesky inverse, differentiated by autograd (stable); only used inside manual backwards. |
+| `bures_wasserstein_distance_squared`, `affine_invariant_log` | metrics, not differentiated by any layer. |
+
+Reaching one of them with `use_autograd=False` emits a single
+`AutogradOnlyWarning` per process (raising would break the default
+`BiMap`), never a silent fallback.
 
 ## 2. Matrix equations inside backward passes
 
@@ -206,11 +253,18 @@ singular matrix.
   The step is normalized to unit length, as in the reference implementation.
 - **Cholesky instead of eigendecomposition** for the norm:
   $\lVert V \rVert_X = \lVert L^{-1} V L^{-\top} \rVert_F$ with $X = LL^\top$
-  (two triangular solves).
+  (two triangular solves), with a manual backward (`AffineInvariantNorm`):
+  $\bar V = \frac{\bar\nu}{\nu} L^{-\top} W L^{-1}$,
+  $\bar X = -\frac{\bar\nu}{\nu} L^{-\top} W^2 L^{-1}$, $W = L^{-1} V L^{-\top}$.
 - **Eigenvalue floor and projection.** The block floors the eigenvalues of its
-  input at $10^{-8}$ (with the manually differentiated ReEig, the identity on
+  input (with the manually differentiated ReEig, the identity on
   well-conditioned inputs) and clamps those of its output to
-  $[10^{-8}, 10^{8}]$ (`projx`).
+  $[\lambda_-, 10^{8}]$ with `EighClamp` (Daleckii–Krein backward; the
+  reference implementation's `projx`, `affine_invariant_projx` is now a
+  deprecated alias). The lower bound is
+  `spd_floor(λ) = max(1e-8, ε max λ)` per matrix: $10^{-8}$ in float64
+  unless $\max\lambda > 4.5 \cdot 10^7$, and the rounding level of the
+  matrix itself in float32 (condition number capped at $8 \cdot 10^6$).
 - **Other geometries.** A residual step can use any retraction
   $X_+ = L\,\varphi(a\hat W)\,L^\top$ that agrees with $\exp$ to first order:
   arithmetic $1 + x$, harmonic $1/(1-x)$, GAH $e^{\operatorname{artanh} x}$
@@ -246,8 +300,80 @@ are multiplied by 190 before an $\epsilon = 0.8$ ReEig).
   $10^{6}$ (HDM05) to $10^{7}$ (HyperLeaf); eigendecompositions and the
   divided differences lose too many digits in float32. Every function and layer
   takes `dtype` and `device`.
+- **Mixed precision: `eigh_dtype`.** `ReEig`, `ReEigBias`, `LogEig`, the batch
+  normalizations, `SpectralVectorField`, `ResidualBlock` and the models take
+  `eigh_dtype=torch.float64`: in a float32 model the eigendecompositions are
+  computed on the float32 matrices cast to float64 and cast back
+  (`spd_linalg.eigh_precision`, `symmetric_eigh`), everything else stays
+  float32. float32 `eigh` resolves the eigenvalues only to about
+  $\varepsilon_{32} \lVert X \rVert$; in float64 the small eigenvalues of the
+  (rounded) float32 matrix are exact to $\varepsilon_{64}\lVert X\rVert$. It
+  cannot remove the rounding of the input itself, so it helps most where the
+  decomposition, not the data, is the limit (log-Euclidean, ReEig, the
+  residual blocks, SPDnet). Against float64 on the original (unrounded) data
+  it cannot go below the rounding of the input, about $\kappa\,
+  \varepsilon_{32}$ (log-Euclidean batch norm at $\kappa = 10^{6}$: output
+  error $7 \cdot 10^{-3}$ in float32, $7 \cdot 10^{-4}$ mixed). On CPU (3
+  threads, batch 32, $n = 64$) a mixed forward + backward costs 77–93 %
+  (median 86 %) of a float64 one, plain float32 59–81 % (median 72 %). GPU
+  timings were not measured.
+- **Eigenvalue floors follow the dtype.** `spd_linalg.spd_floor(λ) =
+  max(1e-8, ε max λ)` (per matrix) is the floor of the residual blocks; ReEig
+  keeps its explicit `eps=1e-4`. The scalar standard deviations are
+  $\sqrt{\max(v, 0)}$ with a zero subgradient at 0 (`std_from_variance`), and
+  the exponent $s/\sigma$ of `BatchNormSPDMeanScalarVariance` uses
+  $\max(\sigma, 3.2 \cdot 10^{-3})$, as bounded as the GBWBN scaling
+  $s/\sqrt{\sigma^2 + 10^{-5}}$: a batch of identical matrices gives finite
+  outputs and gradients.
 - **CPU vs GPU eigendecompositions.** cuSOLVER's `eigh` can fail to converge on
   nearly singular batches that LAPACK handles on CPU. For matrices of a few
   hundred rows, a CPU run with a few threads is often as fast as a small GPU.
+  LAPACK's float32 `eigh` also fails to converge on some batches at
+  $\kappa \ge 10^{4}$ (GBWBN); `eigh_dtype=torch.float64` removes those
+  failures.
 - **Tests.** The manual backwards are checked with `torch.autograd.gradcheck`
-  in float64 and compared with the autograd path.
+  in float64 (repeated, nearly repeated eigenvalues, the identity,
+  $\kappa = 10^{6}$) and compared with the autograd path; every layer is run in
+  float32 against a float64 reference for $\kappa \le 10^{4}$.
+
+### When is float32 enough?
+
+Measured with the precision benchmark (random SPD batches of condition number
+$\kappa$, $n \in \{16, 64\}$, batch 32, 8 seeds, CPU; forward + backward in
+float32 against float64 on the same float32-rounded input, default options,
+training mode). The output error is the larger of the errors against float64
+on the rounded input and on the original input. **safe**: no failure, relative
+error $\le 10^{-4}$ on the output and $\le 10^{-2}$ on the input gradient; **degraded**: no failure,
+output error $\le 10^{-2}$, gradient error $\le 1$; **unsafe**: failures
+(exceptions, non-finite values) or larger errors. "mixed" is float32 with
+`eigh_dtype=torch.float64`.
+
+| layer | float32: κ ≤ 1e2 | 1e4 | 1e6 | 1e8 | mixed: κ ≤ 1e2 | 1e4 | 1e6 | 1e8 |
+|---|---|---|---|---|---|---|---|---|
+| ReEig(1e-4) | safe | safe | safe | degraded | safe | safe | safe | safe |
+| BN scalar var. [adaptive GAH] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN scalar var. [AI] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN scalar var. [AI (GEVD)] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN scalar var. [arithmetic] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN scalar var. [BW] | safe | unsafe | unsafe | unsafe | safe | unsafe | unsafe | unsafe |
+| BN scalar var. [GAH] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN scalar var. [harmonic] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN scalar var. [LE] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN mean [adaptive GAH] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN mean [AI] | safe | safe | unsafe | unsafe | safe | safe | degraded | unsafe |
+| BN mean [AI (GEVD)] | safe | safe | unsafe | unsafe | safe | safe | degraded | unsafe |
+| BN mean [arithmetic] | safe | safe | safe | safe | safe | safe | safe | safe |
+| BN mean [BW] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN mean [GAH] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN mean [harmonic] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| BN mean [LE] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
+| ResidualBlock [AI] | safe | safe | degraded | unsafe | safe | safe | degraded | degraded |
+| ResidualBlock [LE] | safe | safe | degraded | unsafe | safe | safe | degraded | degraded |
+| GBWBNRResNet | safe | unsafe | degraded | unsafe | safe | degraded | safe | unsafe |
+| RResNet | safe | safe | degraded | unsafe | safe | safe | safe | degraded |
+| SPDnet | safe | safe | safe | degraded | safe | safe | safe | degraded |
+
+The Bures–Wasserstein scalar-variance normalization (GBWBN) is not viable in
+float32 beyond $\kappa \approx 10^{2}$: its cross term
+$\operatorname{tr}\big((B^{1/2} X B^{1/2})^{1/2}\big)$ squares the condition
+number. Use float64 for it (an SVD-based cross term is planned).

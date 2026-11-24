@@ -6,7 +6,10 @@ import torch
 from torch.autograd import Function
 
 from yetanotherspdnet._deprecation import _deprecated
-from yetanotherspdnet.functions.scalar_functions import zero_where_zero_std
+from yetanotherspdnet.functions.scalar_functions import (
+    std_from_variance,
+    zero_where_zero_std,
+)
 from yetanotherspdnet.functions.spd_linalg import inv_SPD
 
 from .affine_invariant import (
@@ -214,9 +217,7 @@ def _symmetrized_kullback_leibler_std_scalar(
     term1 = torch.einsum("ik,...ki->", G_inv, data)
     term2 = torch.einsum("...ik,ki->", data_inv, reference_point)
     # clamp to avoid small numerical errors yielding small negative variance
-    std_scalar = torch.sqrt(
-        torch.clamp((term1 + term2) / 2 / n_matrices - n_features, min=0.0)
-    )
+    std_scalar = std_from_variance((term1 + term2) / 2 / n_matrices - n_features)
     return std_scalar, data_inv, G_inv
 
 

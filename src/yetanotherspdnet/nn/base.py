@@ -10,6 +10,7 @@ from yetanotherspdnet.nn.parametrizations import (
     _parametrization_of,
 )
 
+from ..functions.dispatch import select_path, warn_autograd_only
 from ..functions.spd_linalg import (
     CongruenceRectangular,
     EighReLu,
@@ -18,6 +19,7 @@ from ..functions.spd_linalg import (
     VecBatch,
     VechBatch,
     congruence_rectangular,
+    eigh_context,
     eigh_relu,
     eigh_relu_bias,
     logm_SPD,
@@ -135,6 +137,11 @@ class BiMap(nn.Module):
             _init_weights_stiefel(self.weight, generator=self.generator)
         # deal with parametrization
         if self.parametrized and self.parametrization_mode == "static":
+            if not self.use_autograd:
+                # torch's orthogonal parametrization has no manual backward
+                warn_autograd_only(
+                    "yetanotherspdnet.nn.BiMap(parametrization_mode='static')"
+                )
             if self.parametrization_options is None:
                 parametrizations.orthogonal(module=self, name="weight")
             else:
@@ -149,13 +156,17 @@ class BiMap(nn.Module):
                     self.n_in,
                     self.n_out,
                     initial_reference=self.weight.clone().detach(),
+                    use_autograd=self.use_autograd,
                 )
             else:
                 self.stiefel_parametrization = StiefelAdaptiveParametrization(
                     self.n_in,
                     self.n_out,
                     initial_reference=self.weight.clone().detach(),
-                    **self.parametrization_options,
+                    **{
+                        "use_autograd": self.use_autograd,
+                        **self.parametrization_options,
+                    },
                 )
             register_parametrization(
                 module=self,
@@ -163,8 +174,8 @@ class BiMap(nn.Module):
                 parametrization=self.stiefel_parametrization,
             )
         # BiMap function
-        self.bimap_fun = (
-            congruence_rectangular if self.use_autograd else CongruenceRectangular.apply
+        self.bimap_fun = select_path(
+            congruence_rectangular, CongruenceRectangular.apply, self.use_autograd
         )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -257,7 +268,11 @@ class ReEig(nn.Module):
     """
 
     def __init__(
-        self, eps: float = 1e-4, use_autograd: bool = False, dim: int | None = None
+        self,
+        eps: float = 1e-4,
+        use_autograd: bool = False,
+        dim: int | None = None,
+        eigh_dtype: torch.dtype | None = None,
     ) -> None:
         """
         Build a ReEig layer.
@@ -274,6 +289,12 @@ class ReEig(nn.Module):
             Use torch autograd for the computation of the gradient rather than
             the analytical formula. Default is False.
 
+        eigh_dtype : torch.dtype or None, optional
+            dtype of the eigendecompositions of the forward pass (e.g.
+            ``torch.float64`` in a float32 model: mixed precision, see
+            :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+            Default is None (the dtype of the data).
+
         dim : int, optional
             Dimension of the SPD matrices. Default is None.
             Used for logging purposes.
@@ -286,14 +307,13 @@ class ReEig(nn.Module):
             Autograd path (True) or hand-written Daleckii-Krein backward (False).
         """
         super().__init__()
+        self.eigh_dtype = eigh_dtype
         self.eps = eps
         self.use_autograd = use_autograd
         self.dim = dim
 
-        self.reeig_fun = (
-            (lambda data, eps: eigh_relu(data, eps)[0])
-            if self.use_autograd
-            else EighReLu.apply
+        self.reeig_fun = select_path(
+            lambda data, eps: eigh_relu(data, eps)[0], EighReLu.apply, self.use_autograd
         )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -310,7 +330,8 @@ class ReEig(nn.Module):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of transformed SPD matrices
         """
-        return self.reeig_fun(data, self.eps)
+        with eigh_context(self.eigh_dtype):
+            return self.reeig_fun(data, self.eps)
 
     def __repr__(self) -> str:
         """
@@ -347,6 +368,7 @@ class ReEigBias(nn.Module):
         use_autograd: bool = False,
         device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float64,
+        eigh_dtype: torch.dtype | None = None,
     ) -> None:
         r"""
         Build a ReEigBias layer.
@@ -363,6 +385,12 @@ class ReEigBias(nn.Module):
         use_autograd : bool, optional
             Use torch autograd for the computation of the gradient rather than
             the analytical formula. Default is False
+
+        eigh_dtype : torch.dtype or None, optional
+            dtype of the eigendecompositions of the forward pass (e.g.
+            ``torch.float64`` in a float32 model: mixed precision, see
+            :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+            Default is None (the dtype of the data).
 
         device : torch.device, optional
             Device on which the layer is initialized.
@@ -381,16 +409,17 @@ class ReEigBias(nn.Module):
             Autograd path (True) or hand-written backward (False, default).
         """
         super().__init__()
+        self.eigh_dtype = eigh_dtype
         if not (0 < eps < 1):
             raise ValueError(f"eps must be in (0, 1), got {eps}")
         self.n_features = n_features
         self.eps = eps
         self.use_autograd = use_autograd
         self.bias = nn.Parameter(torch.zeros(n_features, device=device, dtype=dtype))
-        self.reeig_bias_fun = (
-            (lambda data, bias, eps: eigh_relu_bias(data, bias, eps)[0])
-            if self.use_autograd
-            else EighReLuBias.apply
+        self.reeig_bias_fun = select_path(
+            lambda data, bias, eps: eigh_relu_bias(data, bias, eps)[0],
+            EighReLuBias.apply,
+            self.use_autograd,
         )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -407,11 +436,12 @@ class ReEigBias(nn.Module):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
         """
-        if data.shape[-1] != self.n_features:
-            raise ValueError(
-                f"expected matrices of size {self.n_features}, got {data.shape[-1]}"
-            )
-        return self.reeig_bias_fun(data, self.bias, self.eps)
+        with eigh_context(self.eigh_dtype):
+            if data.shape[-1] != self.n_features:
+                raise ValueError(
+                    f"expected matrices of size {self.n_features}, got {data.shape[-1]}"
+                )
+            return self.reeig_bias_fun(data, self.bias, self.eps)
 
     def __repr__(self) -> str:
         """
@@ -437,7 +467,11 @@ class LogEig(nn.Module):
 
     """
 
-    def __init__(self, use_autograd: bool = False) -> None:
+    def __init__(
+        self,
+        use_autograd: bool = False,
+        eigh_dtype: torch.dtype | None = None,
+    ) -> None:
         """
         Build a LogEig layer.
 
@@ -450,15 +484,22 @@ class LogEig(nn.Module):
             Use torch autograd for the computation of the gradient rather than
             the analytical formula. Default is False.
 
+        eigh_dtype : torch.dtype or None, optional
+            dtype of the eigendecompositions of the forward pass (e.g.
+            ``torch.float64`` in a float32 model: mixed precision, see
+            :func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`).
+            Default is None (the dtype of the data).
+
         Attributes
         ----------
         use_autograd : bool
             Autograd path (True) or hand-written Daleckii-Krein backward (False).
         """
         super().__init__()
+        self.eigh_dtype = eigh_dtype
         self.use_autograd = use_autograd
-        self.logmSPD = (
-            (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
+        self.logmSPD = select_path(
+            lambda data: logm_SPD(data)[0], LogmSPD.apply, self.use_autograd
         )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -475,7 +516,8 @@ class LogEig(nn.Module):
         data_transformed : torch.Tensor of shape (..., n_features, n_features)
             Batch of transformed symmetric matrices
         """
-        return self.logmSPD(data)
+        with eigh_context(self.eigh_dtype):
+            return self.logmSPD(data)
 
     def __repr__(self) -> str:
         """
@@ -492,7 +534,10 @@ class LogEig(nn.Module):
 class Vec(nn.Module):
     r"""Full vectorization of a batch of matrices: ``(..., n, n) -> (..., n * n)``."""
 
-    def __init__(self, use_autograd: bool = False):
+    def __init__(
+        self,
+        use_autograd: bool = False,
+    ):
         """
         Vectorization of a batch of matrices along their last two dimensions.
 
@@ -509,7 +554,7 @@ class Vec(nn.Module):
         """
         super().__init__()
         self.use_autograd = use_autograd
-        self.vecBatch = vec_batch if self.use_autograd else VecBatch.apply
+        self.vecBatch = select_path(vec_batch, VecBatch.apply, self.use_autograd)
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
