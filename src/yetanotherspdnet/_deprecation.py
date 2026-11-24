@@ -3,7 +3,7 @@
 import functools
 import warnings
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 
 # aliases that already warned in this process (each alias warns once)
@@ -16,6 +16,11 @@ def _warn_once(alias: str, message: str) -> None:
         return
     _WARNED.add(alias)
     warnings.warn(message, DeprecationWarning, stacklevel=3)
+
+
+def _mark_deprecated(obj: Any, message: str) -> None:
+    """Set the ``__deprecated__`` marker read by the documentation on *obj*."""
+    obj.__deprecated__ = message
 
 
 def _deprecated(
@@ -64,7 +69,7 @@ def _deprecated(
     doc = f"Deprecated: use :obj:`{replacement}` instead."
 
     if isinstance(target, type):
-        forward_to = call or target.apply
+        forward_to = call or cast(Any, target).apply
 
         def apply(cls, *args, **kwargs):  # noqa: ARG001
             _warn_once(alias, message)
@@ -90,6 +95,6 @@ def _deprecated(
 
     wrapper.__name__ = wrapper.__qualname__ = alias
     wrapper.__doc__ = doc
-    wrapper.__deprecated__ = message
+    _mark_deprecated(wrapper, message)
     del wrapper.__wrapped__  # keep autodoc / inspect on the alias, not the target
     return wrapper

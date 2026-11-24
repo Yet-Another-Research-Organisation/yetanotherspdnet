@@ -256,7 +256,7 @@ All pull requests must pass CI checks:
 3. **Linting**: `ruff check .` and `ruff format --check .` must pass, with the
    ruff version pinned in `pyproject.toml` (`dev` extra), in the CI workflow and in
    `.pre-commit-config.yaml`. Bump all three together.
-4. **Type checking**: `mypy src/` is not run in CI (known pre-existing errors)
+4. **Type checking**: `mypy src` must pass (options in `[tool.mypy]` of `pyproject.toml`)
 
 Only merges to **main** require all CI checks to pass. Development branches can be pushed without restrictions for fast iteration.
 

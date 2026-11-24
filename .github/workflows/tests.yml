@@ -93,11 +93,9 @@ jobs:
         run: sphinx-build -W --keep-going -b html docs docs/_build/html
 
   mypy:
-    name: Type check (informational)
+    name: Type check
     runs-on: ubuntu-latest
     if: github.event.repository.private == false
-    # not blocking: the code base is not fully typed yet
-    continue-on-error: true
 
     steps:
       - name: Checkout code

@@ -194,7 +194,10 @@ line-ending = "lf"
 # ============================================================================
 [tool.mypy]
 python_version = "3.11"
-warn_return_any = true
+# off: the torch stubs type most tensor ops, ``nn.Module.__call__`` and
+# ``torch.autograd.Function.apply`` as returning Any, so every function returning
+# their result would be flagged (no-any-return) although it returns a Tensor
+warn_return_any = false
 warn_unused_configs = true
 disallow_untyped_defs = false
 disallow_incomplete_defs = false

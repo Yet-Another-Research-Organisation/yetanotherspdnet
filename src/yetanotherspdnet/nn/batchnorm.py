@@ -2,8 +2,9 @@
 
 import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 import torch
 from torch import nn
@@ -34,6 +35,7 @@ from .parametrizations import (
     ScalarSoftPlusParametrization,
     SPDAdaptiveParametrization,
     SPDParametrization,
+    _parametrization_of,
 )
 
 
@@ -84,6 +86,10 @@ class BatchNormSPDBase(ABC, nn.Module):
     applied (``_get_norm_parameters``, ``_update_running_parameters``,
     ``_get_running_parameters``, ``_norm_and_bias``).
     """
+
+    # buffers registered in __init__ (declared for type checkers)
+    running_mean: torch.Tensor
+    mean_regularizer: torch.Tensor
 
     def __init__(
         self,
@@ -284,7 +290,9 @@ class BatchNormSPDBase(ABC, nn.Module):
 
         It is computed without gradient, so through the autograd path.
         """
-        self.adaptive_mean_fun = self.geometry.geodesic.autograd
+        # every registered geometry has an autograd geodesic (DualPath.autograd
+        # is only None for some parallel transports)
+        self.adaptive_mean_fun = cast(Callable, self.geometry.geodesic.autograd)
 
     def _init_norm_strategy_mean(self) -> None:
         """Auxiliary function to select normalization strategy."""
@@ -689,6 +697,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
             torch.eye(self.n_features, dtype=self.dtype, device=self.device)
         )
         # deal with parametrization
+        self.spd_parametrization: SPDParametrization | SPDAdaptiveParametrization
         if self.parametrization_mode == "static":
             self.spd_parametrization = SPDParametrization(mapping=self.parametrization)
         elif self.parametrization_mode == "dynamic":
@@ -779,9 +788,9 @@ class BatchNormSPDMean(BatchNormSPDBase):
         """
         return self._norm_and_bias_fun(data, parameters)
 
-    def _get_norm_parameters(
-        self, data: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    # the parameters are Any (as in BatchNormSPDBase), not Tensor: the subclass
+    # BatchNormSPDMeanScalarVariance passes (mean, std) tuples instead
+    def _get_norm_parameters(self, data: torch.Tensor) -> tuple[Any, Any]:
         """
         Get parameters used to normalize data.
 
@@ -803,7 +812,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
         mean = self.get_norm_mean(mean_batch)
         return mean, mean_batch
 
-    def _update_running_parameters(self, parameters_batch: torch.Tensor) -> None:
+    def _update_running_parameters(self, parameters_batch: Any) -> None:
         """
         Update running parameters.
 
@@ -818,7 +827,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
             self.momentum,
         )
 
-    def _get_running_parameters(self) -> torch.Tensor:
+    def _get_running_parameters(self) -> Any:
         """
         Get running parameters for normalization in inference.
 
@@ -850,9 +859,12 @@ class BatchNormSPDMean(BatchNormSPDBase):
         ):
             with torch.no_grad():
                 # update reference point
-                self.spd_parametrization.update_reference_point()
+                # is_dynamic: the parametrization is the adaptive one
+                cast(
+                    SPDAdaptiveParametrization, self.spd_parametrization
+                ).update_reference_point()
                 # reset tangent vector to zero
-                self.parametrizations.Covbias.original.zero_()
+                _parametrization_of(self, "Covbias").original.zero_()
                 # reset counter
                 self.current_ref_step = 0
 
@@ -898,6 +910,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
     Bures-Wasserstein batch normalization) with learnable pre/post transforms.
 
     """
+
+    # buffers registered in __init__ (declared for type checkers)
+    running_std_scalar: torch.Tensor
+    std_regularizer: torch.Tensor
 
     def __init__(
         self,
