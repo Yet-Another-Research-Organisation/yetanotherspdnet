@@ -1,60 +1,94 @@
 # User guide
 
-These pages explain the concepts behind the library and the choices that the
-API reference does not spell out. Start with {doc}`concepts`, the map of the
-package; the other pages can be read in any order.
+One page per topic. Every page has the same three parts:
+
+**Mathematics**
+: the objects, formulas and properties, with the papers they come from
+  ({doc}`../references`);
+
+**Implementation**
+: how the package computes them: manual backward or autograd, cost in
+  eigendecompositions, dtype and mixed precision;
+
+**Options and strategy**
+: which argument to set, and when: static or dynamic parametrization,
+  `use_autograd`, `eigh_dtype`, the geometry, $\theta$, the momentum, the
+  step of the residual blocks…
+
+Start with {doc}`concepts`, the map of the package; the other pages can be
+read in any order.
 
 ::::{grid} 1 2 2 2
-:gutter: 2
+:gutter: 3
 
-:::{grid-item-card} How the library fits together
+:::{grid-item-card} {octicon}`light-bulb` Concepts
 :link: concepts
 :link-type: doc
-The three levels (functions, layers, models), the shapes flowing through a
-network, and the conventions: float64, two gradient paths, parametrizations.
+:class-card: sd-card-hover
+:class-item: tile tile-here
+
+The SPD manifold, the geometries at a glance, the three levels of the package,
+the shapes inside a network and the conventions.
 :::
 
-:::{grid-item-card} Layers and parametrizations
+:::{grid-item-card} {octicon}`stack` Layers
 :link: layers
 :link-type: doc
-BiMap, ReEig, LogEig and their equations; static vs dynamic parametrization
-of the orthonormal and SPD parameters.
+:class-card: sd-card-hover
+:class-item: tile tile-here
+
+BiMap, ReEig, ReEigBias, LogEig, Vec / Vech, and the covariance layers
+(sample covariance, M-estimators).
 :::
 
-:::{grid-item-card} Models and their options
-:link: models
+:::{grid-item-card} {octicon}`sync` Parametrizations
+:link: parametrizations
 :link-type: doc
-Which model to use, the constructor arguments grouped by role, and the
-configurations of published experiments.
+:class-card: sd-card-hover
+:class-item: tile tile-here
+
+Orthonormal, SPD and scalar parameters trained with a Euclidean optimizer:
+static charts or dynamic trivializations.
 :::
 
-:::{grid-item-card} Geometries
+:::{grid-item-card} {octicon}`globe` Geometries
 :link: geometries
 :link-type: doc
-The Riemannian geometries on the SPD manifold, their means and dispersions,
-and how to pick one.
+:class-card: sd-card-hover
+:class-item: tile tile-here
+
+Affine-invariant, log-Euclidean, Kullback–Leibler, GAH, Bures–Wasserstein:
+distance, mean, geodesic, transport, dispersion, and the registry.
 :::
 
-:::{grid-item-card} Batch normalization
+:::{grid-item-card} {octicon}`sliders` Batch normalization
 :link: batchnorm
 :link-type: doc
-How the SPD batch normalization layers centre, rescale and re-bias a batch,
-and their training/evaluation behaviour.
+:class-card: sd-card-hover
+:class-item: tile tile-here
+
+Centring, scalar dispersion, SPD bias, running statistics; GBWBN with its
+metric $M$, its power $\theta$ and the folding of its exponential.
 :::
 
-:::{grid-item-card} Residual networks
+:::{grid-item-card} {octicon}`git-branch` Residual networks
 :link: residual
 :link-type: doc
-RResNet residual blocks: spectral vector field, affine-invariant (unit
-step) or log-Euclidean exponential map.
+:class-card: sd-card-hover
+:class-item: tile tile-here
+
+The RResNet block (spectral field, unit step, exponential), its options, the
+Res2SPDNet variants, and how the package differs from the paper and its code.
 :::
 
-:::{grid-item-card} Numerical and optimization techniques
-:link: numerics
+:::{grid-item-card} {octicon}`package` Models
+:link: models
 :link-type: doc
-Daleckii–Krein backwards, Sylvester equations, means as iterations, implicit
-differentiation, parametrizations, batch normalization and residual-step
-mechanics, precision — with their equations.
+:class-card: sd-card-hover
+:class-item: tile tile-here
+
+`SPDnet`, `RResNet`, `GBWBNRResNet`: architectures, the constructor arguments
+by role, and configurations of published experiments.
 :::
 ::::
 
@@ -63,9 +97,9 @@ mechanics, precision — with their equations.
 
 concepts
 layers
-models
+parametrizations
 geometries
 batchnorm
 residual
-numerics
+models
 ```
