@@ -22,28 +22,6 @@ from yetanotherspdnet.functions.spd_geometries.log_euclidean import log_euclidea
 from yetanotherspdnet.random.spd import random_SPD
 
 
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="module")
-def seed():
-    return 777
-
-
-@pytest.fixture(scope="function")
-def generator(device, seed):
-    generator = torch.Generator(device=device)
-    generator.manual_seed(seed)
-    return generator
-
-
 def _skip_unsupported_transport(norm_and_bias_mode, mean_type, use_autograd=True):
     """Parallel transport + autograd is rejected for the AI and log-Euclidean
     means (NaN autograd gradients at the identity bias), see

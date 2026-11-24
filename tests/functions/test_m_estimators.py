@@ -9,23 +9,6 @@ from utils import is_spd
 from yetanotherspdnet.nn import MEstimation, SampleCovariance
 
 
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="function")
-def generator(device):
-    generator = torch.Generator(device=device)
-    generator.manual_seed(777)
-    return generator
-
-
 def _samples(n_batches, n_samples, n_features, device, dtype, generator, df=None):
     """Correlated Gaussian (or Student-t with ``df`` degrees of freedom) samples."""
     mixing = torch.randn(

@@ -8,28 +8,6 @@ from yetanotherspdnet.functions.spd_linalg import symmetrize
 from yetanotherspdnet.random.spd import random_SPD
 
 
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="module")
-def seed():
-    return 777
-
-
-@pytest.fixture(scope="function")
-def generator(device, seed):
-    generator = torch.Generator(device=device)
-    generator.manual_seed(seed)
-    return generator
-
-
 class TestBiMap:
     """
     Test suite for BiMap module

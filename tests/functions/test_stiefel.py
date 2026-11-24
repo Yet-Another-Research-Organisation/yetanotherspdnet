@@ -6,23 +6,6 @@ import yetanotherspdnet.functions.stiefel as stiefel
 from utils import is_orthogonal
 
 
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="function")
-def generator(device):
-    generator = torch.Generator(device=device)
-    generator.manual_seed(777)
-    return generator
-
-
 class TestStiefelProjectionTangentOrthogonal:
     """
     Test suite for orthogonal projection on tangent spaces

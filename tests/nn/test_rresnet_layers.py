@@ -9,23 +9,6 @@ from yetanotherspdnet.nn.rresnet_layers import ResidualBlock, SpectralVectorFiel
 from yetanotherspdnet.random.spd import random_SPD
 
 
-@pytest.fixture(scope="module")
-def device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-@pytest.fixture(scope="module")
-def dtype():
-    return torch.float64
-
-
-@pytest.fixture(scope="function")
-def generator(device):
-    gen = torch.Generator(device=device) if device.type == "cuda" else torch.Generator()
-    gen.manual_seed(777)
-    return gen
-
-
 # ========================================================================
 # SpectralVectorField tests
 # ========================================================================
