@@ -573,8 +573,6 @@ class AffineInvariantStdScalar(Function):
         scalar_std = torch.sqrt(torch.clamp(variance, min=0.0))
         ctx.n_matrices = n_matrices
         ctx.save_for_backward(
-            data,
-            reference_point,
             G_inv_sqrtm,
             eigvals_transdat,
             eigvecs_transdat,
@@ -605,22 +603,21 @@ class AffineInvariantStdScalar(Function):
         """
         n_matrices = ctx.n_matrices
         (
-            data,
-            reference_point,
             G_inv_sqrtm,
             eigvals_transdat,
             eigvecs_transdat,
             scalar_std,
         ) = ctx.saved_tensors
 
-        data_inv_sqrtm = inv_sqrtm_SPD(data)[0]
-
-        transformed_G = data_inv_sqrtm @ reference_point @ data_inv_sqrtm
-        eigvals_transG, eigvecs_transG = torch.linalg.eigh(transformed_G)
-
+        # with C_i = G^{-1/2} X_i G^{-1/2}:
+        # d sigma / dX_i = G^{-1/2} C_i^{-1} log(C_i) G^{-1/2} / (N sigma)
+        # d sigma / dG = -G^{-1/2} mean_i(log C_i) G^{-1/2} / sigma
+        # (the second from d^2(G, X) = ||log(X^{-1/2} G X^{-1/2})||^2 and the
+        # similarity X^{-1/2} f(X^{-1/2} G X^{-1/2}) X^{1/2} = f(X^{-1} G)), so
+        # both reuse the decomposition of the forward
         log_inv = lambda x: torch.log(x) / x
         middle_term_data = eigh_operation(eigvals_transdat, eigvecs_transdat, log_inv)
-        middle_term_G = eigh_operation(eigvals_transG, eigvecs_transG, log_inv)
+        log_transdat = eigh_operation(eigvals_transdat, eigvecs_transdat, torch.log)
 
         grad_input_data = (
             grad_output
@@ -631,8 +628,10 @@ class AffineInvariantStdScalar(Function):
             / scalar_std
         )
         grad_input_G = (
-            grad_output
-            * arithmetic_mean(data_inv_sqrtm @ middle_term_G @ data_inv_sqrtm)
+            -grad_output
+            * G_inv_sqrtm
+            @ arithmetic_mean(log_transdat)
+            @ G_inv_sqrtm
             / scalar_std
         )
         # std = 0: zero subgradient instead of 0/0

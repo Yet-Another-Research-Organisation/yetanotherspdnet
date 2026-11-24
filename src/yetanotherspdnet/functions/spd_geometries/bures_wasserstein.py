@@ -23,7 +23,6 @@ from ..spd_linalg import (
     SqrtmAndInvSqrtmSPD,
     SqrtmSPD,
     eigh_operation,
-    inv_sqrtm_SPD,
     solve_sylvester_SPD,
     sqrtm_and_inv_sqrtm_SPD,
     sqrtm_SPD,
@@ -619,9 +618,9 @@ def bures_wasserstein_std_scalar(
 def _bures_wasserstein_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> tuple[torch.Tensor, ...]:
-    """BW scalar std, B^{1/2} and the eigendecomposition of B^{1/2} X B^{1/2}."""
+    """BW scalar std, B^{1/2}, B^{-1/2}, C^{1/2} and the eigendecomposition of C = B^{1/2} X B^{1/2}."""
     n_matrices = math.prod(data.shape[:-2])
-    B_sqrt = sqrtm_SPD(reference_point)[0]
+    B_sqrt, B_inv_sqrt, _, _ = sqrtm_and_inv_sqrtm_SPD(reference_point)
     inner = B_sqrt @ data @ B_sqrt
     inner_sqrt, eigvals_inner, eigvecs_inner = sqrtm_SPD(inner)
     trace_B = torch.diagonal(reference_point, dim1=-2, dim2=-1).sum(-1)
@@ -631,7 +630,7 @@ def _bures_wasserstein_std_scalar(
     variance = dist_sq.sum() / n_matrices
     # clamp: rounding can make the variance slightly negative
     scalar_std = torch.sqrt(torch.clamp(variance, min=0.0))
-    return scalar_std, B_sqrt, eigvals_inner, eigvecs_inner
+    return scalar_std, B_sqrt, B_inv_sqrt, inner_sqrt, eigvals_inner, eigvecs_inner
 
 
 class BuresWassersteinStdScalar(Function):
@@ -662,14 +661,14 @@ class BuresWassersteinStdScalar(Function):
         scalar_std : torch.Tensor of shape ()
             Scalar standard deviation
         """
-        scalar_std, B_sqrt, eigvals_inner, eigvecs_inner = (
+        scalar_std, B_sqrt, B_inv_sqrt, inner_sqrt, eigvals_inner, eigvecs_inner = (
             _bures_wasserstein_std_scalar(data, reference_point)
         )
         ctx.n_matrices = math.prod(data.shape[:-2])
         ctx.save_for_backward(
-            data,
-            reference_point,
             B_sqrt,
+            B_inv_sqrt,
+            inner_sqrt,
             eigvals_inner,
             eigvecs_inner,
             scalar_std,
@@ -703,37 +702,25 @@ class BuresWassersteinStdScalar(Function):
         """
         n_matrices = ctx.n_matrices
         (
-            data,
-            reference_point,
             B_sqrt,
+            B_inv_sqrt,
+            inner_sqrt,
             eigvals_inner,
             eigvecs_inner,
             scalar_std,
         ) = ctx.saved_tensors
+        eye = torch.eye(B_sqrt.shape[-1], dtype=B_sqrt.dtype, device=B_sqrt.device)
 
-        eye = torch.eye(
-            data.shape[-1],
-            dtype=data.dtype,
-            device=data.device,
-        )
-
-        # (B^{1/2} X B^{1/2})^{-1/2}
+        # with C = B^{1/2} X B^{1/2} (decomposed in the forward):
+        # d(d^2)/dX = I - B^{1/2} C^{-1/2} B^{1/2}
+        # d(d^2)/dB = I - B^{-1/2} C^{1/2} B^{-1/2} (optimal transport map B -> X)
         inner_inv_sqrt = eigh_operation(eigvals_inner, eigvecs_inner, inv_sqrt)
-
-        # --- gradient wrt data ---
-        # d(d^2)/dX = I - B^{1/2} inner^{-1/2} B^{1/2}
         grad_dist_sq_data = eye - B_sqrt @ inner_inv_sqrt @ B_sqrt
         grad_input_data = (
             grad_output * grad_dist_sq_data / (2 * n_matrices * scalar_std)
         )
-
-        # --- gradient wrt reference_point ---
-        # d(d^2)/dB = I - X^{1/2} (X^{1/2} B X^{1/2})^{-1/2} X^{1/2}
-        data_sqrtm = sqrtm_SPD(data)[0]
-        inner_B = data_sqrtm @ reference_point @ data_sqrtm
-        inner_B_inv_sqrt = inv_sqrtm_SPD(inner_B)[0]
-        grad_dist_sq_B = eye - data_sqrtm @ inner_B_inv_sqrt @ data_sqrtm
-        grad_input_G = grad_output * arithmetic_mean(grad_dist_sq_B) / (2 * scalar_std)
+        grad_dist_sq_B = eye - B_inv_sqrt @ arithmetic_mean(inner_sqrt) @ B_inv_sqrt
+        grad_input_G = grad_output * grad_dist_sq_B / (2 * scalar_std)
 
         # std = 0: zero subgradient instead of 0/0
         return (
