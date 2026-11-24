@@ -13,7 +13,112 @@ from yetanotherspdnet.nn.batchnorm import (
 from yetanotherspdnet.nn.rresnet_layers import ResidualBlock
 
 
-class SPDnet(nn.Module):
+class _ModelMixin:
+    """
+    Helpers shared by the models: optimizer hooks, model hash, layer listing.
+
+    A model sets ``_use_autograd_keys`` (its layer kinds), ``_layers_attr`` (the
+    ``nn.Sequential`` of its SPD layers) and ``_layers_header`` (title of
+    :meth:`layers_str`), and calls :meth:`_set_use_autograd` in ``__init__``.
+    The model hash is the CRC32 of ``__repr__``, which each model defines.
+    """
+
+    _use_autograd_keys: tuple[str, ...] = ()
+    _layers_attr: str = "spd_layers"
+    _layers_header: str = "Layers:\n-------\n"
+
+    def _set_use_autograd(self, use_autograd: bool | dict) -> None:
+        """
+        Expand ``use_autograd`` into one flag per layer kind.
+
+        Parameters
+        ----------
+        use_autograd : bool | dict
+            Same flag for every layer kind, or a dict of flags (missing kinds
+            default to False).
+        """
+        if isinstance(use_autograd, bool):
+            self.use_autograd = dict.fromkeys(self._use_autograd_keys, use_autograd)
+        else:
+            self.use_autograd = dict.fromkeys(self._use_autograd_keys, False)
+            self.use_autograd.update(use_autograd)
+        # kept for __repr__ (and so for the model hash)
+        self._use_autograd_original = use_autograd
+
+    def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
+        """
+        Register the optimizer hooks of every layer with a dynamic parametrization.
+
+        Parameters
+        ----------
+        optimizer : torch.optim.Optimizer
+            The optimizer used for training
+        """
+        for module in self.modules():
+            if (
+                hasattr(module, "register_optimizer_hook")
+                and module is not self
+                and hasattr(module, "is_dynamic")
+                and module.is_dynamic is True
+            ):
+                module.register_optimizer_hook(optimizer)
+
+    def get_last_tensor(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Return the last SPD (or LogEig) tensor, before vectorization.
+
+        Parameters
+        ----------
+        X : torch.Tensor of shape (..., input_dim, input_dim)
+            Input SPD matrices
+
+        Returns
+        -------
+        torch.Tensor
+            Output of the SPD layers
+        """
+        return getattr(self, self._layers_attr)(X)
+
+    def layers_str(self) -> str:
+        """Return a formatted string listing the layers of the model."""
+        layers = getattr(self, self._layers_attr)
+        string = self.__repr__() + "\n\n" + self._layers_header
+        for i, layer in enumerate(layers):
+            string += f"  ({i}). {layer}\n"
+        string += f"  ({len(layers)}). {self.vectorization}\n"
+        string += f"  ({len(layers) + 1}). {self.linear}\n"
+        if self.softmax:
+            string += f"  ({len(layers) + 2}). Softmax(dim=-1)\n"
+        return string
+
+    def create_model_name_hash(self) -> str:
+        """
+        Create a short hash of the model configuration.
+
+        Returns
+        -------
+        str
+            CRC32 of the model representation (8 hexadecimal characters)
+        """
+        crc_hash = zlib.crc32(self.__str__().encode("utf-8")) & 0xFFFFFFFF
+        self.model_hash = f"{crc_hash:08x}"
+        return self.model_hash
+
+    def get_model_hash(self) -> str:
+        """
+        Return the model hash, creating it if needed.
+
+        Returns
+        -------
+        str
+            Model hash
+        """
+        if not hasattr(self, "model_hash"):
+            self.create_model_name_hash()
+        return self.model_hash
+
+
+class SPDnet(_ModelMixin, nn.Module):
     r"""
     SPDNet classifier: ``[BiMap -> ReEig -> (BatchNorm)] x L -> LogEig -> Vec -> Linear``.
 
@@ -22,6 +127,10 @@ class SPDnet(nn.Module):
     Brooks et al., NeurIPS 2019, places it between the BiMap and the ReEig.)
 
     """
+
+    _use_autograd_keys = ("bimap", "reeig", "logeig", "batchnorm", "vec")
+    _layers_attr = "spdnet_layers"
+    _layers_header = "SPDnet Layers:\n---------------\n"
 
     def __init__(
         self,
@@ -240,28 +349,28 @@ class SPDnet(nn.Module):
         self.dtype = dtype
         self.generator = generator
 
-        # Handle use_autograd as bool or dict
-        if isinstance(use_autograd, bool):
-            self.use_autograd = {
-                "bimap": use_autograd,
-                "reeig": use_autograd,
-                "logeig": use_autograd,
-                "batchnorm": use_autograd,
-                "vec": use_autograd,
-            }
-        else:
-            # Default all to False, then update with provided values
-            self.use_autograd = {
-                "bimap": False,
-                "reeig": False,
-                "logeig": False,
-                "batchnorm": False,
-                "vec": False,
-            }
-            self.use_autograd.update(use_autograd)
+        self._set_use_autograd(use_autograd)
 
-        # Store original for compatibility
-        self._use_autograd_original = use_autograd
+        def make_batchnorm(n_features: int) -> nn.Module:
+            return _make_batchnorm(
+                batchnorm_type=self.batchnorm_type,
+                n_features=n_features,
+                mean_type=self.batchnorm_mean_type,
+                mean_options=self.batchnorm_mean_options,
+                momentum=self.batchnorm_momentum,
+                norm_and_bias_mode=self.batchnorm_norm_and_bias_mode,
+                norm_strategy=self.batchnorm_norm_strategy,
+                minibatch_mode=self.batchnorm_minibatch_mode,
+                minibatch_momentum=self.batchnorm_minibatch_momentum,
+                minibatch_maxstep=self.batchnorm_minibatch_maxstep,
+                parametrization=self.batchnorm_parametrization,
+                parametrization_mode=self.batchnorm_parametrization_mode,
+                n_steps_ref_update=self.batchnorm_n_steps_ref_update,
+                use_autograd=self.use_autograd["batchnorm"],
+                device=self.device,
+                dtype=self.dtype,
+                bw_options=self.batchnorm_bw_options,
+            )
 
         # Create layers
         spdnet_layers: list[nn.Module] = [
@@ -288,46 +397,7 @@ class SPDnet(nn.Module):
         )
 
         if batchnorm:
-            if self.batchnorm_type == "mean_only":
-                spdnet_layers.append(
-                    BatchNormSPDMean(
-                        n_features=self.hidden_layers_size[0],
-                        mean_type=self.batchnorm_mean_type,
-                        mean_options=self.batchnorm_mean_options,
-                        momentum=self.batchnorm_momentum,
-                        norm_and_bias_mode=self.batchnorm_norm_and_bias_mode,
-                        norm_strategy=self.batchnorm_norm_strategy,
-                        minibatch_mode=self.batchnorm_minibatch_mode,
-                        minibatch_momentum=self.batchnorm_minibatch_momentum,
-                        minibatch_maxstep=self.batchnorm_minibatch_maxstep,
-                        parametrization=self.batchnorm_parametrization,
-                        parametrization_mode=self.batchnorm_parametrization_mode,
-                        n_steps_ref_update=self.batchnorm_n_steps_ref_update,
-                        use_autograd=self.use_autograd["batchnorm"],
-                        device=self.device,
-                        dtype=self.dtype,
-                    )
-                )
-            elif self.batchnorm_type == "mean_var_scalar":
-                spdnet_layers.append(
-                    BatchNormSPDMeanScalarVariance(
-                        n_features=self.hidden_layers_size[0],
-                        mean_type=self.batchnorm_mean_type,
-                        mean_options=self.batchnorm_mean_options,
-                        momentum=self.batchnorm_momentum,
-                        norm_strategy=self.batchnorm_norm_strategy,
-                        minibatch_mode=self.batchnorm_minibatch_mode,
-                        minibatch_momentum=self.batchnorm_minibatch_momentum,
-                        minibatch_maxstep=self.batchnorm_minibatch_maxstep,
-                        parametrization=self.batchnorm_parametrization,
-                        parametrization_mode=self.batchnorm_parametrization_mode,
-                        n_steps_ref_update=self.batchnorm_n_steps_ref_update,
-                        **(self.batchnorm_bw_options or {}),
-                        use_autograd=self.use_autograd["batchnorm"],
-                        device=self.device,
-                        dtype=self.dtype,
-                    )
-                )
+            spdnet_layers.append(make_batchnorm(self.hidden_layers_size[0]))
         for i in range(1, len(hidden_layers_size)):
             spdnet_layers.append(
                 BiMap(
@@ -352,46 +422,7 @@ class SPDnet(nn.Module):
             )
 
             if batchnorm:
-                if self.batchnorm_type == "mean_only":
-                    spdnet_layers.append(
-                        BatchNormSPDMean(
-                            n_features=self.hidden_layers_size[i],
-                            mean_type=self.batchnorm_mean_type,
-                            mean_options=self.batchnorm_mean_options,
-                            momentum=self.batchnorm_momentum,
-                            norm_and_bias_mode=self.batchnorm_norm_and_bias_mode,
-                            norm_strategy=self.batchnorm_norm_strategy,
-                            minibatch_mode=self.batchnorm_minibatch_mode,
-                            minibatch_momentum=self.batchnorm_minibatch_momentum,
-                            minibatch_maxstep=self.batchnorm_minibatch_maxstep,
-                            parametrization=self.batchnorm_parametrization,
-                            parametrization_mode=self.batchnorm_parametrization_mode,
-                            n_steps_ref_update=self.batchnorm_n_steps_ref_update,
-                            use_autograd=self.use_autograd["batchnorm"],
-                            device=self.device,
-                            dtype=self.dtype,
-                        )
-                    )
-                elif self.batchnorm_type == "mean_var_scalar":
-                    spdnet_layers.append(
-                        BatchNormSPDMeanScalarVariance(
-                            n_features=self.hidden_layers_size[i],
-                            mean_type=self.batchnorm_mean_type,
-                            mean_options=self.batchnorm_mean_options,
-                            momentum=self.batchnorm_momentum,
-                            norm_strategy=self.batchnorm_norm_strategy,
-                            minibatch_mode=self.batchnorm_minibatch_mode,
-                            minibatch_momentum=self.batchnorm_minibatch_momentum,
-                            minibatch_maxstep=self.batchnorm_minibatch_maxstep,
-                            parametrization=self.batchnorm_parametrization,
-                            parametrization_mode=self.batchnorm_parametrization_mode,
-                            n_steps_ref_update=self.batchnorm_n_steps_ref_update,
-                            **(self.batchnorm_bw_options or {}),
-                            use_autograd=self.use_autograd["batchnorm"],
-                            device=self.device,
-                            dtype=self.dtype,
-                        )
-                    )
+                spdnet_layers.append(make_batchnorm(self.hidden_layers_size[i]))
 
         # Conditionally add LogEig layer
         if self.use_logeig:
@@ -443,28 +474,6 @@ class SPDnet(nn.Module):
             X = self.softmax_layer(X)
         return X
 
-    def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
-        """
-        Register optimizer hooks for all layers with dynamic parametrization.
-        This method automatically finds all layers that use dynamic parametrization
-        and registers the appropriate hooks
-
-        Parameters
-        ----------
-        optimizer : torch.optim.Optimizer
-            The optimizer used for training
-        """
-        for module in self.modules():
-            # Check if module has register_optimizer_hook method
-            # and module.is_dynamic is True
-            if (
-                hasattr(module, "register_optimizer_hook")
-                and module is not self
-                and hasattr(module, "is_dynamic")
-                and module.is_dynamic is True
-            ):
-                module.register_optimizer_hook(optimizer)
-
     def __repr__(self) -> str:
         """
         String representation of SPDnet
@@ -502,67 +511,6 @@ class SPDnet(nn.Module):
             f")"
         )
 
-    def layers_str(self) -> str:
-        """Return a formatted string listing the layers of SPDnet."""
-        string = self.__repr__() + "\n\nSPDnet Layers:\n"
-        string += "---------------\n"
-
-        # SPDNet feature layers (BiMap / ReEig / BatchNormSPDMean / LogEig)
-        for i, layer in enumerate(self.spdnet_layers):
-            string += f"  ({i}). {layer}\n"
-
-        # Vectorization layer
-        string += f"  ({len(self.spdnet_layers)}). {self.vectorization}\n"
-
-        # Final linear layer
-        string += f"  ({len(self.spdnet_layers) + 1}). {self.linear}\n"
-
-        # Optional softmax layer
-        if self.softmax:
-            string += f"  ({len(self.spdnet_layers) + 2}). Softmax(dim=-1)\n"
-
-        return string
-
-    def get_last_tensor(self, X: torch.Tensor) -> torch.Tensor:
-        """Returns the last tensor of SPDNet rather than the output of the
-        final layer
-
-        Parameters
-        ----------
-        X : torch.Tensor
-            Input tensor of shape (..., input_dim, input_dim)
-
-        Returns
-        -------
-        torch.Tensor
-            Last tensor of SPDnet
-        """
-        X = self.spdnet_layers(X)
-        return X
-
-    def create_model_name_hash(self) -> str:
-        """Creates a very short hash of the model name based on the model parameters
-        Returns
-        -------
-        str
-            Short hash of model name (8 characters)
-        """
-        # CRC32 hash - 8 characters, very short and fast
-        crc_hash = zlib.crc32(self.__str__().encode("utf-8")) & 0xFFFFFFFF
-        self.model_hash = f"{crc_hash:08x}"  # 8 hex characters
-        return self.model_hash
-
-    def get_model_hash(self) -> str:
-        """Returns the model hash
-        Returns
-        -------
-        str
-            Model hash
-        """
-        if not hasattr(self, "model_hash"):
-            self.create_model_name_hash()
-        return self.model_hash
-
 
 def _make_batchnorm(
     batchnorm_type: str,
@@ -581,8 +529,15 @@ def _make_batchnorm(
     device: torch.device,
     dtype: torch.dtype,
     bw_options: dict | None = None,
+    norm_and_bias_mode: str = "whitening",
 ) -> nn.Module:
-    """Factory function to create a batchnorm layer from parameters."""
+    """
+    Create the batch normalization layer of a model.
+
+    ``norm_and_bias_mode`` is only used by ``batchnorm_type="mean_only"``
+    (:class:`BatchNormSPDMean`) and ``bw_options`` only by
+    ``batchnorm_type="mean_var_scalar"`` (:class:`BatchNormSPDMeanScalarVariance`).
+    """
     kwargs = {
         "n_features": n_features,
         "mean_type": mean_type,
@@ -600,7 +555,7 @@ def _make_batchnorm(
         "dtype": dtype,
     }
     if batchnorm_type == "mean_only":
-        return BatchNormSPDMean(**kwargs)
+        return BatchNormSPDMean(**kwargs, norm_and_bias_mode=norm_and_bias_mode)
     elif batchnorm_type == "mean_var_scalar":
         return BatchNormSPDMeanScalarVariance(**kwargs, **(bw_options or {}))
     else:
@@ -610,7 +565,7 @@ def _make_batchnorm(
         )
 
 
-class GBWBNRResNet(nn.Module):
+class GBWBNRResNet(_ModelMixin, nn.Module):
     """
     Riemannian Residual Network faithful to the GBWBN experiment architecture.
 
@@ -744,6 +699,8 @@ class GBWBNRResNet(nn.Module):
         Generator for reproducibility. Default is None
     """
 
+    _use_autograd_keys = ("bimap", "logeig", "batchnorm", "vec", "residual")
+
     def __init__(
         self,
         input_dim: int,
@@ -823,25 +780,7 @@ class GBWBNRResNet(nn.Module):
         self.dtype = dtype
         self.generator = generator
 
-        # Handle use_autograd
-        if isinstance(use_autograd, bool):
-            self.use_autograd = {
-                "bimap": use_autograd,
-                "logeig": use_autograd,
-                "batchnorm": use_autograd,
-                "vec": use_autograd,
-                "residual": use_autograd,
-            }
-        else:
-            self.use_autograd = {
-                "bimap": False,
-                "logeig": False,
-                "batchnorm": False,
-                "vec": False,
-                "residual": False,
-            }
-            self.use_autograd.update(use_autograd)
-        self._use_autograd_original = use_autograd
+        self._set_use_autograd(use_autograd)
 
         # Build layers
         layers: list[nn.Module] = []
@@ -943,21 +882,6 @@ class GBWBNRResNet(nn.Module):
             X = self.softmax_layer(X)
         return X
 
-    def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
-        """Register optimizer hooks for all dynamic parametrizations."""
-        for module in self.modules():
-            if (
-                hasattr(module, "register_optimizer_hook")
-                and module is not self
-                and hasattr(module, "is_dynamic")
-                and module.is_dynamic is True
-            ):
-                module.register_optimizer_hook(optimizer)
-
-    def get_last_tensor(self, X: torch.Tensor) -> torch.Tensor:
-        """Return the last SPD tensor before vectorization."""
-        return self.spd_layers(X)
-
     def __repr__(self) -> str:
         return (
             f"GBWBNRResNet(\n"
@@ -997,32 +921,8 @@ class GBWBNRResNet(nn.Module):
             f")"
         )
 
-    def layers_str(self) -> str:
-        """Return a formatted string listing the layers."""
-        string = self.__repr__() + "\n\nLayers:\n"
-        string += "-------\n"
-        for i, layer in enumerate(self.spd_layers):
-            string += f"  ({i}). {layer}\n"
-        string += f"  ({len(self.spd_layers)}). {self.vectorization}\n"
-        string += f"  ({len(self.spd_layers) + 1}). {self.linear}\n"
-        if self.softmax:
-            string += f"  ({len(self.spd_layers) + 2}). Softmax(dim=-1)\n"
-        return string
 
-    def create_model_name_hash(self) -> str:
-        """Create a short hash of the model configuration."""
-        crc_hash = zlib.crc32(self.__str__().encode("utf-8")) & 0xFFFFFFFF
-        self.model_hash = f"{crc_hash:08x}"
-        return self.model_hash
-
-    def get_model_hash(self) -> str:
-        """Return the model hash, creating it if needed."""
-        if not hasattr(self, "model_hash"):
-            self.create_model_name_hash()
-        return self.model_hash
-
-
-class RResNet(nn.Module):
+class RResNet(_ModelMixin, nn.Module):
     """
     Flexible multi-stage Riemannian Residual Network on SPD manifold.
 
@@ -1158,6 +1058,8 @@ class RResNet(nn.Module):
         Generator for reproducibility. Default is None
     """
 
+    _use_autograd_keys = ("bimap", "reeig", "logeig", "batchnorm", "vec", "residual")
+
     def __init__(
         self,
         input_dim: int,
@@ -1251,27 +1153,7 @@ class RResNet(nn.Module):
         self.dtype = dtype
         self.generator = generator
 
-        # Handle use_autograd
-        if isinstance(use_autograd, bool):
-            self.use_autograd = {
-                "bimap": use_autograd,
-                "reeig": use_autograd,
-                "logeig": use_autograd,
-                "batchnorm": use_autograd,
-                "vec": use_autograd,
-                "residual": use_autograd,
-            }
-        else:
-            self.use_autograd = {
-                "bimap": False,
-                "reeig": False,
-                "logeig": False,
-                "batchnorm": False,
-                "vec": False,
-                "residual": False,
-            }
-            self.use_autograd.update(use_autograd)
-        self._use_autograd_original = use_autograd
+        self._set_use_autograd(use_autograd)
 
         # Build stages
         layers: list[nn.Module] = []
@@ -1390,21 +1272,6 @@ class RResNet(nn.Module):
             X = self.softmax_layer(X)
         return X
 
-    def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
-        """Register optimizer hooks for all dynamic parametrizations."""
-        for module in self.modules():
-            if (
-                hasattr(module, "register_optimizer_hook")
-                and module is not self
-                and hasattr(module, "is_dynamic")
-                and module.is_dynamic is True
-            ):
-                module.register_optimizer_hook(optimizer)
-
-    def get_last_tensor(self, X: torch.Tensor) -> torch.Tensor:
-        """Return the last SPD tensor before vectorization."""
-        return self.spd_layers(X)
-
     def __repr__(self) -> str:
         return (
             f"RResNet(\n"
@@ -1446,27 +1313,3 @@ class RResNet(nn.Module):
             f"  dtype={self.dtype},\n"
             f")"
         )
-
-    def layers_str(self) -> str:
-        """Return a formatted string listing the layers."""
-        string = self.__repr__() + "\n\nLayers:\n"
-        string += "-------\n"
-        for i, layer in enumerate(self.spd_layers):
-            string += f"  ({i}). {layer}\n"
-        string += f"  ({len(self.spd_layers)}). {self.vectorization}\n"
-        string += f"  ({len(self.spd_layers) + 1}). {self.linear}\n"
-        if self.softmax:
-            string += f"  ({len(self.spd_layers) + 2}). Softmax(dim=-1)\n"
-        return string
-
-    def create_model_name_hash(self) -> str:
-        """Create a short hash of the model configuration."""
-        crc_hash = zlib.crc32(self.__str__().encode("utf-8")) & 0xFFFFFFFF
-        self.model_hash = f"{crc_hash:08x}"
-        return self.model_hash
-
-    def get_model_hash(self) -> str:
-        """Return the model hash, creating it if needed."""
-        if not hasattr(self, "model_hash"):
-            self.create_model_name_hash()
-        return self.model_hash

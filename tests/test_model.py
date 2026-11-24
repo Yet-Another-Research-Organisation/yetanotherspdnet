@@ -4,7 +4,7 @@ from torch.nn.utils import parametrize
 from torch.testing import assert_close
 
 # from utils import is_symmetric
-from yetanotherspdnet.model import SPDnet
+from yetanotherspdnet.model import GBWBNRResNet, RResNet, SPDnet
 from yetanotherspdnet.nn.base import BiMap, LogEig, ReEig, Vec, Vech
 from yetanotherspdnet.nn.batchnorm import (
     BatchNormSPDMean,
@@ -1268,3 +1268,91 @@ class TestRResNet:
                 dtype=torch.float64,
                 generator=generator,
             )
+
+
+# Model hashes are used to name experiment runs: they must not change across
+# refactors. Values computed with the release that made them stable.
+_MODEL_HASHES = [
+    (
+        SPDnet,
+        {"input_dim": 8, "hidden_layers_size": [6, 4], "output_dim": 3},
+        "f8ffbe94",
+    ),
+    (
+        SPDnet,
+        {
+            "input_dim": 8,
+            "hidden_layers_size": [6, 4],
+            "output_dim": 3,
+            "batchnorm": True,
+            "batchnorm_type": "mean_var_scalar",
+            "batchnorm_mean_type": "bures_wasserstein",
+            "use_autograd": {"bimap": True},
+        },
+        "5a2bd627",
+    ),
+    (
+        SPDnet,
+        {
+            "input_dim": 8,
+            "hidden_layers_size": [6],
+            "output_dim": 3,
+            "batchnorm": True,
+            "batchnorm_norm_and_bias_mode": "parallel_transport",
+            "vec_type": "vech",
+        },
+        "52594341",
+    ),
+    (
+        RResNet,
+        {
+            "input_dim": 8,
+            "hidden_layers_size": [6],
+            "n_residual_blocks": [1],
+            "output_dim": 3,
+        },
+        "b90d1c26",
+    ),
+    (
+        RResNet,
+        {
+            "input_dim": 8,
+            "hidden_layers_size": [6, 4],
+            "n_residual_blocks": [1, 2],
+            "output_dim": 3,
+            "batchnorm": True,
+            "residual_metric": "log_euclidean",
+        },
+        "ed8eb3c6",
+    ),
+    (GBWBNRResNet, {"input_dim": 8, "hidden_dim": 6, "output_dim": 3}, "29deb207"),
+    (
+        GBWBNRResNet,
+        {
+            "input_dim": 8,
+            "hidden_dim": 6,
+            "output_dim": 3,
+            "batchnorm_bw_options": {"bw_theta": 1.0},
+            "use_autograd": True,
+        },
+        "7f6c0d50",
+    ),
+]
+
+
+@pytest.mark.parametrize("model, kwargs, expected", _MODEL_HASHES)
+def test_model_hash_is_stable(model, kwargs, expected):
+    net = model(**kwargs, dtype=torch.float64, generator=torch.Generator())
+    assert net.get_model_hash() == expected
+
+
+@pytest.mark.parametrize("model, kwargs, expected", _MODEL_HASHES)
+def test_use_autograd_expansion(model, kwargs, expected):
+    net = model(**kwargs, dtype=torch.float64, generator=torch.Generator())
+    use_autograd = kwargs.get("use_autograd", False)
+    assert set(net.use_autograd) == set(model._use_autograd_keys)
+    for key, value in net.use_autograd.items():
+        if isinstance(use_autograd, bool):
+            assert value is use_autograd
+        else:
+            assert value is use_autograd.get(key, False)
