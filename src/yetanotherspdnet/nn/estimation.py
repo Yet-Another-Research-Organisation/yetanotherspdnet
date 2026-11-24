@@ -5,6 +5,7 @@ from collections.abc import Callable
 import torch
 from torch import nn
 
+from ..functions.dispatch import select_path
 from ..functions.m_estimators import MEstimator, m_estimator, sample_covariance
 
 
@@ -151,9 +152,7 @@ class MEstimation(nn.Module):
             self.shrinkage,
             self.normalize,
         )
-        if self.use_autograd:
-            return m_estimator(*args)
-        return MEstimator.apply(*args)
+        return select_path(m_estimator, MEstimator.apply, self.use_autograd)(*args)
 
     def __repr__(self) -> str:
         """Return the representation of the module (its hyper-parameters)."""

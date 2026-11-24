@@ -7,6 +7,7 @@ from torch.nn.utils.parametrize import register_parametrization
 
 from yetanotherspdnet.nn.parametrizations import StiefelAdaptiveParametrization
 
+from ..functions.dispatch import select_path, warn_autograd_only
 from ..functions.spd_linalg import (
     CongruenceRectangular,
     EighReLu,
@@ -132,6 +133,11 @@ class BiMap(nn.Module):
             _init_weights_stiefel(self.weight, generator=self.generator)
         # deal with parametrization
         if self.parametrized and self.parametrization_mode == "static":
+            if not self.use_autograd:
+                # torch's orthogonal parametrization has no manual backward
+                warn_autograd_only(
+                    "yetanotherspdnet.nn.BiMap(parametrization_mode='static')"
+                )
             if self.parametrization_options is None:
                 parametrizations.orthogonal(module=self, name="weight")
             else:
@@ -146,13 +152,17 @@ class BiMap(nn.Module):
                     self.n_in,
                     self.n_out,
                     initial_reference=self.weight.clone().detach(),
+                    use_autograd=self.use_autograd,
                 )
             else:
                 self.stiefel_parametrization = StiefelAdaptiveParametrization(
                     self.n_in,
                     self.n_out,
                     initial_reference=self.weight.clone().detach(),
-                    **self.parametrization_options,
+                    **{
+                        "use_autograd": self.use_autograd,
+                        **self.parametrization_options,
+                    },
                 )
             register_parametrization(
                 module=self,
@@ -160,8 +170,8 @@ class BiMap(nn.Module):
                 parametrization=self.stiefel_parametrization,
             )
         # BiMap function
-        self.bimap_fun = (
-            congruence_rectangular if self.use_autograd else CongruenceRectangular.apply
+        self.bimap_fun = select_path(
+            congruence_rectangular, CongruenceRectangular.apply, self.use_autograd
         )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -287,10 +297,8 @@ class ReEig(nn.Module):
         self.use_autograd = use_autograd
         self.dim = dim
 
-        self.reeig_fun = (
-            (lambda data, eps: eigh_relu(data, eps)[0])
-            if self.use_autograd
-            else EighReLu.apply
+        self.reeig_fun = select_path(
+            lambda data, eps: eigh_relu(data, eps)[0], EighReLu.apply, self.use_autograd
         )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -384,10 +392,10 @@ class ReEigBias(nn.Module):
         self.eps = eps
         self.use_autograd = use_autograd
         self.bias = nn.Parameter(torch.zeros(n_features, device=device, dtype=dtype))
-        self.reeig_bias_fun = (
-            (lambda data, bias, eps: eigh_relu_bias(data, bias, eps)[0])
-            if self.use_autograd
-            else EighReLuBias.apply
+        self.reeig_bias_fun = select_path(
+            lambda data, bias, eps: eigh_relu_bias(data, bias, eps)[0],
+            EighReLuBias.apply,
+            self.use_autograd,
         )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -454,8 +462,8 @@ class LogEig(nn.Module):
         """
         super().__init__()
         self.use_autograd = use_autograd
-        self.logmSPD = (
-            (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
+        self.logmSPD = select_path(
+            lambda data: logm_SPD(data)[0], LogmSPD.apply, self.use_autograd
         )
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -506,7 +514,7 @@ class Vec(nn.Module):
         """
         super().__init__()
         self.use_autograd = use_autograd
-        self.vecBatch = vec_batch if self.use_autograd else VecBatch.apply
+        self.vecBatch = select_path(vec_batch, VecBatch.apply, self.use_autograd)
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """

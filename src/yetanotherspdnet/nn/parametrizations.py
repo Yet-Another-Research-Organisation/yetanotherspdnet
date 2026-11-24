@@ -10,6 +10,7 @@ from yetanotherspdnet.functions.scalar_functions import (
 )
 from yetanotherspdnet.random.stiefel import random_stiefel
 
+from ..functions.dispatch import select_path
 from ..functions.spd_linalg import (
     ExpmSymmetric,
     InvScaledSoftPlusSPD,
@@ -142,24 +143,24 @@ class SPDParametrization(nn.Module):
 
         # deal with mapping
         if self.mapping == "softplus":
-            self.spd_fun = (
-                (lambda data: scaled_softplus_symmetric(data)[0])
-                if self.use_autograd
-                else ScaledSoftPlusSymmetric.apply
+            self.spd_fun = select_path(
+                lambda data: scaled_softplus_symmetric(data)[0],
+                ScaledSoftPlusSymmetric.apply,
+                self.use_autograd,
             )
-            self.tangent_fun = (
-                (lambda data: inv_scaled_softplus_SPD(data)[0])
-                if self.use_autograd
-                else InvScaledSoftPlusSPD.apply
+            self.tangent_fun = select_path(
+                lambda data: inv_scaled_softplus_SPD(data)[0],
+                InvScaledSoftPlusSPD.apply,
+                self.use_autograd,
             )
         elif self.mapping == "exp":
-            self.spd_fun = (
-                (lambda data: expm_symmetric(data)[0])
-                if self.use_autograd
-                else ExpmSymmetric.apply
+            self.spd_fun = select_path(
+                lambda data: expm_symmetric(data)[0],
+                ExpmSymmetric.apply,
+                self.use_autograd,
             )
-            self.tangent_fun = (
-                (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
+            self.tangent_fun = select_path(
+                lambda data: logm_SPD(data)[0], LogmSPD.apply, self.use_autograd
             )
 
     def forward(self, tangent_vector: torch.Tensor) -> torch.Tensor:
@@ -302,24 +303,24 @@ class SPDAdaptiveParametrization(nn.Module):
 
         # Deal with mapping
         if self.mapping == "softplus":
-            self.spd_fun = (
-                (lambda data: scaled_softplus_symmetric(data)[0])
-                if self.use_autograd
-                else ScaledSoftPlusSymmetric.apply
+            self.spd_fun = select_path(
+                lambda data: scaled_softplus_symmetric(data)[0],
+                ScaledSoftPlusSymmetric.apply,
+                self.use_autograd,
             )
-            self.tangent_fun = (
-                (lambda data: inv_scaled_softplus_SPD(data)[0])
-                if self.use_autograd
-                else InvScaledSoftPlusSPD.apply
+            self.tangent_fun = select_path(
+                lambda data: inv_scaled_softplus_SPD(data)[0],
+                InvScaledSoftPlusSPD.apply,
+                self.use_autograd,
             )
         elif self.mapping == "exp":
-            self.spd_fun = (
-                (lambda data: expm_symmetric(data)[0])
-                if self.use_autograd
-                else ExpmSymmetric.apply
+            self.spd_fun = select_path(
+                lambda data: expm_symmetric(data)[0],
+                ExpmSymmetric.apply,
+                self.use_autograd,
             )
-            self.tangent_fun = (
-                (lambda data: logm_SPD(data)[0]) if self.use_autograd else LogmSPD.apply
+            self.tangent_fun = select_path(
+                lambda data: logm_SPD(data)[0], LogmSPD.apply, self.use_autograd
             )
 
     def forward(self, tangent_vector: torch.Tensor) -> torch.Tensor:
@@ -502,22 +503,20 @@ class StiefelAdaptiveParametrization(nn.Module):
         )
 
         # Deal with retraction and tangent projection functions
-        self.projectionTangent = (
-            stiefel_projection_tangent_orthogonal
-            if self.use_autograd
-            else StiefelProjectionTangentOrthogonal.apply
+        self.projectionTangent = select_path(
+            stiefel_projection_tangent_orthogonal,
+            StiefelProjectionTangentOrthogonal.apply,
+            self.use_autograd,
         )
         if self.mapping == "QR":
-            self.projectionStiefel = (
-                stiefel_projection_qr
-                if self.use_autograd
-                else StiefelProjectionQR.apply
+            self.projectionStiefel = select_path(
+                stiefel_projection_qr, StiefelProjectionQR.apply, self.use_autograd
             )
         elif self.mapping == "polar":
-            self.projectionStiefel = (
-                stiefel_projection_polar
-                if self.use_autograd
-                else StiefelProjectionPolar.apply
+            self.projectionStiefel = select_path(
+                stiefel_projection_polar,
+                StiefelProjectionPolar.apply,
+                self.use_autograd,
             )
 
     def forward(self, weight_tangent: torch.Tensor) -> torch.Tensor:
