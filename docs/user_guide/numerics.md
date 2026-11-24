@@ -310,9 +310,13 @@ are multiplied by 190 before an $\epsilon = 0.8$ ReEig).
   (rounded) float32 matrix are exact to $\varepsilon_{64}\lVert X\rVert$. It
   cannot remove the rounding of the input itself, so it helps most where the
   decomposition, not the data, is the limit (log-Euclidean, ReEig, the
-  residual blocks, SPDnet). On CPU (BERTHA, 3 threads, batch 32, $n = 64$) a
-  mixed forward + backward costs 85–90 % of a float64 one (float32: 65–75 %).
-  GPU timings were not measured (GPUs busy).
+  residual blocks, SPDnet). Against float64 on the original (unrounded) data
+  it cannot go below the rounding of the input, about $\kappa\,
+  \varepsilon_{32}$ (log-Euclidean batch norm at $\kappa = 10^{6}$: output
+  error $7 \cdot 10^{-3}$ in float32, $7 \cdot 10^{-4}$ mixed). On CPU (3
+  threads, batch 32, $n = 64$) a mixed forward + backward costs 77–93 %
+  (median 86 %) of a float64 one, plain float32 59–81 % (median 72 %). GPU
+  timings were not measured.
 - **Eigenvalue floors follow the dtype.** `spd_linalg.spd_floor(λ) =
   max(1e-8, ε max λ)` (per matrix) is the floor of the residual blocks; ReEig
   keeps its explicit `eps=1e-4`. The scalar standard deviations are
@@ -337,8 +341,9 @@ are multiplied by 190 before an $\epsilon = 0.8$ ReEig).
 Measured with the precision benchmark (random SPD batches of condition number
 $\kappa$, $n \in \{16, 64\}$, batch 32, 8 seeds, CPU; forward + backward in
 float32 against float64 on the same float32-rounded input, default options,
-training mode). **safe**: no failure, relative error $\le 10^{-4}$ on the
-output and $\le 10^{-2}$ on the input gradient; **degraded**: no failure,
+training mode). The output error is the larger of the errors against float64
+on the rounded input and on the original input. **safe**: no failure, relative
+error $\le 10^{-4}$ on the output and $\le 10^{-2}$ on the input gradient; **degraded**: no failure,
 output error $\le 10^{-2}$, gradient error $\le 1$; **unsafe**: failures
 (exceptions, non-finite values) or larger errors. "mixed" is float32 with
 `eigh_dtype=torch.float64`.
@@ -361,7 +366,7 @@ output error $\le 10^{-2}$, gradient error $\le 1$; **unsafe**: failures
 | BN mean [BW] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
 | BN mean [GAH] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
 | BN mean [harmonic] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
-| BN mean [LE] | safe | safe | degraded | unsafe | safe | safe | degraded | degraded |
+| BN mean [LE] | safe | safe | degraded | unsafe | safe | safe | degraded | unsafe |
 | ResidualBlock [AI] | safe | safe | degraded | unsafe | safe | safe | degraded | degraded |
 | ResidualBlock [LE] | safe | safe | degraded | unsafe | safe | safe | degraded | degraded |
 | GBWBNRResNet | safe | unsafe | degraded | unsafe | safe | degraded | safe | unsafe |
