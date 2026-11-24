@@ -46,16 +46,14 @@ def euclidean_geodesic(
 
 
 class EuclideanGeodesic(Function):
-    """
-    Euclidean geodesic of a batch of symmetric matrices
-    """
+    """Euclidean geodesic of a batch of symmetric matrices."""
 
     @staticmethod
     def forward(
         ctx, point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
     ) -> torch.Tensor:
         """
-        Forward pass of the Euclidean geodesic
+        Forward pass of the Euclidean geodesic.
 
         Parameters
         ----------
@@ -84,7 +82,7 @@ class EuclideanGeodesic(Function):
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, None]:
         """
-        Backward pass of the Euclidean geodesic
+        Backward pass of the Euclidean geodesic.
 
         Parameters
         ----------
@@ -130,14 +128,12 @@ def arithmetic_mean(data: torch.Tensor) -> torch.Tensor:
 
 
 class ArithmeticMean(Function):
-    """
-    Arithmetic mean
-    """
+    """Arithmetic mean."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the arithmetic mean of a batch of symmetric matrices
+        Forward pass of the arithmetic mean of a batch of symmetric matrices.
 
         Parameters
         ----------
@@ -160,7 +156,7 @@ class ArithmeticMean(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the arithmetic mean of a batch of symmetric matrices
+        Backward pass of the arithmetic mean of a batch of symmetric matrices.
 
         Parameters
         ----------

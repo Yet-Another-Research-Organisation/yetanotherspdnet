@@ -2424,12 +2424,12 @@ class TestEighReLuBias:
             n_features, device=device, dtype=dtype, generator=generator
         )
         eps = 0.05
-        manual = lambda x, b: spd_linalg.EighReLuBias.apply(  # noqa: E731
+        manual = lambda x, b: spd_linalg.EighReLuBias.apply(
             spd_linalg.symmetrize(x), b, eps
         )
-        auto = lambda x, b: spd_linalg.eigh_relu_bias(  # noqa: E731
-            spd_linalg.symmetrize(x), b, eps
-        )[0]
+        auto = lambda x, b: spd_linalg.eigh_relu_bias(spd_linalg.symmetrize(x), b, eps)[
+            0
+        ]
         inputs = (data.clone().requires_grad_(), bias.clone().requires_grad_())
         assert torch.autograd.gradcheck(manual, inputs)
         assert torch.autograd.gradcheck(auto, inputs)

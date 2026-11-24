@@ -25,8 +25,7 @@ def left_kullback_leibler_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> torch.Tensor:
     r"""
-    Scalar standard deviation with respect to the left Kullback-Leibler
-    divergence.
+    Scalar standard deviation with respect to the left Kullback-Leibler divergence.
 
     .. math::
 
@@ -75,14 +74,12 @@ def _left_kullback_leibler_std_scalar(
 
 
 class LeftKullbackLeiblerStdScalar(Function):
-    """
-    Scalar standard deviation with respect to the left Kullback-Leibler divergence
-    """
+    """Scalar standard deviation with respect to the left Kullback-Leibler divergence."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the scalar standard deviation with respect to the left Kullback-Leibler divergence
+        Forward pass of the left Kullback-Leibler scalar standard deviation.
 
         Parameters
         ----------
@@ -107,7 +104,7 @@ class LeftKullbackLeiblerStdScalar(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the scalar standard deviation with respect to the left Kullback-Leibler divergence
+        Backward pass of the left Kullback-Leibler scalar standard deviation.
 
         Parameters
         ----------
@@ -191,16 +188,14 @@ def _harmonic_curve(
 
 
 class HarmonicCurve(Function):
-    """
-    Harmonic curve of two batches of SPD matrices
-    """
+    """Harmonic curve of two batches of SPD matrices."""
 
     @staticmethod
     def forward(
         ctx, point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
     ) -> torch.Tensor:
         """
-        Forward pass of the harmonic curve
+        Forward pass of the harmonic curve.
 
         Parameters
         ----------
@@ -231,7 +226,7 @@ class HarmonicCurve(Function):
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, None]:
         """
-        Backward pass of the harmonic curve
+        Backward pass of the harmonic curve.
 
         Parameters
         ----------
@@ -290,14 +285,12 @@ def _harmonic_mean(data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 class HarmonicMean(Function):
-    """
-    Harmonic mean
-    """
+    """Harmonic mean."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the harmonic mean of a batch of SPD matrices
+        Forward pass of the harmonic mean of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -322,7 +315,7 @@ class HarmonicMean(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the harmonic mean of a batch of SPD matrices
+        Backward pass of the harmonic mean of a batch of SPD matrices.
 
         Parameters
         ----------
@@ -354,8 +347,7 @@ def right_kullback_leibler_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> torch.Tensor:
     r"""
-    Scalar standard deviation with respect to the right Kullback-Leibler
-    divergence (docstring previously said "left" — copy-paste bug, fixed).
+    Scalar standard deviation with respect to the right KL divergence.
 
     .. math::
 
@@ -402,14 +394,12 @@ def _right_kullback_leibler_std_scalar(
 
 
 class RightKullbackLeiblerStdScalar(Function):
-    """
-    Scalar standard deviation with respect to the left Kullback-Leibler divergence
-    """
+    """Scalar standard deviation with respect to the right Kullback-Leibler divergence."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the scalar standard deviation with respect to the right Kullback-Leibler divergence
+        Forward pass of the right Kullback-Leibler scalar standard deviation.
 
         Parameters
         ----------
@@ -434,7 +424,7 @@ class RightKullbackLeiblerStdScalar(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the scalar standard deviation with respect to the right Kullback-Leibler divergence
+        Backward pass of the right Kullback-Leibler scalar standard deviation.
 
         Parameters
         ----------

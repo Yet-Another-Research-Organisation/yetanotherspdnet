@@ -102,7 +102,10 @@ def test_adaptive_gah_geodesic_aliases(
     for fun in (alias, canonical):
         point1, point2 = _geodesic_pair(spd_batch)
         t = torch.tensor(0.3, dtype=dtype, requires_grad=True)
-        out = fun(point1, point2, t)
+        with warnings.catch_warnings():
+            # the warning itself is tested in test_adaptive_gah_geodesic_alias_warns
+            warnings.simplefilter("ignore", DeprecationWarning)
+            out = fun(point1, point2, t)
         out.sum().backward()
         results.append((out, point1.grad, point2.grad, t.grad))
     for got, expected in zip(*results):

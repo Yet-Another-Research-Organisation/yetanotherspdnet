@@ -4,6 +4,7 @@ import torch
 from torch import nn
 
 from yetanotherspdnet._deprecation import _deprecated
+from yetanotherspdnet.functions._constants import SPD_EIGVAL_FLOOR, TANGENT_NORM_FLOOR
 from yetanotherspdnet.functions.spd_geometries import affine_invariant
 from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
     AffineInvariantExp,
@@ -26,7 +27,7 @@ from yetanotherspdnet.random.stiefel import random_stiefel
 
 # eigenvalue floor applied to the input of ResidualBlock (lower bound of
 # affine_invariant_projx, which bounds the output)
-INPUT_EIGVAL_FLOOR = 1e-8
+INPUT_EIGVAL_FLOOR = SPD_EIGVAL_FLOOR
 
 
 class SpectralVectorField(nn.Module):
@@ -101,9 +102,10 @@ class SpectralVectorField(nn.Module):
         super().__init__()
         self.n_features = n_features
         self.spectrum_type = spectrum_type
-        assert spectrum_type in ["conv1d", "mlp"], (
-            f"spectrum_type must be 'conv1d' or 'mlp', got {spectrum_type}"
-        )
+        if spectrum_type not in ("conv1d", "mlp"):
+            raise ValueError(
+                f"spectrum_type must be 'conv1d' or 'mlp', got {spectrum_type}"
+            )
         self.use_autograd = use_autograd
 
         # Learnable orthogonal matrix Q on Stiefel(n, n)
@@ -246,9 +248,10 @@ class SpectralVectorField(nn.Module):
         self, _optimizer: torch.optim.Optimizer, *_args, **_kwargs
     ) -> None:
         """
-        Hook that runs after optimizer.step() to handle the dynamic Stiefel
-        parametrization reference point (same logic as BiMap).
-        See torch.optim.Optimizer.register_step_post_hook for the signature.
+        Update the dynamic Stiefel reference point after ``optimizer.step()``.
+
+        Same logic as BiMap. See ``torch.optim.Optimizer.register_step_post_hook`` for
+        the signature.
 
         Parameters
         ----------
@@ -275,6 +278,7 @@ class SpectralVectorField(nn.Module):
             optimizer.register_step_post_hook(self._post_optimizer_hook)
 
     def __repr__(self) -> str:
+        """Return the representation of the module (its hyper-parameters)."""
         return (
             f"SpectralVectorField(n_features={self.n_features}, "
             f"spectrum_type='{self.spectrum_type}', "
@@ -351,9 +355,10 @@ class ResidualBlock(nn.Module):
         generator: torch.Generator | None = None,
     ) -> None:
         super().__init__()
-        assert metric in ["affine_invariant", "log_euclidean"], (
-            f"metric must be 'affine_invariant' or 'log_euclidean', got {metric}"
-        )
+        if metric not in ("affine_invariant", "log_euclidean"):
+            raise ValueError(
+                f"metric must be 'affine_invariant' or 'log_euclidean', got {metric}"
+            )
         self.n_features = n_features
         self.use_autograd = use_autograd
         self.metric = metric
@@ -406,7 +411,9 @@ class ResidualBlock(nn.Module):
         if self.metric == "log_euclidean":
             return self.expm(self.logm(data) + tangent)
         # unit affine-invariant step (reference implementation)
-        norm = affine_invariant.affine_invariant_norm(data, tangent).clamp_min(1e-12)
+        norm = affine_invariant.affine_invariant_norm(data, tangent).clamp_min(
+            TANGENT_NORM_FLOOR
+        )
         result = self.exp_map(data, tangent / norm[..., None, None])
         return affine_invariant_projx(result)
 
@@ -415,6 +422,7 @@ class ResidualBlock(nn.Module):
         self.vector_field.register_optimizer_hook(optimizer)
 
     def __repr__(self) -> str:
+        """Return the representation of the module (its hyper-parameters)."""
         return (
             f"ResidualBlock(n_features={self.n_features}, metric={self.metric}, "
             f"vector_field={self.vector_field})"

@@ -91,8 +91,9 @@ def student_function(
 
 def huber_function(quadratic: torch.Tensor, delta: float, beta: float) -> torch.Tensor:
     r"""
-    Huber weight: :math:`u(q) = 1/\beta` if :math:`q \le \delta`, else
-    :math:`\delta / (\beta q)`.
+    Huber weight function.
+
+    :math:`u(q) = 1/\beta` if :math:`q \le \delta`, else :math:`\delta / (\beta q)`.
 
     Parameters
     ----------
@@ -386,7 +387,7 @@ class MEstimator(Function):
         normalize: str | None = None,
     ) -> torch.Tensor:
         """
-        Forward pass: fixed-point iterations without graph
+        Forward pass: fixed-point iterations without graph.
 
         Parameters
         ----------
@@ -424,7 +425,7 @@ class MEstimator(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple:
         """
-        Backward pass: implicit differentiation at the fixed point
+        Backward pass: implicit differentiation at the fixed point.
 
         Parameters
         ----------

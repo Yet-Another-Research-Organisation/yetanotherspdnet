@@ -68,7 +68,7 @@ def LogEuclideanGeodesic(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
     """
-    Log-Euclidean geodesic between two batches of SPD matrices
+    Log-Euclidean geodesic between two batches of SPD matrices.
 
     Parameters
     ----------
@@ -127,7 +127,7 @@ def log_euclidean_mean(data: torch.Tensor) -> torch.Tensor:
 
 def LogEuclideanMean(data: torch.Tensor) -> torch.Tensor:
     """
-    Log-Euclidean mean
+    Log-Euclidean mean.
 
     Parameters
     ----------
@@ -203,14 +203,12 @@ def _log_euclidean_std_scalar(
 
 
 class LogEuclideanStdScalar(Function):
-    """
-    Scalar standard deviation with respect to the Log-Euclidean distance
-    """
+    """Scalar standard deviation with respect to the Log-Euclidean distance."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the scalar standard deviation with respect to the Log-Euclidean distance
+        Forward pass of the log-Euclidean scalar standard deviation.
 
         Parameters
         ----------
@@ -252,7 +250,7 @@ class LogEuclideanStdScalar(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the scalar standard deviation with respect to the affine-invariant distance
+        Backward pass of the log-Euclidean scalar standard deviation.
 
         Parameters
         ----------
@@ -302,7 +300,7 @@ def log_euclidean_parallel_transport_SPD(
     data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
     """
-    Parallel transport with respect to the log-Euclidean geometry
+    Parallel transport with respect to the log-Euclidean geometry.
 
     Parameters
     ----------
@@ -329,7 +327,7 @@ def LogEuclideanParallelTransportSPD(
     data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
     """
-    Parallel transport with respect to the log-Euclidean geometry
+    Parallel transport with respect to the log-Euclidean geometry.
 
     Parameters
     ----------
@@ -358,8 +356,9 @@ def LogEuclideanParalleTransportSPD(
     data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
     """
-    Deprecated alias of :func:`LogEuclideanParallelTransportSPD` (misspelled
-    name), kept for backward compatibility.
+    Use :func:`LogEuclideanParallelTransportSPD` instead (deprecated alias).
+
+    Misspelled name, kept for backward compatibility.
     """
     warnings.warn(
         "LogEuclideanParalleTransportSPD is deprecated, use "

@@ -14,9 +14,9 @@ import matplotlib
 
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-from matplotlib.patches import Ellipse, FancyArrowPatch  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.patches import Ellipse, FancyArrowPatch
 
 
 OUT = Path(__file__).resolve().parents[1] / "_static" / "diagrams"

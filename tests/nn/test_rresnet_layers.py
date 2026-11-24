@@ -105,8 +105,8 @@ class TestSpectralVectorField:
         assert_close(Q.T @ Q, eye, atol=1e-6, rtol=1e-6)
 
     def test_invalid_spectrum_type(self, device, dtype, generator):
-        """Invalid spectrum_type raises AssertionError."""
-        with pytest.raises(AssertionError, match="spectrum_type"):
+        """Invalid spectrum_type raises ValueError."""
+        with pytest.raises(ValueError, match="spectrum_type"):
             SpectralVectorField(
                 n_features=5,
                 spectrum_type="invalid",
@@ -416,7 +416,7 @@ class TestResidualBlockIllConditioned:
         assert_close(grads[0], grads[1])
 
     def test_invalid_metric(self, device, dtype):
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError):
             ResidualBlock(4, metric="bures_wasserstein", device=device, dtype=dtype)
 
 

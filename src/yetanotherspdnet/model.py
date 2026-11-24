@@ -165,7 +165,7 @@ class SPDnet(_ModelMixin, nn.Module):
         generator: torch.Generator | None = None,
     ) -> None:
         """
-        Standard SPDnet model with hidden layers
+        Build an SPDnet model with hidden layers.
 
         Parameters
         ----------
@@ -319,12 +319,10 @@ class SPDnet(_ModelMixin, nn.Module):
 
         self.batchnorm = batchnorm
         self.batchnorm_type = batchnorm_type
-        assert self.batchnorm_type in [
-            "mean_only",
-            "mean_var_scalar",
-        ], (
-            f"expected formula in ['mean_only', 'mean_var_scalar'], got {self.batchnorm_type}"
-        )
+        if self.batchnorm_type not in ("mean_only", "mean_var_scalar"):
+            raise ValueError(
+                f"batchnorm_type must be in ['mean_only', 'mean_var_scalar'], got {self.batchnorm_type}"
+            )
         self.batchnorm_mean_type = batchnorm_mean_type
         self.batchnorm_mean_options = batchnorm_mean_options
         self.batchnorm_momentum = batchnorm_momentum
@@ -339,10 +337,8 @@ class SPDnet(_ModelMixin, nn.Module):
         self.batchnorm_bw_options = batchnorm_bw_options
 
         self.vec_type = vec_type
-        assert self.vec_type in [
-            "vec",
-            "vech",
-        ], f"vec_type must be 'vec' or 'vech', got {self.vec_type}"
+        if self.vec_type not in ("vec", "vech"):
+            raise ValueError(f"vec_type must be 'vec' or 'vech', got {self.vec_type}")
 
         self.use_logeig = use_logeig
         self.device = device
@@ -452,7 +448,7 @@ class SPDnet(_ModelMixin, nn.Module):
             self.softmax_layer = nn.Softmax(dim=-1)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
-        """Forward pass of SPDnet
+        """Forward pass of SPDnet.
 
         Parameters
         ----------
@@ -475,9 +471,7 @@ class SPDnet(_ModelMixin, nn.Module):
         return X
 
     def __repr__(self) -> str:
-        """
-        String representation of SPDnet
-        """
+        """Return the string representation of SPDnet."""
         return (
             f"SPDnet(\n"
             f"  input_dim={self.input_dim},\n"
@@ -771,9 +765,8 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
         self.residual_metric = residual_metric
 
         self.vec_type = vec_type
-        assert vec_type in ["vec", "vech"], (
-            f"vec_type must be 'vec' or 'vech', got {vec_type}"
-        )
+        if vec_type not in ("vec", "vech"):
+            raise ValueError(f"vec_type must be 'vec' or 'vech', got {vec_type}")
 
         self.use_logeig = use_logeig
         self.device = device
@@ -883,6 +876,7 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
         return X
 
     def __repr__(self) -> str:
+        """Return the representation of the module (its hyper-parameters)."""
         return (
             f"GBWBNRResNet(\n"
             f"  input_dim={self.input_dim!r},\n"
@@ -1101,13 +1095,13 @@ class RResNet(_ModelMixin, nn.Module):
         generator: torch.Generator | None = None,
     ) -> None:
         super().__init__()
-        assert len(hidden_layers_size) == len(n_residual_blocks), (
-            f"hidden_layers_size and n_residual_blocks must have same length, "
-            f"got {len(hidden_layers_size)} and {len(n_residual_blocks)}"
-        )
-        assert all(n >= 0 for n in n_residual_blocks), (
-            "n_residual_blocks must be non-negative"
-        )
+        if len(hidden_layers_size) != len(n_residual_blocks):
+            raise ValueError(
+                f"hidden_layers_size and n_residual_blocks must have same length, "
+                f"got {len(hidden_layers_size)} and {len(n_residual_blocks)}"
+            )
+        if any(n < 0 for n in n_residual_blocks):
+            raise ValueError("n_residual_blocks must be non-negative")
 
         self.input_dim = input_dim
         self.hidden_layers_size = hidden_layers_size
@@ -1144,9 +1138,8 @@ class RResNet(_ModelMixin, nn.Module):
         self.residual_metric = residual_metric
 
         self.vec_type = vec_type
-        assert vec_type in ["vec", "vech"], (
-            f"vec_type must be 'vec' or 'vech', got {vec_type}"
-        )
+        if vec_type not in ("vec", "vech"):
+            raise ValueError(f"vec_type must be 'vec' or 'vech', got {vec_type}")
 
         self.use_logeig = use_logeig
         self.device = device
@@ -1157,7 +1150,7 @@ class RResNet(_ModelMixin, nn.Module):
 
         # Build stages
         layers: list[nn.Module] = []
-        dims = [input_dim] + list(hidden_layers_size)
+        dims = [input_dim, *hidden_layers_size]
 
         for stage_idx in range(len(hidden_layers_size)):
             d_in = dims[stage_idx]
@@ -1273,6 +1266,7 @@ class RResNet(_ModelMixin, nn.Module):
         return X
 
     def __repr__(self) -> str:
+        """Return the representation of the module (its hyper-parameters)."""
         return (
             f"RResNet(\n"
             f"  input_dim={self.input_dim!r},\n"

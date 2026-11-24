@@ -8,7 +8,7 @@ from .spd_linalg import symmetrize
 
 def stiefel_projection_polar(point: torch.Tensor) -> torch.Tensor:
     """
-    Projection from the ambient space onto the Stiefel manifold based on the polar decomposition
+    Project onto the Stiefel manifold with the polar decomposition.
 
     Parameters
     ----------
@@ -28,8 +28,7 @@ def stiefel_projection_tangent_orthogonal(
     vector: torch.Tensor, point: torch.Tensor
 ) -> torch.Tensor:
     """
-    Orthogonal projection from the ambient space onto the tangent space
-    of the Stiefel manifold at point
+    Project orthogonally onto the tangent space of the Stiefel manifold at point.
 
     Note that this also corresponds to both the differential and differential adjoint
     of projection_stiefel_polar
@@ -51,16 +50,12 @@ def stiefel_projection_tangent_orthogonal(
 
 
 class StiefelProjectionTangentOrthogonal(Function):
-    """
-    Orthogonal projection from the ambient space onto the tangent space
-    of the Stiefel manifold at point
-    """
+    """Project orthogonally onto the tangent space of the Stiefel manifold at point."""
 
     @staticmethod
     def forward(ctx, vector: torch.Tensor, point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the orthogonal projection from the ambient space onto
-        the tangent space of the Stiefel manifold at point
+        Forward pass of the projection onto the tangent space of the Stiefel manifold.
 
         Parameters
         ----------
@@ -84,8 +79,7 @@ class StiefelProjectionTangentOrthogonal(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
         """
-        Backward pass of the orthogonal projection onto the tangent space
-        of the Stiefel manifold at point
+        Backward pass of the projection onto the tangent space of the Stiefel manifold.
 
         Parameters
         ----------
@@ -105,14 +99,12 @@ class StiefelProjectionTangentOrthogonal(Function):
 
 
 class StiefelProjectionPolar(Function):
-    """
-    Projection from the ambient space onto the Stiefel manifold based on polar decomposition
-    """
+    """Projection onto the Stiefel manifold with the polar decomposition."""
 
     @staticmethod
     def forward(ctx, point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the projection onto the Stiefel manifold
+        Forward pass of the projection onto the Stiefel manifold.
 
         Parameters
         ----------
@@ -134,7 +126,7 @@ class StiefelProjectionPolar(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the projection onto the Stiefel manifold
+        Backward pass of the projection onto the Stiefel manifold.
 
         Parameters
         ----------
@@ -155,7 +147,7 @@ class StiefelProjectionPolar(Function):
 
 def stiefel_projection_qr(point: torch.Tensor) -> torch.Tensor:
     """
-    Projection from the ambient space onto the Stiefel manifold based on the QR decomposition
+    Project onto the Stiefel manifold with the QR decomposition.
 
     Parameters
     ----------
@@ -175,7 +167,7 @@ def stiefel_differential_projection_qr(
     vector: torch.Tensor, Q: torch.Tensor, R: torch.Tensor
 ) -> torch.Tensor:
     """
-    Differential of the projection on Stiefel based on QR decomposition
+    Differential of the projection on Stiefel based on QR decomposition.
 
     Parameters
     ----------
@@ -206,7 +198,7 @@ def stiefel_adjoint_differential_projection_qr(
     vector: torch.Tensor, Q: torch.Tensor, R: torch.Tensor
 ) -> torch.Tensor:
     """
-    Adjoint of the differential projection on Stiefel based on QR decomposition
+    Adjoint of the differential projection on Stiefel based on QR decomposition.
 
     Parameters
     ----------
@@ -236,14 +228,12 @@ def stiefel_adjoint_differential_projection_qr(
 
 
 class StiefelProjectionQR(Function):
-    """
-    Projection from the ambient space onto the Stiefel manifold based on QR decomposition
-    """
+    """Projection onto the Stiefel manifold with the QR decomposition."""
 
     @staticmethod
     def forward(ctx, point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the projection onto the Stiefel manifold
+        Forward pass of the projection onto the Stiefel manifold.
 
         Parameters
         ----------
@@ -265,7 +255,7 @@ class StiefelProjectionQR(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
-        Backward pass of the projection onto the Stiefel manifold
+        Backward pass of the projection onto the Stiefel manifold.
 
         Parameters
         ----------

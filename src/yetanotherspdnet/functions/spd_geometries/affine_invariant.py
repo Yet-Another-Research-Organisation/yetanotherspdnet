@@ -1,4 +1,4 @@
-"""Affine-invariant Riemannian geometry: geodesic, exp/log maps, mean, and standard deviation."""
+"""Affine-invariant geometry: geodesic, exp / log maps, mean, std, transport."""
 
 import math
 
@@ -6,6 +6,11 @@ import torch
 from torch.autograd import Function
 
 from yetanotherspdnet._deprecation import _deprecated
+from yetanotherspdnet.functions._constants import (
+    KARCHER_STEP_DECAY,
+    SPD_EIGVAL_CEILING,
+    SPD_EIGVAL_FLOOR,
+)
 from yetanotherspdnet.functions.scalar_functions import (
     inv,
     inv_sqrt,
@@ -116,7 +121,7 @@ class AffineInvariantGeodesic(Function):
         ctx, point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
     ):
         """
-        Forward pass of the affine-invariant geodesic between two batches of SPD matrices
+        Forward pass of the affine-invariant geodesic.
 
         Parameters
         ----------
@@ -273,8 +278,7 @@ AffineInvariantMean2Points = _deprecated(
 # ---------------------
 def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
     r"""
-    Affine-invariant (geometric/Fréchet) mean computed with a fixed-point
-    (Karcher flow) algorithm.
+    Affine-invariant (Fréchet) mean, by a fixed-point (Karcher flow) algorithm.
 
     Starting from :math:`M_0 = I`, each iteration :math:`k` moves along the
     average tangent direction at :math:`M_k` and retracts back onto the
@@ -318,7 +322,7 @@ def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Te
         logm_transformed_data = logm_SPD(transformed_data)[0]
         logm_mean = arithmetic_mean(logm_transformed_data)
         # step-size to stabilize algorithm
-        stepsize = 0.95**it
+        stepsize = KARCHER_STEP_DECAY**it
         # compute new iterate
         expm_logm_mean = expm_symmetric(stepsize * logm_mean)[0]
         mean = mean_sqrtm @ expm_logm_mean @ mean_sqrtm
@@ -326,16 +330,14 @@ def affine_invariant_mean(data: torch.Tensor, n_iterations: int = 5) -> torch.Te
 
 
 class AffineInvariantMeanIteration(Function):
-    """
-    One iteration of the fixed-point algorithm computing the affine-invariant (geometric) mean
-    """
+    """One iteration of the fixed-point algorithm of the affine-invariant mean."""
 
     @staticmethod
     def forward(
         ctx, mean_iterate: torch.Tensor, data: torch.Tensor, stepsize: float
     ) -> torch.Tensor:
         """
-        Forward pass of one iteration of the fixed-point algorithm for the affine-invariant (geometric) mean
+        Forward pass of one iteration of the affine-invariant mean algorithm.
 
         Parameters
         ----------
@@ -393,7 +395,7 @@ class AffineInvariantMeanIteration(Function):
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, None]:
         """
-        Backward pass of one iteration of the fixed-point algorithm for the affine-invariant (geometric) mean
+        Backward pass of one iteration of the affine-invariant mean algorithm.
 
         Parameters
         ----------
@@ -470,7 +472,7 @@ class AffineInvariantMeanIteration(Function):
 
 def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
     """
-    Affine-invariant (geometric) mean computed with fixed-point algorithm
+    Affine-invariant (geometric) mean computed with fixed-point algorithm.
 
     Parameters
     ----------
@@ -479,7 +481,7 @@ def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tens
 
     n_iterations : int
         Number of iterations to perform to estimate the geometric mean.
-        Default is 10
+        Default is 5
 
     Returns
     -------
@@ -491,7 +493,7 @@ def AffineInvariantMean(data: torch.Tensor, n_iterations: int = 5) -> torch.Tens
     n_features = data.shape[-1]
     mean = torch.eye(n_features, dtype=data.dtype, device=data.device)
     for it in range(n_iterations):
-        stepsize = 0.95**it
+        stepsize = KARCHER_STEP_DECAY**it
         mean = AffineInvariantMeanIteration.apply(mean, data, stepsize)
     return mean
 
@@ -536,14 +538,12 @@ def affine_invariant_std_scalar(
 
 
 class AffineInvariantStdScalar(Function):
-    """
-    Scalar standard deviation with respect to the affine-invariant distance
-    """
+    """Scalar standard deviation with respect to the affine-invariant distance."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the scalar standard deviation with respect to the affine-invariant distance
+        Forward pass of the affine-invariant scalar standard deviation.
 
         Parameters
         ----------
@@ -581,7 +581,7 @@ class AffineInvariantStdScalar(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the scalar standard deviation with respect to the affine-invariant distance
+        Backward pass of the log-Euclidean scalar standard deviation.
 
         Parameters
         ----------
@@ -886,7 +886,7 @@ class AffineInvariantExp(Function):
             eigvecs_base,
             eigvals_trans,
             eigvecs_trans,
-            base,
+            _base,
             tangent,
         ) = ctx.saved_tensors
 
@@ -1023,8 +1023,9 @@ def affine_invariant_log(base: torch.Tensor, point: torch.Tensor) -> torch.Tenso
 # -------------------------------------------
 def affine_invariant_projx(data: torch.Tensor) -> torch.Tensor:
     """
-    Project matrices onto the SPD manifold by symmetrizing and
-    clamping eigenvalues to [1e-8, 1e8] (as in the reference RResNet
+    Project matrices onto the SPD manifold.
+
+    Symmetrize and clamp the eigenvalues to [1e-8, 1e8] (as in the reference RResNet
     implementation, which also bounds the conditioning).
 
     Parameters
@@ -1039,5 +1040,5 @@ def affine_invariant_projx(data: torch.Tensor) -> torch.Tensor:
     """
     data = symmetrize(data)
     eigvals, eigvecs = torch.linalg.eigh(data)
-    eigvals = eigvals.clamp(min=1e-8, max=1e8)
+    eigvals = eigvals.clamp(min=SPD_EIGVAL_FLOOR, max=SPD_EIGVAL_CEILING)
     return (eigvecs * eigvals.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)

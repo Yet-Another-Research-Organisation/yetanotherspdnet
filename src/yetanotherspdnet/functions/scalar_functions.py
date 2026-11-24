@@ -1,4 +1,4 @@
-"""Scalar functions applied element-wise to eigenvalues: sqrt, inv_sqrt, softplus, and derivatives."""
+"""Scalar functions applied element-wise to eigenvalues, and their derivatives."""
 
 import math
 
@@ -7,7 +7,7 @@ import torch
 
 def sqrt_derivative(x: torch.Tensor) -> torch.Tensor:
     r"""
-    Derivative of the square root function.
+    Compute the derivative of the square root function.
 
     .. math:: \frac{d}{dx}\sqrt{x} = \frac{1}{2\sqrt{x}}
 
@@ -45,7 +45,7 @@ def inv_sqrt(x: torch.Tensor) -> torch.Tensor:
 
 def inv_sqrt_derivative(x: torch.Tensor) -> torch.Tensor:
     r"""
-    Derivative of the inverse of the square root.
+    Compute the derivative of the inverse of the square root.
 
     .. math:: \frac{d}{dx} x^{-1/2} = -\frac{1}{2} x^{-3/2}
 
@@ -83,7 +83,7 @@ def inv(x: torch.Tensor) -> torch.Tensor:
 
 def inv_derivative(x: torch.Tensor) -> torch.Tensor:
     """
-    Derivative of inverse function
+    Compute the derivative of the inverse function.
 
     Parameters
     ----------
@@ -125,7 +125,7 @@ def scaled_softplus(x: torch.Tensor) -> torch.Tensor:
 
 def scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
     r"""
-    Derivative of the scaled SoftPlus function.
+    Compute the derivative of the scaled SoftPlus function.
 
     .. math:: f'(x) = \sigma(x \ln 2)
 
@@ -167,7 +167,7 @@ def inv_scaled_softplus(x: torch.Tensor) -> torch.Tensor:
 
 def inv_scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
     r"""
-    Derivative of the inverse of the scaled SoftPlus function.
+    Compute the derivative of the inverse of the scaled SoftPlus function.
 
     .. math:: (f^{-1})'(x) = \frac{1}{1 - 2^{-x}}
 
@@ -188,7 +188,7 @@ def pow_exponent_derivative(
     x: torch.Tensor, exponent: float | torch.Tensor
 ) -> torch.Tensor:
     r"""
-    Derivative of the power function with respect to its exponent.
+    Compute the derivative of the power function with respect to its exponent.
 
     .. math:: \frac{\partial}{\partial t} x^{t} = x^{t} \log x
 

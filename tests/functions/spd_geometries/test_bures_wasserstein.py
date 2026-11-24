@@ -438,7 +438,7 @@ class TestDegenerateSafeGradients:
         rhs = _symmetrize(
             torch.randn(3, n, n, device=device, dtype=dtype, generator=generator)
         )
-        fun = lambda b, v: bw.LyapunovSolveSPD.apply(_symmetrize(b), _symmetrize(v))  # noqa: E731
+        fun = lambda b, v: bw.LyapunovSolveSPD.apply(_symmetrize(b), _symmetrize(v))
         inputs = (base.clone().requires_grad_(), rhs.clone().requires_grad_())
         assert torch.autograd.gradcheck(fun, inputs)
 
@@ -455,7 +455,7 @@ class TestDegenerateSafeGradients:
         tangent = _symmetrize(
             torch.randn(3, n, n, device=device, dtype=dtype, generator=generator)
         )
-        fun = lambda s, g: bw.ParallelTransportFromIdentityBW.apply(  # noqa: E731
+        fun = lambda s, g: bw.ParallelTransportFromIdentityBW.apply(
             _symmetrize(s), _symmetrize(g)
         )
         inputs = (tangent.clone().requires_grad_(), target.clone().requires_grad_())

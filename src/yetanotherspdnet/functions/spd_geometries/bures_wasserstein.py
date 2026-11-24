@@ -172,8 +172,7 @@ def _sum_to_shape(grad: torch.Tensor, shape: torch.Size) -> torch.Tensor:
 
 class LyapunovSolveSPD(Function):
     r"""
-    Solution :math:`Z` of :math:`BZ + ZB = V` for SPD :math:`B`, with an
-    implicit backward.
+    Solve the Lyapunov equation BZ + ZB = V, with an implicit backward.
 
     Differentiating the equation gives :math:`B\,dZ + dZ\,B = dV - (dB\,Z +
     Z\,dB)`, so with :math:`W` solving :math:`BW + WB = \bar Z`:
@@ -186,6 +185,8 @@ class LyapunovSolveSPD(Function):
     @staticmethod
     def forward(ctx, base: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
         """
+        Solve :math:`BZ + ZB = V`.
+
         Parameters
         ----------
         base : torch.Tensor of shape (..., n_features, n_features)
@@ -207,6 +208,7 @@ class LyapunovSolveSPD(Function):
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Gradients with respect to the base B and the right-hand sides V."""
         eigvals, eigvecs, solution = ctx.saved_tensors
         adjoint = solve_sylvester_SPD(eigvals, eigvecs, grad_output)
         solution_t = solution.transpose(-2, -1)
@@ -325,8 +327,10 @@ def bures_wasserstein_parallel_transport_from_identity(
 
 class ParallelTransportFromIdentityBW(Function):
     r"""
-    BW transport from the identity, :math:`\Gamma_{I\to G} = \mathcal{A}_G^{1/2}`,
-    with a backward that stays finite for repeated eigenvalues of :math:`G`.
+    Bures-Wasserstein parallel transport from the identity.
+
+    :math:`\Gamma_{I\to G} = \mathcal{A}_G^{1/2}`, with a backward that stays finite for
+    repeated eigenvalues of :math:`G`.
 
     :math:`\mathcal{A}_G(S) = (GS + SG)/2` is the Lyapunov operator; in the
     eigenbasis :math:`u_i` of :math:`G` it is diagonal with entries
@@ -349,6 +353,8 @@ class ParallelTransportFromIdentityBW(Function):
     @staticmethod
     def forward(ctx, tangent_vec: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
+        Transport tangent vectors from the identity to *target*.
+
         Parameters
         ----------
         tangent_vec : torch.Tensor of shape (..., n_features, n_features)
@@ -375,6 +381,7 @@ class ParallelTransportFromIdentityBW(Function):
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Gradients with respect to the tangent vectors and the target."""
         eigvecs, scale, rotated = ctx.saved_tensors
         grad_rot = eigvecs.transpose(-2, -1) @ grad_output @ eigvecs
         grad_tangent = eigvecs @ (scale * grad_rot) @ eigvecs.transpose(-2, -1)
@@ -551,10 +558,7 @@ def _bures_wasserstein_std_scalar(
 
 
 class BuresWassersteinStdScalar(Function):
-    """
-    Scalar standard deviation under the Bures-Wasserstein distance
-    (manual backward).
-    """
+    """Scalar standard deviation under the Bures-Wasserstein distance (manual backward)."""
 
     @staticmethod
     def forward(
@@ -563,7 +567,7 @@ class BuresWassersteinStdScalar(Function):
         reference_point: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Forward pass of the BW scalar standard deviation
+        Forward pass of the BW scalar standard deviation.
 
         Parameters
         ----------
@@ -598,7 +602,7 @@ class BuresWassersteinStdScalar(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the BW scalar standard deviation
+        Backward pass of the BW scalar standard deviation.
 
         Uses:
             d(d_BW^2(B,X)) / dX = I - B^{1/2} (B^{1/2} X B^{1/2})^{-1/2} B^{1/2}

@@ -2206,7 +2206,7 @@ def _gbwbn_reference(data, M, G, theta, shift, eps=1e-5):
     B_sqrt, B_isqrt = _spectral(B, torch.sqrt), _spectral(B, lambda s: s.rsqrt())
     # variance of the deformed metric: d_BW^2(B, X_i) / theta^2
     cross = _spectral(B_sqrt @ X @ B_sqrt, torch.sqrt)
-    tr = lambda A: torch.diagonal(A, dim1=-2, dim2=-1).sum(-1)  # noqa: E731
+    tr = lambda A: torch.diagonal(A, dim1=-2, dim2=-1).sum(-1)
     var = (tr(B) + tr(X) - 2 * tr(cross)).mean() / theta**2
     # centering: Log_B, transport B -> I, Exp_I   (LogG, pal1)
     C = B_sqrt @ cross @ B_isqrt

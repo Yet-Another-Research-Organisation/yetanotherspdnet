@@ -36,7 +36,7 @@ class SampleCovariance(nn.Module):
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the SampleCovariance layer
+        Forward pass of the SampleCovariance layer.
 
         Parameters
         ----------
@@ -51,6 +51,7 @@ class SampleCovariance(nn.Module):
         return sample_covariance(data, self.assume_centered)
 
     def __repr__(self) -> str:
+        """Return the representation of the module (its hyper-parameters)."""
         return f"SampleCovariance(assume_centered={self.assume_centered})"
 
 
@@ -125,7 +126,7 @@ class MEstimation(nn.Module):
         self, data: torch.Tensor, init: torch.Tensor | None = None
     ) -> torch.Tensor:
         """
-        Forward pass of the MEstimation layer
+        Forward pass of the MEstimation layer.
 
         Parameters
         ----------
@@ -155,6 +156,7 @@ class MEstimation(nn.Module):
         return MEstimator.apply(*args)
 
     def __repr__(self) -> str:
+        """Return the representation of the module (its hyper-parameters)."""
         return (
             f"MEstimation(n_iterations={self.n_iterations}, tol={self.tol}, "
             f"normalize={self.normalize}, use_autograd={self.use_autograd})"

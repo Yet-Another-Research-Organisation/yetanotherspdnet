@@ -31,8 +31,7 @@ def geometric_euclidean_harmonic_curve(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
     r"""
-    Curve corresponding to the geometric mean of the Euclidean geodesic and
-    the harmonic curve (the GAH — Geometric-Arithmetic-Harmonic — curve).
+    GAH curve: geometric mean of the Euclidean geodesic and the harmonic curve.
 
     .. math::
 
@@ -78,7 +77,7 @@ def GeometricEuclideanHarmonicCurve(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
     """
-    Curve corresponding to the geometric mean of the Euclidean geodesic and the harmonic curve
+    GAH curve: geometric mean of the Euclidean geodesic and the harmonic curve.
 
     Parameters
     ----------
@@ -112,8 +111,7 @@ def geometric_arithmetic_harmonic_mean(
     data: torch.Tensor,
 ) -> torch.Tensor:
     r"""
-    Geometric mean of the arithmetic and harmonic means of a batch of SPD
-    matrices (GAH mean).
+    GAH mean: geometric mean of the arithmetic and harmonic means of a batch.
 
     .. math::
 
@@ -129,9 +127,6 @@ def geometric_arithmetic_harmonic_mean(
     ----------
     data : torch.Tensor of shape (..., n_features, n_features)
         Batch of SPD matrices. The mean is computed along ... axes
-
-    return_arithmetic_harmonic : bool, optional
-        Whether to also return arithmetic and harmonic means (for adptative mean update reasons), by default False
 
     Returns
     -------
@@ -149,7 +144,7 @@ def GeometricArithmeticHarmonicMean(
     data: torch.Tensor,
 ) -> torch.Tensor:
     """
-    Geometric mean of the arithmetic and harmonic means
+    Geometric mean of the arithmetic and harmonic means.
 
     Parameters
     ----------
@@ -175,8 +170,9 @@ def symmetrized_kullback_leibler_std_scalar(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> torch.Tensor:
     r"""
-    Scalar standard deviation with respect to the symmetrized
-    Kullback-Leibler (Jeffreys) divergence.
+    Scalar standard deviation with respect to the Jeffreys divergence.
+
+    The Jeffreys divergence is the symmetrized Kullback-Leibler divergence.
 
     .. math::
 
@@ -225,14 +221,12 @@ def _symmetrized_kullback_leibler_std_scalar(
 
 
 class SymmetrizedKullbackLeiblerStdScalar(Function):
-    """
-    Scalar standard deviation with respect to the symmetrized Kullback-Leibler divergence
-    """
+    """Scalar standard deviation with respect to the symmetrized KL divergence."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the scalar standard deviation with respect to the symmetrized Kullback-Leibler divergence
+        Forward pass of the symmetrized KL scalar standard deviation.
 
         Parameters
         ----------
@@ -260,7 +254,7 @@ class SymmetrizedKullbackLeiblerStdScalar(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the scalar standard deviation with respect to the symmetrized Kullback-Leibler divergence
+        Backward pass of the symmetrized KL scalar standard deviation.
 
         Parameters
         ----------
@@ -317,8 +311,10 @@ def adaptive_geometric_arithmetic_harmonic_mean(
     data: torch.Tensor, t: float | torch.Tensor
 ) -> torch.Tensor:
     r"""
-    Adaptive geometric mean (AdaptiveGAH) of the arithmetic and harmonic
-    means of a batch of SPD matrices, with a learnable parameter :math:`t`.
+    Adaptive GAH mean, with a learnable position t on the geodesic.
+
+    Point at :math:`t` on the affine-invariant geodesic from the harmonic to the
+    arithmetic mean of a batch of SPD matrices.
 
     .. math::
 
@@ -356,8 +352,7 @@ def AdaptiveGeometricArithmeticHarmonicMean(
     data: torch.Tensor, t: torch.Tensor
 ) -> torch.Tensor:
     """
-    Adaptive geometric mean of the arithmetic and harmonic means with learnable t
-    (using custom autograd Function for efficient gradients)
+    Adaptive GAH mean, with a learnable position t (manual backward).
 
     Parameters
     ----------

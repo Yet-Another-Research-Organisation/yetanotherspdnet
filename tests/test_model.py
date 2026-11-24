@@ -721,8 +721,8 @@ class TestSPDnet:
 
     @pytest.mark.parametrize("invalid_vec_type", ["invalid", "vector", ""])
     def test_invalid_vec_type(self, invalid_vec_type, device, dtype, generator):
-        """Test that invalid vec_type raises AssertionError"""
-        with pytest.raises(AssertionError, match="vec_type must be"):
+        """Test that invalid vec_type raises ValueError"""
+        with pytest.raises(ValueError, match="vec_type must be"):
             SPDnet(
                 input_dim=10,
                 hidden_layers_size=[8],
@@ -992,7 +992,7 @@ class TestGBWBNRResNet:
         """Invalid vec_type raises."""
         from yetanotherspdnet.model import GBWBNRResNet
 
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError):
             GBWBNRResNet(
                 input_dim=10,
                 hidden_dim=5,
@@ -1205,7 +1205,7 @@ class TestRResNet:
         """Mismatched hidden_layers_size and n_residual_blocks raises."""
         from yetanotherspdnet.model import RResNet
 
-        with pytest.raises(AssertionError, match="same length"):
+        with pytest.raises(ValueError, match="same length"):
             RResNet(
                 input_dim=10,
                 hidden_layers_size=[5, 3],
@@ -1257,7 +1257,7 @@ class TestRResNet:
         """Invalid vec_type raises."""
         from yetanotherspdnet.model import RResNet
 
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError):
             RResNet(
                 input_dim=10,
                 hidden_layers_size=[5],

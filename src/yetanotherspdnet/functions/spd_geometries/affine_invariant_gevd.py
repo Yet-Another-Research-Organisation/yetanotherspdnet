@@ -1,6 +1,14 @@
+"""Affine-invariant geometry through generalized eigendecompositions (GEVD backend).
+
+Geodesic, exponential and logarithm maps, Karcher mean and parallel transport
+of the affine-invariant geometry, computed from the generalized
+eigendecomposition of a pair (A, B) instead of square roots of B.
+"""
+
 import torch
 from torch.autograd import Function
 
+from yetanotherspdnet.functions._constants import KARCHER_STEP_DECAY
 from yetanotherspdnet.functions.scalar_functions import inv, sqrt_derivative
 from yetanotherspdnet.functions.spd_geometries.euclidean import (
     ArithmeticMean,
@@ -25,8 +33,9 @@ def affine_invariant_geodesic_gevd(
     point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Affine-invariant geodesic:
-    point1^{1/2} ( point1^{-1/2} point2 point1^{-1/2} )^t point1^{1/2}
+    Affine-invariant geodesic, through a generalized eigendecomposition.
+
+    point1^{1/2} (point1^{-1/2} point2 point1^{-1/2})^t point1^{1/2}
 
     Parameters
     ----------
@@ -64,16 +73,14 @@ def affine_invariant_geodesic_gevd(
 
 
 class AffineInvariantGeodesicGEVD(Function):
-    """
-    Affine-invariant geodesic between two batches of SPD matrices
-    """
+    """Affine-invariant geodesic between two batches of SPD matrices."""
 
     @staticmethod
     def forward(
         ctx, point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
     ):
         """
-        Forward pass of the affine-invariant geodesic between two batches of SPD matrices
+        Forward pass of the affine-invariant geodesic.
 
         Parameters
         ----------
@@ -103,7 +110,7 @@ class AffineInvariantGeodesicGEVD(Function):
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, None]:
         """
-        Backward pass of the affine-invariant geodesic
+        Backward pass of the affine-invariant geodesic.
 
         Parameters
         ----------
@@ -150,7 +157,7 @@ def affine_invariant_exponential_gevd(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Affine-invariant exponential mapping
+    Affine-invariant exponential mapping.
 
     Parameters
     ----------
@@ -184,14 +191,12 @@ def affine_invariant_exponential_gevd(
 
 
 class AffineInvariantExponentialGEVD(Function):
-    """
-    Affine-invariant exponential mapping
-    """
+    """Affine-invariant exponential mapping."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the Affine-invariant exponential mapping
+        Forward pass of the Affine-invariant exponential mapping.
 
         Parameters
         ----------
@@ -218,7 +223,7 @@ class AffineInvariantExponentialGEVD(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the affine-invariant logarithm mapping
+        Backward pass of the affine-invariant exponential mapping.
 
         Parameters
         ----------
@@ -255,7 +260,7 @@ def affine_invariant_logarithm_gevd(
     data: torch.Tensor, reference_point: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Affine-invariant logarithm mapping
+    Affine-invariant logarithm mapping.
 
     Parameters
     ----------
@@ -289,14 +294,12 @@ def affine_invariant_logarithm_gevd(
 
 
 class AffineInvariantLogarithmGEVD(Function):
-    """
-    Affine-invariant logarithm mapping
-    """
+    """Affine-invariant logarithm mapping."""
 
     @staticmethod
     def forward(ctx, data: torch.Tensor, reference_point: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the Affine-invariant logarithm mapping
+        Forward pass of the Affine-invariant logarithm mapping.
 
         Parameters
         ----------
@@ -323,7 +326,7 @@ class AffineInvariantLogarithmGEVD(Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Backward pass of the affine-invariant logarithm mapping
+        Backward pass of the affine-invariant logarithm mapping.
 
         Parameters
         ----------
@@ -360,7 +363,7 @@ def affine_invariant_mean_gevd(
     data: torch.Tensor, n_iterations: int = 5
 ) -> torch.Tensor:
     """
-    Affine-invariant (geometric) mean computed with fixed-point algorithm
+    Affine-invariant (geometric) mean computed with fixed-point algorithm.
 
     Parameters
     ----------
@@ -384,14 +387,14 @@ def affine_invariant_mean_gevd(
     for it in range(n_iterations):
         log_data = affine_invariant_logarithm_gevd(data, mean)[0]
         log_mean = arithmetic_mean(log_data)
-        stepsize = 0.95**it
+        stepsize = KARCHER_STEP_DECAY**it
         mean = affine_invariant_exponential_gevd(stepsize * log_mean, mean)[0]
     return mean
 
 
 def AffineInvariantMeanGEVD(data: torch.Tensor, n_iterations: int = 5) -> torch.Tensor:
     """
-    Affine-invariant (geometric) mean computed with fixed-point algorithm
+    Affine-invariant (geometric) mean computed with fixed-point algorithm.
 
     Parameters
     ----------
@@ -413,7 +416,7 @@ def AffineInvariantMeanGEVD(data: torch.Tensor, n_iterations: int = 5) -> torch.
     for it in range(n_iterations):
         log_data = AffineInvariantLogarithmGEVD.apply(data, mean)
         log_mean = ArithmeticMean.apply(log_data)
-        stepsize = 0.95**it
+        stepsize = KARCHER_STEP_DECAY**it
         mean = AffineInvariantExponentialGEVD.apply(stepsize * log_mean, mean)
     return mean
 
@@ -462,9 +465,7 @@ def affine_invariant_parallel_transport_transformation_gevd(
 
 
 class AffineInvariantParallelTransportTransformationGEVD(Function):
-    """
-    Affine-invariant transformation matrix for parallel transport
-    """
+    """Affine-invariant transformation matrix for parallel transport."""
 
     @staticmethod
     def forward(

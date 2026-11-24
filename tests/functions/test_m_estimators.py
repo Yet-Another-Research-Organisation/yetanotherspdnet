@@ -143,11 +143,11 @@ class TestMEstimator:
     def test_gradcheck(self, estimator, use_autograd, device, dtype, generator):
         data = _samples(1, 10, 3, device, dtype, generator).requires_grad_(True)
         if estimator == "tyler":
-            fun = lambda x: me.tyler_estimator(  # noqa: E731
+            fun = lambda x: me.tyler_estimator(
                 x, n_iterations=300, tol=1e-13, use_autograd=use_autograd
             )
         else:
-            fun = lambda x: me.student_estimator(  # noqa: E731
+            fun = lambda x: me.student_estimator(
                 x, nu=3.0, n_iterations=300, tol=1e-13, use_autograd=use_autograd
             )
         assert torch.autograd.gradcheck(fun, (data,), atol=1e-6)

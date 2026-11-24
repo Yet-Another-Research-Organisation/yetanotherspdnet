@@ -146,18 +146,34 @@ select = [
     "SIM",    # flake8-simplify
     "NPY",    # NumPy-specific rules
     "T20",    # flake8-print: no print() in library code
+    "D",      # pydocstyle (numpy convention, see below)
+    "N",      # pep8-naming
+    "PLR",    # pylint refactor
+    "RUF",    # ruff-specific rules
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
     "B008",   # do not perform function calls in argument defaults
     "B905",   # zip without explicit strict parameter
     "E731",   # Lambda functions
+    "PLR0913", "PLR0917",  # layers and models expose every hyper-parameter as an argument
+    "PLR2004",  # magic values: comparisons are ndim == 2 (a single matrix) checks
 ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
-"tests/*" = ["ARG", "S101"]  # Allow assert statements in tests
-"docs/_diagrams/*" = ["T20"]  # command-line script reporting the files it writes
+# mathematical notation: matrices are upper case (X, G_inv), SPD / BW suffixes,
+# and the manual-backward twin of an operation is its CamelCase name
+# (AffineInvariantMean, a function chaining torch.autograd.Function classes)
+"src/**" = ["N802", "N803", "N806", "N816"]
+"src/yetanotherspdnet/model.py" = ["PLR0915"]  # constructors building every layer
+# tests: test names / docstrings are not API documentation
+"tests/*" = ["ARG", "S101", "D", "N", "PLR"]
+"docs/*" = ["D", "N"]
+"docs/_diagrams/*" = ["T20", "D", "N", "PLR", "RUF001"]  # script printing the files it writes; typographic dashes in figure titles
 
 [tool.ruff.lint.isort]
 known-first-party = ["yetanotherspdnet"]
