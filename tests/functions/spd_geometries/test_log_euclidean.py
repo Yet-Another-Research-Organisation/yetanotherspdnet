@@ -1084,3 +1084,59 @@ class TestLogEuclideanParallelTransportSPD:
         assert torch.isfinite(xi_manual.grad).all()
         assert torch.isfinite(xi_auto.grad).all()
         assert_close(xi_manual.grad, xi_auto.grad)
+
+
+class TestLogEuclideanExpLog:
+    """Log-Euclidean exponential and logarithm maps."""
+
+    def test_inverse_of_each_other(self, device, dtype, generator):
+        X = random_SPD(
+            5, n_matrices=4, cond=100, device=device, dtype=dtype, generator=generator
+        )
+        Y = random_SPD(
+            5, n_matrices=4, cond=100, device=device, dtype=dtype, generator=generator
+        )
+        V = log_euclidean.log_euclidean_log(X, Y)
+        assert is_symmetric(V)
+        assert_close(log_euclidean.log_euclidean_exp(X, V), Y)
+        assert_close(
+            log_euclidean.log_euclidean_log(X, log_euclidean.log_euclidean_exp(X, V)), V
+        )
+
+    def test_at_identity(self, device, dtype, generator):
+        V = spd_linalg.symmetrize(
+            torch.randn(3, 5, 5, device=device, dtype=dtype, generator=generator)
+        )
+        identity = torch.eye(5, device=device, dtype=dtype).expand_as(V)
+        assert_close(
+            log_euclidean.log_euclidean_exp(identity, V), torch.linalg.matrix_exp(V)
+        )
+
+    def test_residual_translation(self, device, dtype, generator):
+        # exp(log X + V) (the residual blocks) is Exp^LE_X(Dexp_{log X}[V])
+        X = random_SPD(
+            5, n_matrices=3, cond=100, device=device, dtype=dtype, generator=generator
+        )
+        V = 0.3 * spd_linalg.symmetrize(
+            torch.randn(3, 5, 5, device=device, dtype=dtype, generator=generator)
+        )
+        eigvals, eigvecs = torch.linalg.eigh(X)
+        tangent = spd_linalg.eigh_operation_grad(
+            V, torch.log(eigvals), eigvecs, torch.exp, torch.exp
+        )
+        translated = spd_linalg.expm_symmetric(spd_linalg.logm_SPD(X)[0] + V)[0]
+        assert_close(log_euclidean.log_euclidean_exp(X, tangent), translated)
+
+    def test_geodesic(self, device, dtype, generator):
+        # Exp^LE_X(t Log^LE_X(Y)) is the log-Euclidean geodesic
+        X = random_SPD(
+            4, n_matrices=2, cond=50, device=device, dtype=dtype, generator=generator
+        )
+        Y = random_SPD(
+            4, n_matrices=2, cond=50, device=device, dtype=dtype, generator=generator
+        )
+        V = log_euclidean.log_euclidean_log(X, Y)
+        assert_close(
+            log_euclidean.log_euclidean_exp(X, 0.3 * V),
+            log_euclidean.log_euclidean_geodesic(X, Y, 0.3),
+        )

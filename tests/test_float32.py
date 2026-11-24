@@ -61,6 +61,28 @@ LAYERS = {
         1e-4,
         2e-2,
     ),
+    # options of the residual blocks (see the residual guide)
+    **{
+        f"ResidualBlock[{name}]": (
+            lambda dt, kw=kw: ResidualBlock(
+                N, dtype=dt, generator=torch.Generator().manual_seed(0), **kw
+            ),
+            fwd_tol,
+            bwd_tol,
+        )
+        for name, kw, fwd_tol, bwd_tol in [
+            ("eigenbasis", {"basis": "eigenbasis"}, 1e-4, 3e-3),
+            ("step=clip", {"step": "clip"}, 1e-4, 3e-3),
+            ("branch_pt", {"residual": "branch_pt"}, 1e-4, 3e-3),
+            ("congruence", {"residual": "congruence"}, 1e-4, 3e-3),
+            (
+                "log_euclidean,le_output=log",
+                {"metric": "log_euclidean", "le_output": "log"},
+                1e-4,
+                2e-2,
+            ),
+        ]
+    },
     "SPDnet": (
         lambda dt: SPDnet(
             N,
@@ -106,6 +128,9 @@ for _mt in MEAN_TYPES:
 MAX_KAPPA = {
     "BatchNormSPDMeanScalarVariance[bures_wasserstein]": 1e2,
     "GBWBNRResNet": 1e2,
+    # the transport whitens the branch output by X: N = X^{-1/2} Z X^{-1/2}
+    # has condition number up to kappa(X) kappa(Z)
+    "ResidualBlock[branch_pt]": 1e2,
 }
 
 

@@ -3,8 +3,9 @@
 `yetanotherspdnet.nn.rresnet_layers` — the building blocks of `RResNet` and
 `GBWBNRResNet`. `SpectralVectorField` computes a tangent vector from the
 spectrum of each matrix; `ResidualBlock` moves the matrix along it with an
-affine-invariant (unit step) or log-Euclidean exponential map. See
-{doc}`../user_guide/residual`.
+affine-invariant (unit step) or log-Euclidean step, from two
+eigendecompositions (`FlooredEighFunctions` in
+{doc}`spd_linalg`). See {doc}`../user_guide/residual`.
 
 ```{eval-rst}
 .. currentmodule:: yetanotherspdnet.nn.rresnet_layers
@@ -23,7 +24,7 @@ affine-invariant (unit step) or log-Euclidean exponential map. See
 
 ```{eval-rst}
 .. autoclass:: yetanotherspdnet.nn.rresnet_layers.SpectralVectorField
-   :members: forward, register_optimizer_hook
+   :members: forward, spectrum, from_spectrum, register_optimizer_hook
 ```
 
 The affine-invariant norm used to normalize the step,

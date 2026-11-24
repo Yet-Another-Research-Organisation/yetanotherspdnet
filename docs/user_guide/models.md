@@ -1,6 +1,6 @@
 # Models and their options
 
-`SPDnet`, `RResNet` and `GBWBNRResNet` take 28 to 37 constructor arguments,
+`SPDnet`, `RResNet` and `GBWBNRResNet` take 30 to 39 constructor arguments,
 because they expose every option of the layers they contain. Most can be
 left at their default. This page groups them by role; the
 {doc}`../reference/models` page lists them one by one.
@@ -36,7 +36,7 @@ Shared by the three models unless noted.
 | **Batch normalization: statistics** | `batchnorm_momentum`, `batchnorm_norm_strategy`, `batchnorm_minibatch_mode`, `batchnorm_minibatch_momentum`, `batchnorm_minibatch_maxstep` | Running statistics and smoothing of the batch mean. |
 | **Batch normalization: bias** | `batchnorm_parametrization`, `batchnorm_parametrization_mode`, `batchnorm_n_steps_ref_update` | How the SPD bias stays SPD. |
 | **GBWBN** | `batchnorm_bw_options` | `{"bw_theta": 0.5, "bw_batch_stats_grad": True}` by default ({doc}`batchnorm`). |
-| **Residual blocks** (RResNet, GBWBNRResNet) | `spectrum_type`, `spectrum_hidden_dim`, `spectrum_n_layers`, `spectrum_kernel_size`, `stiefel_parametrization_mode`, `stiefel_n_steps_ref_update`, `residual_metric` | The spectral vector field and the exponential map ({doc}`residual`). |
+| **Residual blocks** (RResNet, GBWBNRResNet) | `spectrum_type`, `spectrum_hidden_dim`, `spectrum_n_layers`, `spectrum_kernel_size`, `stiefel_parametrization_mode`, `stiefel_n_steps_ref_update`, `residual_metric`, `residual_options` | The spectral vector field and the exponential map; `residual_options` passes the other options of `ResidualBlock` (step length, eigenbasis field, branch with transport, log output) ({doc}`residual`). |
 | **Head** | `use_logeig`, `vec_type`, `softmax` | `vec_type="vech"` halves the size of the linear layer. |
 | **Numerics** | `use_autograd`, `dtype`, `device`, `generator` | `use_autograd` takes a bool or a dict per layer type (`"bimap"`, `"reeig"`, `"logeig"`, `"batchnorm"`, `"vec"`, `"residual"`) ({doc}`numerics`). |
 

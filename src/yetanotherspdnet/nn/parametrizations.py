@@ -59,6 +59,36 @@ def _parametrization_of(module: nn.Module, tensor_name: str) -> ParametrizationL
     return cast(ParametrizationList, getattr(module.parametrizations, tensor_name))
 
 
+def recenter_dynamic_parametrization(module: nn.Module, tensor_name: str) -> None:
+    """
+    Move the reference point of a dynamic parametrization to the current value.
+
+    Used by the post-step optimizer hooks of the layers with
+    ``parametrization_mode="dynamic"`` (BiMap, SpectralVectorField): the
+    reference point becomes the value of the parametrized tensor *after* the
+    optimizer step, and the unconstrained tangent vector (``.original``) is
+    reset to zero, so that the parametrized tensor does not move (it was
+    already at the reference point: the retraction of a zero tangent vector
+    is the reference point itself).
+
+    Parameters
+    ----------
+    module : nn.Module
+        Module whose ``tensor_name`` carries a single parametrization with an
+        ``update_reference_point(value)`` method
+        (:class:`StiefelAdaptiveParametrization`)
+    tensor_name : str
+        Name of the parametrized tensor
+    """
+    parametrization_list = _parametrization_of(module, tensor_name)
+    with torch.no_grad():
+        current = getattr(module, tensor_name).detach().clone()
+        cast(
+            StiefelAdaptiveParametrization, parametrization_list[0]
+        ).update_reference_point(current)
+        parametrization_list.original.zero_()
+
+
 class ScalarSoftPlusParametrization(nn.Module):
     """Parametrization constraining a scalar to be positive with a softplus."""
 
@@ -599,8 +629,18 @@ class StiefelAdaptiveParametrization(nn.Module):
             weight - self.reference_point, self.reference_point
         )
 
-    def update_reference_point(self) -> None:
-        """Update reference point with last Stiefel value."""
+    def update_reference_point(self, value: torch.Tensor | None = None) -> None:
+        """
+        Move the reference point.
+
+        Parameters
+        ----------
+        value : torch.Tensor of shape (n_in, n_out) or None, optional
+            New reference point (a point of the Stiefel manifold). Default is
+            None: the value of the last training forward.
+        """
+        if value is not None:
+            self.last_stiefel_value.copy_(value)
         self.reference_point.copy_(self.last_stiefel_value)
 
     def __repr__(self) -> str:

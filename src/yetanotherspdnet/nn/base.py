@@ -7,7 +7,7 @@ from torch.nn.utils.parametrize import register_parametrization
 
 from yetanotherspdnet.nn.parametrizations import (
     StiefelAdaptiveParametrization,
-    _parametrization_of,
+    recenter_dynamic_parametrization,
 )
 
 from ..functions.dispatch import select_path, warn_autograd_only
@@ -215,13 +215,9 @@ class BiMap(nn.Module):
             and self.is_dynamic
             and self.current_ref_step >= self.n_steps_ref_update
         ):
-            with torch.no_grad():
-                # update reference point
-                self.stiefel_parametrization.update_reference_point()
-                # reset tangent vector to zero
-                _parametrization_of(self, "weight").original.zero_()
-                # reset counter
-                self.current_ref_step = 0
+            # reference point <- weight after the step, tangent vector <- 0
+            recenter_dynamic_parametrization(self, "weight")
+            self.current_ref_step = 0
 
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """

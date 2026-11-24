@@ -22,9 +22,11 @@ from yetanotherspdnet.functions.spd_geometries import (
     log_euclidean,
 )
 from yetanotherspdnet.model import GBWBNRResNet, RResNet, SPDnet
+from yetanotherspdnet.nn.base import BiMap
 from yetanotherspdnet.nn.batchnorm import BatchNormSPDMeanScalarVariance
 from yetanotherspdnet.nn.rresnet_layers import SpectralVectorField
 from yetanotherspdnet.random.spd import random_SPD
+from yetanotherspdnet.random.stiefel import random_stiefel
 
 
 DTYPE = torch.float64
@@ -106,6 +108,44 @@ def test_minibatch_std_uses_momentum_schedule(minibatch_mode, generator):
 # ---------------------------------------------------------------------------
 # dynamic RResNet hook: wrong signature, and Q jumped after a reference update
 # ---------------------------------------------------------------------------
+def _check_dynamic_update(module, name, make_input, n_steps):
+    """Train with a real optimizer; check the tensor across reference updates."""
+    module.train()
+    optimizer = torch.optim.SGD(module.parameters(), lr=0.1)
+    after_step = {}
+
+    # registered before the module hook, so it runs between step and recentring
+    def record(_optimizer, *_args, **_kwargs):
+        with torch.no_grad():
+            after_step["value"] = getattr(module, name).detach().clone()
+
+    optimizer.register_step_post_hook(record)
+    module.register_optimizer_hook(optimizer)
+    parametrizations = getattr(module.parametrizations, name)
+    for step in range(1, 5):
+        optimizer.zero_grad()
+        output = module(make_input())
+        before_step = getattr(module, name).detach().clone()
+        # a loss that depends on the orientation (||Q diag(f) Q^T||^2 does not)
+        weights = torch.arange(output[0].numel(), dtype=DTYPE).reshape(output[0].shape)
+        (output * weights).sum().backward()
+        optimizer.step()
+        value = getattr(module, name).detach()
+        # the optimizer moved the tensor
+        assert not torch.allclose(after_step["value"], before_step)
+        if step % n_steps == 0:
+            # reference point = the tensor after the step, tangent vector reset:
+            # the tensor is continuous across the update, and the step is kept
+            assert module.current_ref_step == 0
+            assert_close(parametrizations.original, torch.zeros_like(value))
+            assert_close(parametrizations[0].reference_point, after_step["value"])
+            assert_close(value, after_step["value"])
+        else:
+            assert module.current_ref_step == step % n_steps
+            assert (parametrizations.original != 0).any()
+            assert_close(value, after_step["value"])
+
+
 def test_spectral_vector_field_dynamic_update_with_optimizer(generator):
     vf = SpectralVectorField(
         5,
@@ -114,27 +154,36 @@ def test_spectral_vector_field_dynamic_update_with_optimizer(generator):
         dtype=DTYPE,
         generator=generator,
     )
-    vf.train()
-    optimizer = torch.optim.SGD(vf.parameters(), lr=0.1)
-    vf.register_optimizer_hook(optimizer)
-    original = vf.parametrizations.Q.original
-    for step in range(1, 5):
-        X = random_SPD(5, 8, cond=10, dtype=DTYPE, generator=generator)
-        optimizer.zero_grad()
-        tangent = vf(X)
-        Q_forward = vf.Q.detach().clone()
-        (tangent**2).sum().backward()
-        optimizer.step()
-        if step % 2 == 0:
-            # reference updated to the last Q and tangent vector reset: Q is
-            # continuous across the update
-            assert vf.current_ref_step == 0
-            assert_close(original, torch.zeros_like(original))
-            assert_close(vf.parametrizations.Q[0].reference_point, Q_forward)
-            assert_close(vf.Q, Q_forward)
-        else:
-            assert vf.current_ref_step == 1
-            assert (original != 0).any()
+    _check_dynamic_update(
+        vf, "Q", lambda: random_SPD(5, 8, cond=10, dtype=DTYPE, generator=generator), 2
+    )
+
+
+def test_bimap_dynamic_update_with_optimizer(generator):
+    bimap = BiMap(5, 3, parametrization_mode="dynamic", n_steps_ref_update=2)
+    _check_dynamic_update(
+        bimap,
+        "weight",
+        lambda: random_SPD(5, 8, cond=10, dtype=DTYPE, generator=generator),
+        2,
+    )
+
+
+@pytest.mark.parametrize("mode", ["static", "dynamic"])
+def test_spectral_vector_field_initial_q_is_the_sampled_one(mode):
+    # the Stiefel parametrization had a random reference point of its own, so
+    # the initial Q was a retraction of the sampled one, not the sampled one
+    vf = SpectralVectorField(
+        5,
+        stiefel_parametrization_mode=mode,
+        dtype=DTYPE,
+        generator=torch.Generator().manual_seed(3),
+    )
+    sampled = random_stiefel(
+        5, 5, n_matrices=1, dtype=DTYPE, generator=torch.Generator().manual_seed(3)
+    ).squeeze(0)
+    assert_close(vf.Q, sampled, rtol=0, atol=1e-14)
+    assert_close(vf.parametrizations.Q.original, torch.zeros_like(sampled))
 
 
 # ---------------------------------------------------------------------------

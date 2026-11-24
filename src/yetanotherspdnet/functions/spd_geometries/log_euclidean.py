@@ -1,4 +1,4 @@
-"""Log-Euclidean Riemannian geometry: geodesic, mean, and standard deviation."""
+"""Log-Euclidean Riemannian geometry: geodesic, exp / log maps, mean, std, transport."""
 
 import math
 import warnings
@@ -16,9 +16,11 @@ from yetanotherspdnet.functions.scalar_functions import (
 from ..spd_linalg import (
     ExpmSymmetric,
     LogmSPD,
+    eigh_operation,
     eigh_operation_grad,
     expm_symmetric,
     logm_SPD,
+    symmetric_eigh,
 )
 from .euclidean import (
     ArithmeticMean,
@@ -296,6 +298,87 @@ class LogEuclideanStdScalar(Function):
             zero_where_zero_std(grad_input_data, std_scalar),
             zero_where_zero_std(grad_input_G, std_scalar),
         )
+
+
+# ------------------------------
+# Log-Euclidean exp and log maps
+# ------------------------------
+def log_euclidean_exp(base: torch.Tensor, tangent: torch.Tensor) -> torch.Tensor:
+    r"""
+    Log-Euclidean exponential map on the SPD manifold.
+
+    .. math::
+
+        \mathrm{Exp}^{LE}_X(V) = \exp\big(\log X + D\log_X[V]\big),
+        \qquad
+        D\log_X[V] = U \big(L^{\log}(\lambda) \circ (U^\top V U)\big) U^\top
+
+    with :math:`X = U \operatorname{diag}(\lambda) U^\top` and the
+    Daleckii-Krein matrix :math:`L^{\log}_{ij} = (\log\lambda_i -
+    \log\lambda_j) / (\lambda_i - \lambda_j)` (:math:`1/\lambda_i` on the
+    diagonal). The log-Euclidean metric is the pull-back of the Euclidean one by
+    :math:`\log`, :math:`g_X(V, W) = \langle D\log_X[V], D\log_X[W]
+    \rangle_F`, so its geodesics are straight lines in log coordinates.
+
+    The residual blocks do not use this map: their log-Euclidean step
+    :math:`\exp(\log X + V)` (as the reference RResNet code) is a translation
+    in log coordinates, i.e. :math:`\mathrm{Exp}^{LE}_X(V')` for the tangent
+    vector :math:`V' = D\exp_{\log X}[V]` (:math:`V` read as a displacement of
+    :math:`\log X`). Differentiated by autograd (metric function, no layer
+    uses it).
+
+    Parameters
+    ----------
+    base : torch.Tensor of shape (..., n_features, n_features)
+        SPD base points
+    tangent : torch.Tensor of shape (..., n_features, n_features)
+        Symmetric tangent vectors at *base*
+
+    Returns
+    -------
+    point : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+    """
+    eigvals, eigvecs = symmetric_eigh(base)
+    log_base = eigh_operation(eigvals, eigvecs, torch.log)
+    # D log_X[V]: the Daleckii-Krein operator is self-adjoint, so the backward
+    # kernel of logm applied to V is the differential
+    log_tangent = eigh_operation_grad(tangent, eigvals, eigvecs, torch.log, inv)
+    return expm_symmetric(log_base + log_tangent)[0]
+
+
+def log_euclidean_log(base: torch.Tensor, point: torch.Tensor) -> torch.Tensor:
+    r"""
+    Log-Euclidean logarithmic map on the SPD manifold.
+
+    .. math::
+
+        \mathrm{Log}^{LE}_X(Y) = D\exp_{\log X}\big[\log Y - \log X\big]
+        = U \big(L^{\exp}(\log\lambda) \circ
+          (U^\top (\log Y - \log X) U)\big) U^\top
+
+    the inverse of :func:`log_euclidean_exp` (:math:`L^{\exp}_{ij} =
+    (\lambda_i - \lambda_j) / (\log\lambda_i - \log\lambda_j)`, the
+    elementwise inverse of :math:`L^{\log}`). Differentiated by autograd
+    (metric function).
+
+    Parameters
+    ----------
+    base : torch.Tensor of shape (..., n_features, n_features)
+        SPD base points
+    point : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    Returns
+    -------
+    tangent : torch.Tensor of shape (..., n_features, n_features)
+        Symmetric tangent vectors at *base*
+    """
+    eigvals, eigvecs = symmetric_eigh(base)
+    log_eigvals = torch.log(eigvals)
+    log_base = eigh_operation(log_eigvals, eigvecs, lambda x: x)
+    difference = logm_SPD(point)[0] - log_base
+    return eigh_operation_grad(difference, log_eigvals, eigvecs, torch.exp, torch.exp)
 
 
 # ------------------
