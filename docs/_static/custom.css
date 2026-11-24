@@ -1,7 +1,7 @@
 /* ===========================================================================
    yetanotherspdnet: pydata-sphinx-theme customisation (same design as the
    spdnet-datasets documentation)
-   - brand colour: the orange of the logo;
+   - brand colour: the navy blue of the logo;
    - one accent per section (Getting started, User guide, Numerics, API,
      Development, References), keyed off <body data-section>
      (docs/_templates/layout.html).
@@ -12,9 +12,9 @@
    ========================================================================= */
 
 html[data-theme="light"] {
-  --pst-color-primary: #be542a;          /* logo orange, 4.7:1 on white */
+  --pst-color-primary: #1f4e8c;          /* logo navy, 8.4:1 on white */
   --pst-color-secondary: #2974d0;
-  --pst-color-link: #b04d24;
+  --pst-color-link: #1f5fa8;
   --pst-color-link-hover: #2974d0;
   --spd-surface-raised: #f7f6f3;
   --spd-card-bg: #ffffff;
@@ -22,7 +22,7 @@ html[data-theme="light"] {
   --spd-shadow: 0 1px 2px rgba(20, 20, 20, 0.06), 0 2px 8px rgba(20, 20, 20, 0.05);
   --spd-shadow-hover: 0 8px 24px rgba(20, 20, 20, 0.12);
   --spd-figure-surface: #ffffff;
-  --spd-hero-glow: rgba(235, 104, 52, 0.10);
+  --spd-hero-glow: rgba(31, 78, 140, 0.10);
 
   --spd-start: #eb6834;    --spd-start-text: #be542a;
   --spd-guide: #2a78d6;    --spd-guide-text: #2974d0;
@@ -33,9 +33,9 @@ html[data-theme="light"] {
 }
 
 html[data-theme="dark"] {
-  --pst-color-primary: #f0995e;          /* lighter logo orange on the dark page */
+  --pst-color-primary: #8db4e8;          /* lighter logo blue on the dark page */
   --pst-color-secondary: #6da7ec;
-  --pst-color-link: #f0995e;
+  --pst-color-link: #8db4e8;
   --pst-color-link-hover: #86b6ef;
   --spd-surface-raised: #1b2028;
   --spd-card-bg: #1b2028;
@@ -43,7 +43,7 @@ html[data-theme="dark"] {
   --spd-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   --spd-shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.55);
   --spd-figure-surface: #1a1a19;
-  --spd-hero-glow: rgba(240, 153, 94, 0.12);
+  --spd-hero-glow: rgba(141, 180, 232, 0.12);
 
   --spd-start: #d95926;    --spd-start-text: #f0995e;
   --spd-guide: #3987e5;    --spd-guide-text: #86b6ef;

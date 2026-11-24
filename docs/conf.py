@@ -108,8 +108,7 @@ html_theme = "pydata_sphinx_theme"
 html_title = "yetanotherspdnet"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
-html_favicon = "_static/favicon.svg"
-html_logo = "_static/logo.svg"
+html_favicon = "_static/favicon.png"
 html_show_sourcelink = False
 html_context = {
     "default_mode": "dark",
@@ -119,7 +118,14 @@ html_context = {
     "doc_path": "docs",
 }
 html_theme_options = {
-    "logo": {"text": "yetanotherspdnet", "alt_text": "yetanotherspdnet"},
+    # logo-dark.png: the same logo on a light disc (the navy of the logo is too
+    # dark for the dark page)
+    "logo": {
+        "text": "yetanotherspdnet",
+        "alt_text": "yetanotherspdnet",
+        "image_light": "_static/logo.png",
+        "image_dark": "_static/logo-dark.png",
+    },
     "navbar_align": "left",
     "header_links_before_dropdown": 6,
     "navbar_end": ["theme-switcher", "navbar-icon-links"],

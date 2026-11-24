@@ -13,7 +13,7 @@ html_theme.sidebar_secondary.remove: true
     geometries and Riemannian residual networks, built on SPD matrix functions
     whose hand-written gradients stay exact on ill-conditioned data.</p>
   </div>
-  <div class="hero-logo"><img src="_static/logo.svg" alt="yetanotherspdnet logo"></div>
+  <div class="hero-logo"><img class="only-light" src="_static/logo.png" alt="yetanotherspdnet logo"><img class="only-dark" src="_static/logo-dark.png" alt="yetanotherspdnet logo"></div>
 </div>
 ```
 
