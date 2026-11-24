@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>yetanotherspdnet</title>
+  <path d="M 4 46 C 16 22, 28 12, 38 14 C 48 16, 54 28, 62 38 C 52 40, 42 46, 36 56 C 24 52, 14 50, 4 46 Z" fill="#eb6834"/>
+  <ellipse cx="34" cy="32" rx="12" ry="7" transform="rotate(-25 34 32)" fill="#ffffff" stroke="#8f3d1d" stroke-width="2.5"/>
+</svg>

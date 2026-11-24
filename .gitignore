@@ -491,7 +491,6 @@ build/
 # Sphinx documentation
 docs/_build/
 docs/_autosummary/
-docs/_templates/
 
 # Pytest and coverage
 .coverage
