@@ -439,9 +439,6 @@ class TestBatchNormSPDMean:
             device=device,
             dtype=dtype,
         )
-        if norm_strategy == "minibatch":
-            print(layer.get_minibatch_momentum())
-
         X = random_SPD(
             n_features,
             n_matrices,
@@ -1025,6 +1022,8 @@ class TestBatchNormSPDMeanScalarVariance:
                 "geometric_arithmetic_harmonic",
                 None,
             ),
+            ("affine_invariant_gevd", None),
+            ("adaptive_geometric_arithmetic_harmonic", None),
         ],
     )
     @pytest.mark.parametrize(
@@ -1080,8 +1079,9 @@ class TestBatchNormSPDMeanScalarVariance:
         assert layer.use_autograd == use_autograd
         assert layer.device == device
         assert layer.dtype == dtype
-        # check that we have one and only one parameter
-        assert len(list(layer.parameters())) == 2
+        # Covbias and stdScalarbias (+ the learnable t of the adaptive GAH mean)
+        n_parameters = 3 if mean_type == "adaptive_geometric_arithmetic_harmonic" else 2
+        assert len(list(layer.parameters())) == n_parameters
         assert is_spd(layer.Covbias)
         assert_close(layer.Covbias, torch.eye(n_features, device=device, dtype=dtype))
         assert layer.stdScalarbias > 0
@@ -1103,6 +1103,8 @@ class TestBatchNormSPDMeanScalarVariance:
                 "geometric_arithmetic_harmonic",
                 None,
             ),
+            ("affine_invariant_gevd", None),
+            ("adaptive_geometric_arithmetic_harmonic", None),
         ],
     )
     @pytest.mark.parametrize(
@@ -1215,6 +1217,8 @@ class TestBatchNormSPDMeanScalarVariance:
                 "geometric_arithmetic_harmonic",
                 None,
             ),
+            ("affine_invariant_gevd", None),
+            ("adaptive_geometric_arithmetic_harmonic", None),
         ],
     )
     @pytest.mark.parametrize(
@@ -1302,6 +1306,8 @@ class TestBatchNormSPDMeanScalarVariance:
                 "geometric_arithmetic_harmonic",
                 None,
             ),
+            ("affine_invariant_gevd", None),
+            ("adaptive_geometric_arithmetic_harmonic", None),
         ],
     )
     @pytest.mark.parametrize(
@@ -1349,9 +1355,6 @@ class TestBatchNormSPDMeanScalarVariance:
             device=device,
             dtype=dtype,
         )
-        if norm_strategy == "minibatch":
-            print(layer.get_minibatch_momentum())
-
         X = random_SPD(
             n_features,
             n_matrices,
@@ -1400,6 +1403,8 @@ class TestBatchNormSPDMeanScalarVariance:
                 "geometric_arithmetic_harmonic",
                 None,
             ),
+            ("affine_invariant_gevd", None),
+            ("adaptive_geometric_arithmetic_harmonic", None),
         ],
     )
     @pytest.mark.parametrize(
@@ -1486,6 +1491,8 @@ class TestBatchNormSPDMeanScalarVariance:
                 "geometric_arithmetic_harmonic",
                 None,
             ),
+            ("affine_invariant_gevd", None),
+            ("adaptive_geometric_arithmetic_harmonic", None),
         ],
     )
     @pytest.mark.parametrize(
@@ -1592,6 +1599,8 @@ class TestBatchNormSPDMeanScalarVariance:
                 "geometric_arithmetic_harmonic",
                 None,
             ),
+            ("affine_invariant_gevd", None),
+            ("adaptive_geometric_arithmetic_harmonic", None),
         ],
     )
     @pytest.mark.parametrize(
@@ -1656,6 +1665,8 @@ class TestBatchNormSPDMeanScalarVariance:
                 "geometric_arithmetic_harmonic",
                 None,
             ),
+            ("affine_invariant_gevd", None),
+            ("adaptive_geometric_arithmetic_harmonic", None),
         ],
     )
     @pytest.mark.parametrize(
@@ -1769,6 +1780,8 @@ class TestBatchNormSPDMeanScalarVariance:
                 "geometric_arithmetic_harmonic",
                 None,
             ),
+            ("affine_invariant_gevd", None),
+            ("adaptive_geometric_arithmetic_harmonic", None),
         ],
     )
     @pytest.mark.parametrize(
@@ -1842,6 +1855,8 @@ class TestBatchNormSPDMeanScalarVariance:
                 "geometric_arithmetic_harmonic",
                 None,
             ),
+            ("affine_invariant_gevd", None),
+            ("adaptive_geometric_arithmetic_harmonic", None),
         ],
     )
     @pytest.mark.parametrize(
