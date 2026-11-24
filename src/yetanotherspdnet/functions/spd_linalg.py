@@ -1974,6 +1974,181 @@ class EigvalshSymmetric(Function):
         return (eigvecs * grad_output.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)
 
 
+# -----------------------------------------------------------------
+# Several matrix functions of a floored SPD matrix from one eigh
+# -----------------------------------------------------------------
+#: matrix functions available in :func:`floored_eigh_functions`: name ->
+#: (scalar function, derivative); the scalar functions are the keys of the
+#: closed-form divided differences, so the backward uses the same kernels as
+#: :class:`SqrtmSPD`, :class:`InvSqrtmSPD` and :class:`LogmSPD`
+EIGH_FUNCTIONS: dict[str, tuple[Callable, Callable]] = {
+    "sqrt": (torch.sqrt, sqrt_derivative),
+    "inv_sqrt": (inv_sqrt, inv_sqrt_derivative),
+    "log": (torch.log, inv),
+}
+
+
+def floored_eigh_functions(
+    data: torch.Tensor, floor: EigvalBound, functions: tuple[str, ...] = ()
+) -> tuple[torch.Tensor, ...]:
+    r"""
+    Floored spectrum and matrix functions of SPD matrices from one eigendecomposition.
+
+    With :math:`X = U \operatorname{diag}(\lambda) U^\top` and the floored
+    eigenvalues :math:`\tilde\lambda = \max(\lambda, \epsilon)` (the
+    eigenvalues of :math:`\tilde X = \operatorname{ReEig}_\epsilon(X)`),
+    returns :math:`\tilde\lambda`, :math:`\lambda`, :math:`U` and
+    :math:`f(\tilde X) = U \operatorname{diag}(f(\tilde\lambda)) U^\top` for
+    each requested :math:`f` (``"sqrt"``, ``"inv_sqrt"``, ``"log"``). This is
+    what :class:`EighReLu` followed by :func:`eigvalsh_symmetric`,
+    :func:`sqrtm_and_inv_sqrtm_SPD` or :func:`logm_SPD` compute, with one
+    decomposition instead of one per function. Differentiated by autograd
+    (through ``torch.linalg.eigh``); see :class:`FlooredEighFunctions` for the
+    manual backward.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+    floor : float | torch.Tensor | Callable
+        Lower bound of the eigenvalues (see :func:`eigh_relu`), e.g.
+        :func:`spd_floor`
+    functions : tuple of str, optional
+        Names of the matrix functions to return (keys of
+        :data:`EIGH_FUNCTIONS`). Default is none.
+
+    Returns
+    -------
+    eigvals_floored : torch.Tensor of shape (..., n_features)
+        Floored eigenvalues :math:`\tilde\lambda`, ascending
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues :math:`\lambda` of *data*
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors :math:`U`
+    *matrices : torch.Tensor of shape (..., n_features, n_features)
+        :math:`f(\tilde X)` for each name of *functions*, in that order
+    """
+    eigvals, eigvecs = symmetric_eigh(data)
+    bound = _resolve_bound(floor, eigvals)
+    eigvals_floored = _clamp(eigvals, bound, None)
+    matrices = tuple(
+        eigh_operation(eigvals_floored, eigvecs, EIGH_FUNCTIONS[name][0])
+        for name in functions
+    )
+    return (eigvals_floored, eigvals, eigvecs, *matrices)
+
+
+class FlooredEighFunctions(Function):
+    r"""
+    Floored spectrum and matrix functions from one eigendecomposition, manual backward.
+
+    Forward: :func:`floored_eigh_functions`. The eigenvalues :math:`\lambda`
+    and eigenvectors :math:`U` are returned as non-differentiable tensors (for
+    the reuse of the decomposition); the floored eigenvalues and the matrix
+    functions are differentiable. With output gradients
+    :math:`\bar{\tilde\lambda}` and :math:`\bar F_k` (of :math:`f_k(\tilde X)`),
+    all expressed in the common eigenbasis :math:`U`:
+
+    .. math::
+
+        \bar X = U \Big( L^{c}(\lambda) \circ \Big[
+            \operatorname{diag}(\bar{\tilde\lambda})
+            + \textstyle\sum_k L^{f_k}(\tilde\lambda) \circ
+              \big(U^\top \operatorname{sym}(\bar F_k) U\big)
+        \Big] \Big) U^\top
+
+    where :math:`L^{f}` is the Daleckii-Krein matrix of :math:`f` (closed-form
+    divided differences, :func:`_aux_eigh_operation_grad`) and :math:`L^{c}`
+    the one of the floor :math:`c(\lambda) = \max(\lambda, \epsilon)`. This is
+    the chain rule through :class:`EighReLu` then :class:`EigvalshSymmetric`,
+    :class:`SqrtmAndInvSqrtmSPD` and :class:`LogmSPD`, whose decompositions
+    share the eigenvectors :math:`U`, so the two Daleckii-Krein products
+    collapse into one: no decomposition in the backward.
+    """
+
+    @staticmethod
+    def forward(
+        ctx, data: torch.Tensor, floor: EigvalBound, functions: tuple[str, ...] = ()
+    ) -> tuple[torch.Tensor, ...]:
+        """
+        Forward pass, see :func:`floored_eigh_functions`.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+        floor : float | torch.Tensor | Callable
+            Lower bound of the eigenvalues, not differentiated
+        functions : tuple of str, optional
+            Names of the matrix functions to return
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            Floored eigenvalues, eigenvalues, eigenvectors, matrix functions
+        """
+        outputs = floored_eigh_functions(data, floor, functions)
+        eigvals_floored, eigvals, eigvecs = outputs[:3]
+        ctx.save_for_backward(eigvals_floored, eigvals, eigvecs)
+        ctx.floor = _resolve_bound(floor, eigvals)
+        ctx.functions = functions
+        ctx.mark_non_differentiable(eigvals, eigvecs)
+        ctx.set_materialize_grads(False)
+        return outputs
+
+    @staticmethod
+    def backward(
+        ctx, grad_eigvals_floored, _grad_eigvals, _grad_eigvecs, *grad_matrices
+    ):
+        """
+        Backward pass (see the class docstring).
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object with the saved decomposition
+        grad_eigvals_floored : torch.Tensor of shape (..., n_features) or None
+            Gradient with respect to the floored eigenvalues
+        _grad_eigvals, _grad_eigvecs : None
+            Non-differentiable outputs
+        *grad_matrices : torch.Tensor of shape (..., n_features, n_features) or None
+            Gradients with respect to the matrix functions
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient with respect to the input batch
+        None, None
+            No gradient for the floor and the function names
+        """
+        eigvals_floored, eigvals, eigvecs = ctx.saved_tensors
+        middle = None
+        for name, grad in zip(ctx.functions, grad_matrices, strict=True):
+            if grad is None:
+                continue
+            operation, operation_deriv = EIGH_FUNCTIONS[name]
+            term = _aux_eigh_operation_grad(
+                eigvals_floored, operation, operation_deriv
+            ) * (eigvecs.transpose(-1, -2) @ symmetrize(grad) @ eigvecs)
+            middle = term if middle is None else middle + term
+        if grad_eigvals_floored is not None:
+            diagonal = torch.diag_embed(grad_eigvals_floored)
+            middle = diagonal if middle is None else middle + diagonal
+        if middle is None:
+            return None, None, None
+        # chain rule through the floor (the Daleckii-Krein matrix of EighReLu)
+        floor = ctx.floor
+        floor_pairwise = _pairwise_bound(floor)
+        middle = middle * _aux_eigh_operation_grad(
+            eigvals,
+            lambda x: _clamp(x, floor, None),
+            lambda x: (x > floor_pairwise).type(x.dtype),
+        )
+        return eigvecs @ middle @ eigvecs.transpose(-1, -2), None, None
+
+
 def _clamped_bias_operation(bias: torch.Tensor, eps: float) -> Callable:
     """Eigenvalue map of ReEigBias: shift by ``bias`` then clamp to [eps, 1/eps]."""
     return lambda x: torch.clamp(x + bias, min=eps, max=1 / eps)
