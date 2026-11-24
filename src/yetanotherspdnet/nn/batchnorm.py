@@ -9,71 +9,13 @@ import torch
 from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
 
-from yetanotherspdnet.functions.spd_geometries.affine_invariant_gevd import (
-    AffineInvariantGeodesicGEVD,
-    AffineInvariantMeanGEVD,
-    AffineInvariantParallelTransportGEVD,
-    affine_invariant_geodesic_gevd,
-    affine_invariant_mean_gevd,
-    affine_invariant_parallel_transport_gevd,
-)
 from yetanotherspdnet.functions.spd_geometries.bures_wasserstein import (
-    BuresWassersteinMean,
-    BuresWassersteinStdScalar,
     bures_wasserstein_bias,
     bures_wasserstein_center,
-    bures_wasserstein_geodesic,
-    bures_wasserstein_mean,
     bures_wasserstein_scale,
-    bures_wasserstein_std_scalar,
 )
-from yetanotherspdnet.functions.spd_geometries.euclidean import (
-    ArithmeticMean,
-    EuclideanGeodesic,
-    arithmetic_mean,
-    euclidean_geodesic,
-)
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
-    HarmonicCurve,
-    HarmonicMean,
-    LeftKullbackLeiblerStdScalar,
-    RightKullbackLeiblerStdScalar,
-    harmonic_curve,
-    harmonic_mean,
-    left_kullback_leibler_std_scalar,
-    right_kullback_leibler_std_scalar,
-)
-from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
-    AdaptiveGeometricArithmeticHarmonicMean,
-    GeometricArithmeticHarmonicMean,
-    GeometricEuclideanHarmonicCurve,
-    SymmetrizedKullbackLeiblerStdScalar,
-    adaptive_geometric_arithmetic_harmonic_mean,
-    geometric_arithmetic_harmonic_mean,
-    geometric_euclidean_harmonic_curve,
-    symmetrized_kullback_leibler_std_scalar,
-)
-from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
-    LogEuclideanGeodesic,
-    LogEuclideanMean,
-    LogEuclideanParallelTransportSPD,
-    LogEuclideanStdScalar,
-    log_euclidean_geodesic,
-    log_euclidean_mean,
-    log_euclidean_parallel_transport_SPD,
-    log_euclidean_std_scalar,
-)
+from yetanotherspdnet.functions.spd_geometries.registry import get_geometry
 
-from ..functions.spd_geometries.affine_invariant import (
-    AffineInvariantGeodesic,
-    AffineInvariantMean,
-    AffineInvariantParallelTransport,
-    AffineInvariantStdScalar,
-    affine_invariant_geodesic,
-    affine_invariant_mean,
-    affine_invariant_parallel_transport,
-    affine_invariant_std_scalar,
-)
 from ..functions.spd_linalg import (
     CongruenceSPD,
     InvSqrtmSPD,
@@ -241,22 +183,8 @@ class BatchNormSPDBase(ABC, nn.Module):
         # register all input variables
         self.n_features = n_features
         self.mean_type = mean_type
-        assert self.mean_type in [
-            "affine_invariant",
-            "affine_invariant_gevd",
-            "log_euclidean",
-            "arithmetic",
-            "harmonic",
-            "geometric_arithmetic_harmonic",
-            "adaptive_geometric_arithmetic_harmonic",
-            "bures_wasserstein",
-        ], (
-            f"formula must be in ['affine_invariant', 'affine_invariant_gevd', "
-            f"'log_euclidean', 'arithmetic', 'harmonic', "
-            f"'geometric_arithmetic_harmonic', "
-            f"'adaptive_geometric_arithmetic_harmonic', 'bures_wasserstein'], "
-            f"got {self.mean_type}"
-        )
+        # mean, geodesic, std and transport of the geometry (ValueError if unknown)
+        self.geometry = get_geometry(mean_type)
         self.mean_options = mean_options
         self.momentum = momentum
         self.norm_strategy = norm_strategy
@@ -339,59 +267,10 @@ class BatchNormSPDBase(ABC, nn.Module):
 
     def _init_mean(self) -> None:
         """
-        Auxiliary function to select mean function
+        Select the mean function of the geometry
         """
-        if self.mean_type == "affine_invariant":
-            if self.mean_options is not None and "n_iterations" in self.mean_options:
-                if self.use_autograd:
-                    self.mean_fun = partial(
-                        affine_invariant_mean,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-                else:
-                    self.mean_fun = partial(
-                        AffineInvariantMean,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-            else:
-                self.mean_fun = (
-                    affine_invariant_mean if self.use_autograd else AffineInvariantMean
-                )
-        elif self.mean_type == "affine_invariant_gevd":
-            if self.mean_options is not None and "n_iterations" in self.mean_options:
-                if self.use_autograd:
-                    self.mean_fun = partial(
-                        affine_invariant_mean_gevd,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-                else:
-                    self.mean_fun = partial(
-                        AffineInvariantMeanGEVD,
-                        n_iterations=self.mean_options["n_iterations"],
-                    )
-            else:
-                self.mean_fun = (
-                    affine_invariant_mean_gevd
-                    if self.use_autograd
-                    else AffineInvariantMeanGEVD
-                )
-        elif self.mean_type == "log_euclidean":
-            self.mean_fun = (
-                log_euclidean_mean if self.use_autograd else LogEuclideanMean
-            )
-        elif self.mean_type == "arithmetic":
-            self.mean_fun = (
-                arithmetic_mean if self.use_autograd else ArithmeticMean.apply
-            )
-        elif self.mean_type == "harmonic":
-            self.mean_fun = harmonic_mean if self.use_autograd else HarmonicMean.apply
-        elif self.mean_type == "geometric_arithmetic_harmonic":
-            self.mean_fun = (
-                geometric_arithmetic_harmonic_mean
-                if self.use_autograd
-                else GeometricArithmeticHarmonicMean
-            )
-        elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
+        mean = self.geometry.mean.select(self.use_autograd)
+        if self.geometry.learnable_t:
             # Register learnable parameter t for adaptive GAH mean
             # Use sigmoid parametrization to constrain t in [0, 1]
             t_init = (self.mean_options or {}).get("t_init", 0.5)
@@ -401,54 +280,17 @@ class BatchNormSPDBase(ABC, nn.Module):
                 torch.tensor(t_init, dtype=self.dtype, device=self.device)
             )
             register_parametrization(self, "t_gah", ScalarSigmoidParametrization())
-            if self.use_autograd:
-                self.mean_fun = lambda data: (
-                    adaptive_geometric_arithmetic_harmonic_mean(data, self.t_gah)
-                )
-            else:
-                self.mean_fun = lambda data: AdaptiveGeometricArithmeticHarmonicMean(
-                    data, self.t_gah
-                )
-        elif self.mean_type == "bures_wasserstein":
-            n_iter = 1
-            if self.mean_options is not None and "n_iterations" in self.mean_options:
-                n_iter = self.mean_options["n_iterations"]
-            self.mean_fun = (
-                partial(bures_wasserstein_mean, n_iterations=n_iter)
-                if self.use_autograd
-                else partial(BuresWassersteinMean, n_iterations=n_iter)
-            )
+            self.mean_fun = lambda data: mean(data, self.t_gah)
+        else:
+            mean_kwargs = self.geometry.mean_kwargs(self.mean_options)
+            self.mean_fun = partial(mean, **mean_kwargs) if mean_kwargs else mean
 
     def _init_adaptive_mean_fun(self) -> None:
         """
-        Auxiliary function to select adaptive mean update function
+        Select the running mean update: a step along the geodesic of the
+        geometry (computed without gradient, so through the autograd path)
         """
-        if self.mean_type == "affine_invariant":
-            self.adaptive_mean_fun = affine_invariant_geodesic
-        elif self.mean_type == "affine_invariant_gevd":
-            self.adaptive_mean_fun = lambda x, y, t: affine_invariant_geodesic_gevd(
-                x, y, t
-            )[0]
-        elif self.mean_type == "log_euclidean":
-            self.adaptive_mean_fun = log_euclidean_geodesic
-        elif self.mean_type == "arithmetic":
-            self.adaptive_mean_fun = euclidean_geodesic
-        elif self.mean_type == "harmonic":
-            self.adaptive_mean_fun = harmonic_curve
-        elif self.mean_type == "geometric_arithmetic_harmonic":
-            self.adaptive_mean_fun = geometric_euclidean_harmonic_curve
-        elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
-            # running mean update on the affine-invariant geodesic
-            if self.use_autograd:
-                self.adaptive_mean_fun = affine_invariant_geodesic
-            else:
-                self.adaptive_mean_fun = lambda p1, p2, t: (
-                    AffineInvariantGeodesic.apply(
-                        p1, p2, torch.tensor(t, dtype=self.dtype, device=self.device)
-                    )
-                )
-        elif self.mean_type == "bures_wasserstein":
-            self.adaptive_mean_fun = bures_wasserstein_geodesic
+        self.adaptive_mean_fun = self.geometry.geodesic.autograd
 
     def _init_norm_strategy_mean(self) -> None:
         """
@@ -462,51 +304,7 @@ class BatchNormSPDBase(ABC, nn.Module):
                 "mean_regularizer",
                 torch.eye(self.n_features, dtype=self.dtype, device=self.device),
             )
-            if self.mean_type == "affine_invariant":
-                self.regularize_mean_fun = (
-                    affine_invariant_geodesic
-                    if self.use_autograd
-                    else AffineInvariantGeodesic.apply
-                )
-            elif self.mean_type == "affine_invariant_gevd":
-                self.regularize_mean_fun = (
-                    (lambda x, y, t: affine_invariant_geodesic_gevd(x, y, t)[0])
-                    if self.use_autograd
-                    else AffineInvariantGeodesicGEVD.apply
-                )
-            elif self.mean_type == "log_euclidean":
-                self.regularize_mean_fun = (
-                    log_euclidean_geodesic
-                    if self.use_autograd
-                    else LogEuclideanGeodesic
-                )
-            elif self.mean_type == "arithmetic":
-                self.regularize_mean_fun = (
-                    euclidean_geodesic if self.use_autograd else EuclideanGeodesic.apply
-                )
-            elif self.mean_type == "harmonic":
-                self.regularize_mean_fun = (
-                    harmonic_curve if self.use_autograd else HarmonicCurve.apply
-                )
-            elif self.mean_type == "geometric_arithmetic_harmonic":
-                self.regularize_mean_fun = (
-                    geometric_euclidean_harmonic_curve
-                    if self.use_autograd
-                    else GeometricEuclideanHarmonicCurve
-                )
-            elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
-                if self.use_autograd:
-                    self.regularize_mean_fun = affine_invariant_geodesic
-                else:
-                    self.regularize_mean_fun = lambda p1, p2, t: (
-                        AffineInvariantGeodesic.apply(
-                            p1,
-                            p2,
-                            torch.tensor(t, dtype=self.dtype, device=self.device),
-                        )
-                    )
-            elif self.mean_type == "bures_wasserstein":
-                self.regularize_mean_fun = bures_wasserstein_geodesic
+            self.regularize_mean_fun = self.geometry.geodesic.select(self.use_autograd)
             self._init_minibatch_mode()
 
     def _init_minibatch_mode(self) -> None:
@@ -912,52 +710,12 @@ class BatchNormSPDMean(BatchNormSPDBase):
             )
             self._norm_and_bias_fun = self._norm_and_bias_whitening
         elif self.norm_and_bias_mode == "parallel_transport":
-            if self.use_autograd and self.mean_type in (
-                "affine_invariant",
-                "log_euclidean",
-            ):
-                raise ValueError(
-                    "norm_and_bias_mode='parallel_transport' with use_autograd=True "
-                    f"is not supported for mean_type={self.mean_type!r}: the "
-                    "transport takes square roots or logarithms of the bias, which "
-                    "starts at the identity, where autograd through "
-                    "torch.linalg.eigh gives NaN gradients (repeated eigenvalues). "
-                    "Use use_autograd=False (hand-written backward)."
-                )
-            if self.mean_type == "affine_invariant":
-                self.parallel_transport = (
-                    affine_invariant_parallel_transport
-                    if self.use_autograd
-                    else AffineInvariantParallelTransport
-                )
-            elif self.mean_type == "affine_invariant_gevd":
-                self.parallel_transport = (
-                    affine_invariant_parallel_transport_gevd
-                    if self.use_autograd
-                    else AffineInvariantParallelTransportGEVD
-                )
-            elif self.mean_type == "log_euclidean":
-                self.parallel_transport = (
-                    log_euclidean_parallel_transport_SPD
-                    if self.use_autograd
-                    else LogEuclideanParallelTransportSPD
-                )
-            elif self.mean_type in (
-                "arithmetic",
-                "harmonic",
-                "geometric_arithmetic_harmonic",
-                "adaptive_geometric_arithmetic_harmonic",
-            ):
-                self.parallel_transport = (
-                    affine_invariant_parallel_transport_gevd
-                    if self.use_autograd
-                    else AffineInvariantParallelTransportGEVD
-                )
-            else:
+            if self.geometry.transport is None:
                 raise ValueError(
                     f"norm_and_bias_mode='parallel_transport' is not available "
                     f"for mean_type={self.mean_type!r}"
                 )
+            self.parallel_transport = self.geometry.transport.select(self.use_autograd)
             self._norm_and_bias_fun = self._norm_and_bias_transport
 
     def _norm_and_bias_whitening(
@@ -1354,50 +1112,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
 
     def _init_std(self) -> None:
         """
-        Auxiliray function to select std function
+        Select the scalar standard deviation of the geometry
         """
-        if self.mean_type in ("affine_invariant", "affine_invariant_gevd"):
-            # the GEVD backend computes the same affine-invariant mean
-            self.std_fun = (
-                affine_invariant_std_scalar
-                if self.use_autograd
-                else AffineInvariantStdScalar.apply
-            )
-        elif self.mean_type == "log_euclidean":
-            self.std_fun = (
-                log_euclidean_std_scalar
-                if self.use_autograd
-                else LogEuclideanStdScalar.apply
-            )
-        elif self.mean_type == "arithmetic":
-            self.std_fun = (
-                left_kullback_leibler_std_scalar
-                if self.use_autograd
-                else LeftKullbackLeiblerStdScalar.apply
-            )
-        elif self.mean_type == "harmonic":
-            self.std_fun = (
-                right_kullback_leibler_std_scalar
-                if self.use_autograd
-                else RightKullbackLeiblerStdScalar.apply
-            )
-        elif self.mean_type in (
-            "geometric_arithmetic_harmonic",
-            "adaptive_geometric_arithmetic_harmonic",
-        ):
-            # same dispersion as the (fixed t = 1/2) GAH mean: the symmetrized
-            # Kullback-Leibler divergence
-            self.std_fun = (
-                symmetrized_kullback_leibler_std_scalar
-                if self.use_autograd
-                else SymmetrizedKullbackLeiblerStdScalar.apply
-            )
-        elif self.mean_type == "bures_wasserstein":
-            self.std_fun = (
-                bures_wasserstein_std_scalar
-                if self.use_autograd
-                else BuresWassersteinStdScalar.apply
-            )
+        self.std_fun = self.geometry.std.select(self.use_autograd)
 
     def _init_norm_strategy_std(self) -> None:
         """

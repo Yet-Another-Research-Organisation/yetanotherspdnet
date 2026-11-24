@@ -101,3 +101,17 @@ Kullback–Leibler and log-Euclidean geometries.
    :member-order: bysource
 ```
 
+## Registry used by the batch normalization
+
+Each `mean_type` of the batch normalization layers maps to a `Geometry`
+holding its mean, geodesic, scalar standard deviation and parallel transport,
+each with its autograd and manual-backward implementations. The layers look
+their operations up here, so an unsupported combination (for example the
+parallel transport of the Bures–Wasserstein mean) is rejected when the layer
+is built.
+
+```{eval-rst}
+.. automodule:: yetanotherspdnet.functions.spd_geometries.registry
+   :members: DualPath, Geometry, get_geometry
+   :member-order: bysource
+```

@@ -167,7 +167,9 @@ def test_euclidean_moved_from_kullback_leibler(name, manual, args, spd_batch):
 
 def test_affine_invariant_norm_moved_from_rresnet_layers(spd_batch):
     tangent = spd_linalg.symmetrize(spd_batch[1] - spd_batch[0])
-    with pytest.warns(DeprecationWarning, match="affine_invariant.affine_invariant_norm"):
+    with pytest.warns(
+        DeprecationWarning, match="affine_invariant.affine_invariant_norm"
+    ):
         out = rresnet_layers.affine_invariant_norm(spd_batch[0], tangent)
     expected = affine_invariant.affine_invariant_norm(spd_batch[0], tangent)
     torch.testing.assert_close(out, expected, rtol=0, atol=0)
@@ -201,7 +203,9 @@ def _train_step(module, data):
 @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
 @pytest.mark.parametrize("mean_type", MEAN_TYPES)
 @pytest.mark.parametrize(
-    "layer", [BatchNormSPDMean, BatchNormSPDMeanScalarVariance], ids=lambda c: c.__name__
+    "layer",
+    [BatchNormSPDMean, BatchNormSPDMeanScalarVariance],
+    ids=lambda c: c.__name__,
 )
 def test_batchnorm_uses_no_deprecated_alias(
     layer, mean_type, norm_strategy, use_autograd, dtype, generator
@@ -246,5 +250,7 @@ def test_models_use_no_deprecated_alias(model, kwargs, dtype, generator):
     data = random_SPD(4, 6, cond=10, dtype=dtype, generator=generator)
     with warnings.catch_warnings():
         warnings.simplefilter("error", DeprecationWarning)
-        net = model(input_dim=4, output_dim=2, dtype=dtype, generator=generator, **kwargs)
+        net = model(
+            input_dim=4, output_dim=2, dtype=dtype, generator=generator, **kwargs
+        )
         _train_step(net, data)
