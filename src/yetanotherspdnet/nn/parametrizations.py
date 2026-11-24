@@ -83,9 +83,9 @@ def recenter_dynamic_parametrization(module: nn.Module, tensor_name: str) -> Non
     parametrization_list = _parametrization_of(module, tensor_name)
     with torch.no_grad():
         current = getattr(module, tensor_name).detach().clone()
-        cast(StiefelAdaptiveParametrization, parametrization_list[0]).update_reference_point(
-            current
-        )
+        cast(
+            StiefelAdaptiveParametrization, parametrization_list[0]
+        ).update_reference_point(current)
         parametrization_list.original.zero_()
 
 
