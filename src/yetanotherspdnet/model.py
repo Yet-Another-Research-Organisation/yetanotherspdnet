@@ -1,6 +1,7 @@
 """SPD network model definitions: SPDnet, GBWBNRResNet, and RResNet."""
 
 import zlib
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -60,7 +61,15 @@ class _ModelMixin(nn.Module):
     def _residual_options_repr(self) -> str:
         """``residual_options`` line of the representation, empty when not set."""
         options = getattr(self, "residual_options", None)
-        return "" if not options else f"  residual_options={options!r},\n"
+        if not options:
+            return ""
+        # callables (the branch factory) by name: their default repr holds a
+        # memory address, which would make the model hash change between runs
+        shown = {
+            key: getattr(value, "__qualname__", value) if callable(value) else value
+            for key, value in options.items()
+        }
+        return f"  residual_options={shown!r},\n"
 
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """
@@ -589,18 +598,20 @@ def _make_batchnorm(
 
 def _residual_options(
     options: dict | None, use_logeig: bool
-) -> tuple[dict, dict, bool]:
+) -> tuple[Callable[[int], dict], Callable[[int], dict], bool]:
     r"""
     Split ``residual_options`` into the options of the inner and of the last block.
 
     ``le_output="log"`` (the last block returns :math:`\log X + V`) applies to
     the last residual block only, which must be the last SPD layer, and
-    replaces its exponential and the LogEig layer.
+    replaces its exponential and the LogEig layer. ``branch`` must be a
+    factory ``n_features -> nn.Module``, called once per block (a module
+    instance would be shared by every block, whatever their size).
 
     Returns
     -------
-    inner, last : dict
-        Keyword arguments of the residual blocks
+    inner, last : Callable[[int], dict]
+        Keyword arguments of the residual blocks of size ``n_features``
     log_output : bool
         Whether the last block returns log coordinates (LogEig skipped)
     """
@@ -611,8 +622,23 @@ def _residual_options(
             "residual_options le_output='log' replaces the LogEig layer: "
             "it needs use_logeig=True"
         )
-    last = {**options, "le_output": "log"} if log_output else options
-    return options, last, log_output
+    branch = options.pop("branch", None)
+    if isinstance(branch, nn.Module):
+        raise ValueError(
+            "residual_options branch must be a factory n_features -> nn.Module "
+            "(called once per block), not a module instance"
+        )
+
+    def inner(n_features: int) -> dict:
+        if branch is None:
+            return dict(options)
+        return {**options, "branch": branch(n_features)}
+
+    def last(n_features: int) -> dict:
+        kwargs = inner(n_features)
+        return {**kwargs, "le_output": "log"} if log_output else kwargs
+
+    return inner, last, log_output
 
 
 class GBWBNRResNet(_ModelMixin, nn.Module):
@@ -741,7 +767,9 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
         Further keyword arguments of the ResidualBlocks (``step``,
         ``step_radius``, ``step_scale_init``, ``output_clamp``, ``residual``,
         ``branch``, ``le_output``, ``spectrum_input``, ``basis``,
-        ``field_batchnorm``, see :class:`~yetanotherspdnet.nn.rresnet_layers.ResidualBlock`).
+        ``field_batchnorm``, see :class:`~yetanotherspdnet.nn.rresnet_layers.ResidualBlock`;
+        ``branch`` as a factory ``n_features -> nn.Module``, called once per
+        block).
         ``le_output="log"`` applies to the last block only, which must be the
         last SPD layer: it returns :math:`\log X + V` and the LogEig layer is
         skipped (as the reference code). Default is None (the reference block)
@@ -905,7 +933,7 @@ class GBWBNRResNet(_ModelMixin, nn.Module):
         _, last_options, log_output = _residual_options(residual_options, use_logeig)
         layers.append(
             ResidualBlock(
-                **last_options,
+                **last_options(hidden_dim),
                 n_features=hidden_dim,
                 spectrum_type=spectrum_type,
                 spectrum_hidden_dim=spectrum_hidden_dim,
@@ -1125,7 +1153,9 @@ class RResNet(_ModelMixin, nn.Module):
         Further keyword arguments of the ResidualBlocks (``step``,
         ``step_radius``, ``step_scale_init``, ``output_clamp``, ``residual``,
         ``branch``, ``le_output``, ``spectrum_input``, ``basis``,
-        ``field_batchnorm``, see :class:`~yetanotherspdnet.nn.rresnet_layers.ResidualBlock`).
+        ``field_batchnorm``, see :class:`~yetanotherspdnet.nn.rresnet_layers.ResidualBlock`;
+        ``branch`` as a factory ``n_features -> nn.Module``, called once per
+        block).
         ``le_output="log"`` applies to the last block only, which must be the
         last SPD layer: it returns :math:`\log X + V` and the LogEig layer is
         skipped (as the reference code). Default is None (the reference block)
@@ -1330,7 +1360,7 @@ class RResNet(_ModelMixin, nn.Module):
                 )
                 layers.append(
                     ResidualBlock(
-                        **(last_options if is_last else block_options),
+                        **(last_options if is_last else block_options)(d_out),
                         n_features=d_out,
                         spectrum_type=spectrum_type,
                         spectrum_hidden_dim=spectrum_hidden_dim,

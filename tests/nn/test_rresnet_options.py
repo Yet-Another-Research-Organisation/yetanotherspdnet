@@ -678,3 +678,30 @@ def test_deepcopy_and_state_dict_roundtrip():
     layer.eval()
     clone.eval()
     assert_close(layer(X), clone(X))
+
+
+def test_model_branch_factory_one_module_per_block():
+    from yetanotherspdnet.nn.base import BiMap, ReEig
+
+    def make_branch(n_features):
+        return torch.nn.Sequential(
+            BiMap(n_features, n_features, parametrization_mode="dynamic"), ReEig()
+        )
+
+    model = RResNet(
+        N,
+        [4, 3],
+        [2, 2],
+        2,
+        residual_options={"residual": "branch_pt", "branch": make_branch},
+        generator=torch.Generator().manual_seed(0),
+    )
+    blocks = [m for m in model.spd_layers if isinstance(m, ResidualBlock)]
+    branches = [b.branch for b in blocks]
+    assert len({id(b) for b in branches}) == 4
+    assert [b[0].n_in for b in branches] == [4, 4, 3, 3]
+    model(random_spd(4)).sum().backward()
+    # the factory appears by name in the representation (stable model hash)
+    assert "make_branch" in repr(model) and "0x" not in repr(model)
+    with pytest.raises(ValueError, match="factory"):
+        RResNet(N, [4], [1], 2, residual_options={"branch": make_branch(4)})
