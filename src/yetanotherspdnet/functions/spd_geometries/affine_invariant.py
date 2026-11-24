@@ -14,6 +14,7 @@ from yetanotherspdnet.functions._constants import (
 from yetanotherspdnet.functions.scalar_functions import (
     inv,
     inv_sqrt,
+    pow_divided_difference,
     pow_exponent_derivative,
     sqrt_derivative,
     zero_where_zero_std,
@@ -217,6 +218,7 @@ class AffineInvariantGeodesic(Function):
                     eigvecs_middle_term1,
                     pow_t,
                     pow_t_deriv,
+                    lambda a, b: pow_divided_difference(a, b, t),
                 )
                 @ point1_inv_sqrtm
             )
@@ -237,6 +239,7 @@ class AffineInvariantGeodesic(Function):
                     eigvecs_middle_term2,
                     pow_1_t,
                     pow_1_t_deriv,
+                    lambda a, b: pow_divided_difference(a, b, 1 - t),
                 )
                 @ point2_inv_sqrtm
             )

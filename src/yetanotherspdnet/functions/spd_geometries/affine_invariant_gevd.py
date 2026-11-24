@@ -9,7 +9,11 @@ import torch
 from torch.autograd import Function
 
 from yetanotherspdnet.functions._constants import KARCHER_STEP_DECAY
-from yetanotherspdnet.functions.scalar_functions import inv, sqrt_derivative
+from yetanotherspdnet.functions.scalar_functions import (
+    inv,
+    pow_divided_difference,
+    sqrt_derivative,
+)
 from yetanotherspdnet.functions.spd_geometries.euclidean import (
     ArithmeticMean,
     arithmetic_mean,
@@ -146,6 +150,7 @@ class AffineInvariantGeodesicGEVD(Function):
             general_eigvecs_inv,
             pow_t,
             pow_t_deriv,
+            lambda a, b: pow_divided_difference(a, b, t),
         )
         return grad_input1, grad_input2, None
 

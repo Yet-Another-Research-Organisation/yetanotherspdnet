@@ -6,18 +6,27 @@ import torch
 from torch.autograd import Function
 
 from yetanotherspdnet._deprecation import _deprecated
-from yetanotherspdnet.functions._constants import EIGVAL_TIE_THRESHOLD
+from yetanotherspdnet.functions._constants import (
+    EIGVAL_TIE_GENERIC_FACTOR,
+    EIGVAL_TIE_RTOL,
+)
 from yetanotherspdnet.functions.scalar_functions import (
+    exp_divided_difference,
     inv,
     inv_derivative,
+    inv_divided_difference,
     inv_scaled_softplus,
     inv_scaled_softplus_derivative,
     inv_sqrt,
     inv_sqrt_derivative,
+    inv_sqrt_divided_difference,
+    log_divided_difference,
+    pow_divided_difference,
     pow_exponent_derivative,
     scaled_softplus,
     scaled_softplus_derivative,
     sqrt_derivative,
+    sqrt_divided_difference,
 )
 
 
@@ -285,16 +294,47 @@ def eigh_operation(
     return result
 
 
+# closed-form divided differences of the matrix functions of this module,
+# looked up by the scalar ``operation`` when no ``divided_difference`` is given
+_DIVIDED_DIFFERENCES: dict[Callable, Callable] = {
+    torch.sqrt: sqrt_divided_difference,
+    inv_sqrt: inv_sqrt_divided_difference,
+    inv: inv_divided_difference,
+    torch.log: log_divided_difference,
+    torch.exp: exp_divided_difference,
+}
+
+
 def _aux_eigh_operation_grad(
     eigvals: torch.Tensor,
     operation: Callable,
     operation_deriv: Callable,
+    divided_difference: Callable | None = None,
 ) -> torch.Tensor:
-    """
-    Build the Daleckii-Krein matrix of a function applied on eigenvalues.
+    r"""
+    Build the Daleckii-Krein (Loewner) matrix of a function applied on eigenvalues.
 
     It is multiplied (Hadamard product) with the transformed output gradient to get the
-    input gradient of a function applied on the eigenvalues of a symmetric matrix.
+    input gradient of a function applied on the eigenvalues of a symmetric matrix:
+    :math:`L_{ij} = (f(\lambda_i) - f(\lambda_j)) / (\lambda_i - \lambda_j)`, and
+    :math:`f'` at ties.
+
+    Two regimes:
+
+    - a closed-form, non-cancelling divided difference is known (given as
+      ``divided_difference``, or looked up for ``torch.sqrt``, ``inv_sqrt``, ``inv``,
+      ``torch.log``, ``torch.exp``): it is used for every pair, and the derivative
+      only replaces it at rounding-level ties,
+      :math:`|\lambda_i - \lambda_j| \le c\, n\, \varepsilon \max_k |\lambda_k|`
+      (:math:`c` = ``EIGVAL_TIE_RTOL``, :math:`\varepsilon` the machine epsilon of
+      the dtype);
+    - otherwise the quotient is used down to the gap
+      :math:`(24\varepsilon)^{1/3} \max(|\lambda_i|, |\lambda_j|)` where its
+      cancellation error equals the error of the derivative at the midpoint, and
+      :math:`f'((\lambda_i + \lambda_j) / 2)` below it.
+
+    In both cases the near-tie value is the derivative at the midpoint, so the
+    matrix is exactly symmetric.
 
     Parameters
     ----------
@@ -307,24 +347,38 @@ def _aux_eigh_operation_grad(
     operation_deriv : Callable
         Derivative of the function to apply on eigenvalues
 
+    divided_difference : Callable, optional
+        ``divided_difference(a, b)`` returning :math:`(f(a) - f(b)) / (a - b)`
+        without cancellation (see the kernels of
+        :mod:`~yetanotherspdnet.functions.scalar_functions`). Default: looked up
+        from ``operation``, else the generic quotient.
+
     Returns
     -------
     aux_mat : torch.Tensor of shape (..., n_features, n_features)
         Matrix to be multiplied (Hadamard product) with transformed output gradient
     """
-    eigvals_transformed = operation(eigvals)
-    eigvals_deriv = operation_deriv(eigvals)
+    if divided_difference is None:
+        divided_difference = _DIVIDED_DIFFERENCES.get(operation)
+    finfo = torch.finfo(eigvals.dtype)
+    lam_i = eigvals.unsqueeze(-1)
+    lam_j = eigvals.unsqueeze(-2)
+    gap = torch.abs(lam_i - lam_j)
+    midpoint_deriv = operation_deriv((lam_i + lam_j) / 2)
 
-    denominator = eigvals.unsqueeze(-1) - eigvals.unsqueeze(-2)
-    numerator = eigvals_transformed.unsqueeze(-1) - eigvals_transformed.unsqueeze(-2)
+    if divided_difference is not None:
+        n_features = eigvals.shape[-1]
+        scale = eigvals.abs().amax(dim=-1, keepdim=True).unsqueeze(-1)
+        tie_tol = EIGVAL_TIE_RTOL * n_features * finfo.eps * scale.clamp_min(finfo.tiny)
+        tie = gap <= tie_tol
+        return torch.where(tie, midpoint_deriv, divided_difference(lam_i, lam_j))
 
-    # (near-)repeated eigenvalues: use the derivative instead of the quotient
-    null_denominator = torch.abs(denominator) < EIGVAL_TIE_THRESHOLD
-
-    numerator = torch.where(null_denominator, eigvals_deriv.unsqueeze(-1), numerator)
-    denominator = torch.where(null_denominator, torch.ones_like(numerator), denominator)
-
-    return numerator / denominator
+    pair_scale = torch.maximum(lam_i.abs(), lam_j.abs()).clamp_min(finfo.tiny)
+    tie = gap <= (EIGVAL_TIE_GENERIC_FACTOR * finfo.eps) ** (1 / 3) * pair_scale
+    transformed = operation(eigvals)
+    numerator = transformed.unsqueeze(-1) - transformed.unsqueeze(-2)
+    denominator = torch.where(tie, torch.ones_like(gap), lam_i - lam_j)
+    return torch.where(tie, midpoint_deriv, numerator / denominator)
 
 
 def eigh_operation_grad(
@@ -333,6 +387,7 @@ def eigh_operation_grad(
     eigvecs: torch.Tensor,
     operation: Callable,
     operation_deriv: Callable,
+    divided_difference: Callable | None = None,
 ) -> torch.Tensor:
     """
     Backpropagate through a function applied on the eigenvalues.
@@ -356,12 +411,18 @@ def eigh_operation_grad(
     operation_deriv : Callable
         Derivative of the function to apply on eigenvalues
 
+    divided_difference : Callable, optional
+        Closed-form divided difference of the function, see
+        :func:`_aux_eigh_operation_grad`
+
     Returns
     -------
     grad_input : torch.Tensor of shape (..., n_features, n_features)
         Gradient of the loss with respect to the input batch of symmetric matrices
     """
-    aux_mat = _aux_eigh_operation_grad(eigvals, operation, operation_deriv)
+    aux_mat = _aux_eigh_operation_grad(
+        eigvals, operation, operation_deriv, divided_difference
+    )
     middle_term = aux_mat * (
         eigvecs.transpose(-1, -2) @ symmetrize(grad_output) @ eigvecs
     )
@@ -490,6 +551,7 @@ def gevd_operation_grad(
     general_eigvecs_inv: torch.Tensor,
     operation: Callable,
     operation_derivative: Callable,
+    divided_difference: Callable | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     r"""
     Backpropagate through a function applied on generalized eigenvalues.
@@ -519,6 +581,10 @@ def gevd_operation_grad(
     operation_derivative : Callable
         Derivative of the function to apply on generalized eigenvalues
 
+    divided_difference : Callable, optional
+        Closed-form divided difference of the function, see
+        :func:`_aux_eigh_operation_grad`
+
     Returns
     -------
     grad_point1 : torch.Tensor of shape (n_features, n_features) or (..., n_features, n_features)
@@ -531,7 +597,7 @@ def gevd_operation_grad(
         general_eigvecs @ symmetrize(grad_output) @ general_eigvecs.transpose(-1, -2)
     )
     aux_mat_point2 = _aux_eigh_operation_grad(
-        general_eigvals, operation, operation_derivative
+        general_eigvals, operation, operation_derivative, divided_difference
     )
     middle_term_point2 = aux_mat_point2 * grad_out_cong
     grad_point2 = (
@@ -1025,8 +1091,9 @@ class PowmSPD(Function):
             exponent = ctx.exponent
         pow_fun = lambda x: torch.pow(x, exponent)
         pow_deriv = lambda x: exponent * torch.pow(x, exponent - 1)
+        pow_dd = lambda a, b: pow_divided_difference(a, b, exponent)
         grad_input_data = eigh_operation_grad(
-            grad_output, eigvals, eigvecs, pow_fun, pow_deriv
+            grad_output, eigvals, eigvecs, pow_fun, pow_deriv, pow_dd
         )
         grad_input_exponent = None
         if ctx.exponent_is_tensor and ctx.needs_input_grad[1]:

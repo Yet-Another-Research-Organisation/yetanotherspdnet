@@ -30,8 +30,33 @@ f'(\lambda_i) & \lambda_i = \lambda_j,
 $$
 
 where $\circ$ is the entrywise product and $L$ the *Loewner matrix* of divided
-differences (`eigh_operation_grad`; ties are detected with
-$|\lambda_i - \lambda_j| < 10^{-6}$).
+differences (`eigh_operation_grad`).
+
+**Computing the divided differences.** The plain quotient cancels when
+$\lambda_i \approx \lambda_j$: its rounding error is about
+$\varepsilon |\lambda| / |\lambda_i - \lambda_j|$. For the functions of the
+library it is replaced by closed forms that never cancel ($l = \min$, $d =
+|\lambda_i - \lambda_j|$):
+
+| $f$ | divided difference |
+|---|---|
+| $\sqrt x$ | $1 / (\sqrt{\lambda_i} + \sqrt{\lambda_j})$ |
+| $x^{-1/2}$ | $-1 / \big(\sqrt{\lambda_i}\sqrt{\lambda_j}(\sqrt{\lambda_i} + \sqrt{\lambda_j})\big)$ |
+| $x^{-1}$ | $-1 / (\lambda_i \lambda_j)$ |
+| $\log x$ | $\operatorname{log1p}(d / l) / d$ |
+| $\exp x$ | $e^{l} \operatorname{expm1}(d) / d$ |
+| $x^t$ | $l^t \operatorname{expm1}\big(t \operatorname{log1p}(d / l)\big) / d$ |
+
+and the derivative at the midpoint $f'((\lambda_i + \lambda_j)/2)$ is only used
+at rounding-level ties, $d \le c\, n\, \varepsilon \max_k |\lambda_k|$ with
+$c = 1$ (`EIGVAL_TIE_RTOL`) and $\varepsilon$ the machine epsilon of the dtype.
+Other functions (softplus, ReEig's clamp) use the quotient down to
+$d = (24 \varepsilon)^{1/3} \max(|\lambda_i|, |\lambda_j|)$, where its
+rounding error equals the $O(d^2)$ error of the midpoint derivative, and the
+midpoint derivative below. The midpoint keeps $L$ exactly symmetric. The former
+absolute threshold $|\lambda_i - \lambda_j| < 10^{-6}$ made the gradient of
+$\sqrt{\cdot}$ 10.7 % wrong for eigenvalues $10^{-7}$ and $5 \cdot 10^{-7}$;
+the kernels are now within $10^{-10}$ relative of a 50-digit reference.
 
 Autograd through `torch.linalg.eigh` instead differentiates the eigenvectors,
 which involves $1/(\lambda_i - \lambda_j)$: infinite for equal eigenvalues.
