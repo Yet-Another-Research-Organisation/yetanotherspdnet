@@ -949,7 +949,7 @@ class PowmSPD(Function):
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
 
-        exponent : torch.float
+        exponent : float | torch.Tensor
             Power exponent
 
         Returns
@@ -958,11 +958,20 @@ class PowmSPD(Function):
             Matrix powers of the input batch of SPD matrices
         """
         powm_data, eigvals, eigvecs = powm_SPD(data, exponent)
-        ctx.save_for_backward(eigvals, eigvecs, exponent)
+        # save_for_backward only accepts tensors: a python exponent is stored
+        # on ctx and gets no gradient
+        ctx.exponent_is_tensor = isinstance(exponent, torch.Tensor)
+        if ctx.exponent_is_tensor:
+            ctx.save_for_backward(eigvals, eigvecs, exponent)
+        else:
+            ctx.save_for_backward(eigvals, eigvecs)
+            ctx.exponent = exponent
         return powm_data
 
     @staticmethod
-    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def backward(
+        ctx, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """
         Backward pass of the matrix power of a batch of SPD matrices
 
@@ -979,20 +988,33 @@ class PowmSPD(Function):
         grad_input_data : torch.Tensor of shape (..., n_features, n_features)
             Gradient of the loss with respect to the input batch of SPD matrices
 
-        grad_input_exponent : torch.float
+        grad_input_exponent : torch.Tensor | None
             Gradient of the loss with respect to the power exponent
+            (None if the exponent is a python number)
         """
-        eigvals, eigvecs, exponent = ctx.saved_tensors
+        if ctx.exponent_is_tensor:
+            eigvals, eigvecs, exponent = ctx.saved_tensors
+        else:
+            eigvals, eigvecs = ctx.saved_tensors
+            exponent = ctx.exponent
         pow_fun = lambda x: torch.pow(x, exponent)
         pow_deriv = lambda x: exponent * torch.pow(x, exponent - 1)
-        exponent_deriv_fun = lambda x: torch.pow(x, exponent) * torch.log(x)
-        return (
-            eigh_operation_grad(grad_output, eigvals, eigvecs, pow_fun, pow_deriv),
-            (grad_output @ eigh_operation(eigvals, eigvecs, exponent_deriv_fun))
-            .diagonal(offset=0, dim1=-1, dim2=-2)
-            .sum()
-            .reshape(exponent.shape),
+        grad_input_data = eigh_operation_grad(
+            grad_output, eigvals, eigvecs, pow_fun, pow_deriv
         )
+        grad_input_exponent = None
+        if ctx.exponent_is_tensor and ctx.needs_input_grad[1]:
+            # the exponent is a scalar shared by the whole batch:
+            # d/dp tr(G^T P^p) = tr(G^T U diag(lambda^p log lambda) U^T),
+            # summed over the batch
+            exponent_deriv_fun = lambda x: torch.pow(x, exponent) * torch.log(x)
+            grad_input_exponent = (
+                (grad_output @ eigh_operation(eigvals, eigvecs, exponent_deriv_fun))
+                .diagonal(offset=0, dim1=-1, dim2=-2)
+                .sum()
+                .reshape(exponent.shape)
+            )
+        return grad_input_data, grad_input_exponent
 
 
 # --------------------
@@ -1851,8 +1873,6 @@ class Whitening(Function):
         grad_input_matrix = solve_sylvester_SPD(
             torch.sqrt(eigvals_matrix), eigvecs_matrix, syl_right
         )
-        print(grad_input_data)
-        print(grad_input_matrix)
         return grad_input_data, grad_input_matrix
 
 

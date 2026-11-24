@@ -5,7 +5,7 @@ import math
 import torch
 from torch.autograd import Function
 
-from yetanotherspdnet.functions.scalar_functions import inv_sqrt
+from yetanotherspdnet.functions.scalar_functions import inv_sqrt, zero_where_zero_std
 from yetanotherspdnet.functions.spd_linalg import eigh_operation, eigh_operation_grad
 
 from .affine_invariant import (
@@ -289,7 +289,11 @@ class SymmetrizedKullbackLeiblerStdScalar(Function):
             / 4
             / std_scalar
         )
-        return grad_input_data, grad_input_G
+        # std = 0: zero subgradient instead of 0/0
+        return (
+            zero_where_zero_std(grad_input_data, std_scalar),
+            zero_where_zero_std(grad_input_G, std_scalar),
+        )
 
 
 # ---------------------------------------------------------------------------
