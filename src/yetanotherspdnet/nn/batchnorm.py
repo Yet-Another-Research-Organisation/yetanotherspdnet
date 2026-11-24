@@ -948,6 +948,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
     running_std_scalar: torch.Tensor
     std_regularizer: torch.Tensor
 
+    # version 2: the GBWBN running mean is stored in the input space (version 1
+    # stored it in the transformed space of M, see _load_from_state_dict)
+    _version = 2
+
     def __init__(
         self,
         n_features: int,
@@ -1080,9 +1084,14 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         stdScalarbias : torch.Tensor
             Learnable positive scalar scale :math:`s`.
         running_mean : torch.Tensor of shape (n_features, n_features)
-            Buffer: running SPD mean.
+            Buffer: running SPD mean. For GBWBN, it is stored in the input
+            space, :math:`B_r = (M^{1/2} \hat B_r M^{1/2})^{1/\theta}` where
+            :math:`\hat B_r` is the running mean in the transformed space, and
+            mapped with the current :math:`M` when used (see the batch
+            normalization guide for what that guarantees).
         running_std_scalar : torch.Tensor
-            Buffer: running scalar standard deviation.
+            Buffer: running scalar standard deviation (for GBWBN, in the deformed
+            metric of the :math:`M` of each update).
         bw_M, bw_G : torch.Tensor of shape (n_features, n_features)
             GBWBN only: learnable SPD pre-transform :math:`M` and bias
             :math:`G`, applied in the transformed space as
@@ -1113,21 +1122,32 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         if self.mean_type == "bures_wasserstein":
             self.bw_theta = _check_bw_theta(bw_theta)
             self.bw_batch_stats_grad = bw_batch_stats_grad
-            # M: learnable SPD metric (n x n)
-            self.bw_M = torch.nn.Parameter(
-                torch.eye(n_features, dtype=self.dtype, device=self.device)
-            )
-            register_parametrization(
-                self, "bw_M", SPDParametrization(mapping=self.parametrization)
-            )
-            # G: learnable bias on the input manifold (n x n), mapped to the
-            # transformed space as M^{-1/2} G^theta M^{-1/2} like the data
-            self.bw_G = torch.nn.Parameter(
-                torch.eye(n_features, dtype=self.dtype, device=self.device)
-            )
-            register_parametrization(
-                self, "bw_G", SPDParametrization(mapping=self.parametrization)
-            )
+            # M: learnable SPD metric (n x n); G: learnable bias on the input
+            # manifold (n x n), mapped to the transformed space as
+            # M^{-1/2} G^theta M^{-1/2} like the data. Both start at I, with the
+            # parametrization of Covbias (static, or dynamic: tangent vector at
+            # a reference point moved every n_steps_ref_update steps)
+            self.bw_parametrizations: dict[
+                str, SPDParametrization | SPDAdaptiveParametrization
+            ] = {}
+            for name in ("bw_M", "bw_G"):
+                eye = torch.eye(n_features, dtype=self.dtype, device=self.device)
+                setattr(self, name, torch.nn.Parameter(eye))
+                spd_parametrization: SPDParametrization | SPDAdaptiveParametrization
+                if self.is_dynamic:
+                    spd_parametrization = SPDAdaptiveParametrization(
+                        n_features,
+                        initial_reference=eye.clone(),
+                        mapping=self.parametrization,
+                        device=self.device,
+                        dtype=self.dtype,
+                    )
+                else:
+                    spd_parametrization = SPDParametrization(
+                        mapping=self.parametrization
+                    )
+                self.bw_parametrizations[name] = spd_parametrization
+                register_parametrization(self, name, spd_parametrization)
 
     def _init_norm_parameters(self) -> None:
         """Initialize the batch, normalization and running parameters."""
@@ -1281,7 +1301,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         """
         Update the dynamic parametrization after ``optimizer.step()``.
 
-        No-op for GBWBN, which has no Covbias. See
+        For GBWBN (no Covbias), moves the reference points of :math:`M` and
+        :math:`G` to their current values (computed from the parameters after
+        the step, so the values are continuous across the update) and resets
+        their tangent vectors to zero. See
         ``torch.optim.Optimizer.register_step_post_hook`` for the signature.
 
         Parameters
@@ -1289,9 +1312,38 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         optimizer : torch.optim.Optimizer
             Torch optimizer used for training
         """
-        if self.mean_type == "bures_wasserstein":
+        if self.mean_type != "bures_wasserstein":
+            super()._post_optimizer_hook(_optimizer, *_args, **_kwargs)
             return
-        super()._post_optimizer_hook(_optimizer, *_args, **_kwargs)
+        if not (
+            self.training
+            and self.is_dynamic
+            and self.current_ref_step >= self.n_steps_ref_update
+        ):
+            return
+        with torch.no_grad():
+            for name in ("bw_M", "bw_G"):
+                self._move_reference_point(name, getattr(self, name))
+            self.current_ref_step = 0
+
+    def _move_reference_point(self, name: str, value: torch.Tensor) -> None:
+        """
+        Set the GBWBN SPD parameter *name* to *value*, as the reference point if dynamic.
+
+        Dynamic: the reference point becomes *value* and the tangent vector is
+        reset to zero. Static: the unconstrained tensor is set to the inverse
+        of the parametrization at *value*.
+        """
+        parametrization = self.bw_parametrizations[name]
+        with torch.no_grad():
+            if isinstance(parametrization, SPDAdaptiveParametrization):
+                parametrization.last_spd_value.copy_(value)
+                parametrization.update_reference_point()
+                _parametrization_of(self, name).original.zero_()
+            else:
+                _parametrization_of(self, name).original.copy_(
+                    parametrization.right_inverse(value)
+                )
 
     def _load_from_state_dict(
         self,
@@ -1303,16 +1355,32 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         unexpected_keys,
         error_msgs,
     ) -> None:
-        """
-        Drop the stale Covbias entries of GBWBN checkpoints.
+        r"""
+        Load GBWBN checkpoints of earlier versions.
 
-        GBWBN layers saved an unused Covbias before it was removed from that mode: drop
-        it so that older checkpoints still load.
+        - GBWBN layers saved an unused Covbias before it was removed from that
+          mode: it is dropped.
+        - Version 1 (``local_metadata["version"]`` missing or 1, as for every
+          checkpoint saved before the running mean moved to the input space)
+          stored the GBWBN running mean :math:`\hat B_r` in the transformed
+          space of the :math:`M` of the time; it is converted to the input space,
+          :math:`B_r = (M^{1/2} \hat B_r M^{1/2})^{1/\theta}`, with the
+          checkpoint's :math:`M` and the layer's :math:`\theta`, so the layer
+          gives the same outputs as before. Keep the ``_metadata`` attribute of
+          the state dict (``torch.save(module.state_dict())`` does) so that a
+          version-2 checkpoint is not converted twice.
+        - Version-1 checkpoints of ``parametrization_mode="dynamic"`` had static
+          parametrizations of :math:`M` and :math:`G` (reference point
+          :math:`I`): the missing reference buffers are set to :math:`I`, which
+          gives the same values.
         """
         if self.mean_type == "bures_wasserstein":
             stale = prefix + "parametrizations.Covbias."
             for key in [k for k in state_dict if k.startswith(stale)]:
                 del state_dict[key]
+            version = local_metadata.get("version", None)
+            if version is None or version < 2:
+                self._upgrade_bw_state_dict_v1(state_dict, prefix)
         super()._load_from_state_dict(
             state_dict,
             prefix,
@@ -1322,6 +1390,35 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             unexpected_keys,
             error_msgs,
         )
+
+    def _upgrade_bw_state_dict_v1(self, state_dict: dict, prefix: str) -> None:
+        """Convert a version-1 GBWBN state dict in place (see ``_load_from_state_dict``)."""
+        eye = torch.eye(self.n_features, dtype=self.dtype, device=self.device)
+        for name in ("bw_M", "bw_G"):
+            parametrization = self.bw_parametrizations[name]
+            if isinstance(parametrization, SPDAdaptiveParametrization):
+                for buffer in (
+                    "reference_point",
+                    "reference_point_sqrtm",
+                    "reference_point_inv_sqrtm",
+                    "last_spd_value",
+                ):
+                    state_dict.setdefault(
+                        f"{prefix}parametrizations.{name}.0.{buffer}", eye.clone()
+                    )
+        original_key = prefix + "parametrizations.bw_M.original"
+        mean_key = prefix + "running_mean"
+        if original_key not in state_dict or mean_key not in state_dict:
+            return
+        with torch.no_grad():
+            # version 1 charts are static (reference I): M = mapping(original)
+            mapping = SPDParametrization(mapping=self.parametrization)
+            M = mapping(state_dict[original_key].to(self.dtype))
+            M_sqrt = sqrtm_SPD(M)[0]
+            mean = M_sqrt @ state_dict[mean_key].to(M) @ M_sqrt
+            if self.bw_theta != 1.0:
+                mean = powm_SPD(mean, 1.0 / self.bw_theta)[0]
+            state_dict[mean_key] = mean
 
     def _norm_and_bias(
         self, data: torch.Tensor, parameters: tuple[torch.Tensor, torch.Tensor]
@@ -1410,10 +1507,22 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         )
 
         M_isqrt = inv_sqrtm(M)
-        data_pow = powm(data, theta) if theta != 1.0 else data
-        data_hat = M_isqrt @ data_pow @ M_isqrt
-        G = self.bw_G
-        G_hat = M_isqrt @ (powm(G, theta) if theta != 1.0 else G) @ M_isqrt
+        M_sqrt = sqrtm(M)
+
+        def to_transformed(point: torch.Tensor, power: Callable = powm) -> torch.Tensor:
+            # input space -> transformed space: P -> M^{-1/2} P^theta M^{-1/2}
+            return M_isqrt @ (power(point, theta) if theta != 1.0 else point) @ M_isqrt
+
+        def to_input(point: torch.Tensor) -> torch.Tensor:
+            # transformed space -> input space: P -> (M^{1/2} P M^{1/2})^{1/theta}
+            result = M_sqrt @ point @ M_sqrt
+            return powm(result, 1.0 / theta) if theta != 1.0 else result
+
+        def powm_no_grad(x: torch.Tensor, p: float) -> torch.Tensor:
+            return powm_SPD(x, p)[0]
+
+        data_hat = to_transformed(data)
+        G_hat = to_transformed(cast(torch.Tensor, self.bw_G))
 
         if _use_batch_statistics(self, data):
             with torch.set_grad_enabled(
@@ -1424,8 +1533,14 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
                 std_batch = self.std_fun(data_hat, mean) / abs(theta)
                 std = self.get_norm_std(std_batch)
             with torch.no_grad():
-                self.running_mean = self.adaptive_mean_fun(
-                    self.running_mean.to(data.device), mean_batch, self.momentum
+                # the running mean is stored in the input space (see
+                # _load_from_state_dict): pulled to the transformed space of the
+                # current M, moved along the BW geodesic, pushed back
+                running_mean = to_transformed(
+                    self.running_mean.to(data.device), powm_no_grad
+                )
+                self.running_mean = to_input(
+                    self.adaptive_mean_fun(running_mean, mean_batch, self.momentum)
                 )
                 self.running_std_scalar = self.adaptive_std_fun(
                     self.running_std_scalar.to(data.device), std_batch, self.momentum
@@ -1434,7 +1549,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             if self.is_dynamic:
                 self.current_ref_step += 1
         else:
-            mean = self.running_mean.to(data.device)
+            mean = to_transformed(self.running_mean.to(data.device), powm_no_grad)
             std = self.running_std_scalar.to(data.device)
 
         # BW center, scale, bias
@@ -1443,9 +1558,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         biased = bias(scaled, G_hat)
 
         # Post-transform: output = (M^{1/2} X_tilde M^{1/2})^{1/theta}
-        M_sqrt = sqrtm(M)
-        result = M_sqrt @ biased @ M_sqrt
-        return powm(result, 1.0 / theta) if theta != 1.0 else result
+        return to_input(biased)
 
     def __repr__(self) -> str:
         """

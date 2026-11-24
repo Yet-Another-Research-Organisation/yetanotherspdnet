@@ -2408,3 +2408,166 @@ class TestGBWBNTheta:
         # X^-theta = (X^theta)^-1 and the BW distance between inverses differs,
         # but the std is positive in both cases
         assert layers[-0.5].running_std_scalar > 0
+
+
+def _gbwbn(n_features=4, **kwargs):
+    return batchnorm.BatchNormSPDMeanScalarVariance(
+        n_features, mean_type="bures_wasserstein", dtype=torch.float64, **kwargs
+    )
+
+
+class TestGBWBNDynamicParametrization:
+    """parametrization_mode="dynamic" applies to the GBWBN parameters M and G."""
+
+    def test_adaptive_parametrizations(self):
+        from yetanotherspdnet.nn.parametrizations import SPDAdaptiveParametrization
+
+        layer = _gbwbn(parametrization_mode="dynamic")
+        for name in ("bw_M", "bw_G"):
+            parametrization = layer.parametrizations[name][0]
+            assert isinstance(parametrization, SPDAdaptiveParametrization)
+            assert_close(getattr(layer, name), torch.eye(4, dtype=torch.float64))
+
+    def test_reference_update_is_continuous(self, generator):
+        """With a real optimizer.step(), M and G after the reference update equal
+        the values given by the step itself, and the tangent vectors are reset."""
+        import copy
+
+        from yetanotherspdnet.nn.parametrizations import _parametrization_of
+
+        layer = _gbwbn(parametrization_mode="dynamic", n_steps_ref_update=2)
+        optimizer = torch.optim.SGD(layer.parameters(), lr=0.05)
+        layer.register_optimizer_hook(optimizer)
+        names = ("bw_M", "bw_G")
+        for step in range(4):
+            data = random_SPD(4, 8, cond=10, dtype=torch.float64, generator=generator)
+            optimizer.zero_grad()
+            layer(data).diagonal(dim1=-2, dim2=-1).pow(2).sum().backward()
+            # expected values: the SGD step applied to a copy without the hook
+            twin = copy.deepcopy(layer)
+            with torch.no_grad():
+                for name in names:
+                    original = _parametrization_of(twin, name).original
+                    original -= 0.05 * _parametrization_of(layer, name).original.grad
+            expected = {name: getattr(twin, name).detach() for name in names}
+            optimizer.step()
+            updated = step % 2 == 1
+            assert layer.current_ref_step == (0 if updated else 1)
+            for name in names:
+                assert_close(
+                    getattr(layer, name), expected[name], rtol=1e-12, atol=1e-12
+                )
+                original = _parametrization_of(layer, name).original
+                if updated:
+                    assert original.abs().max() == 0
+                    assert_close(
+                        layer.parametrizations[name][0].reference_point, expected[name]
+                    )
+            assert not torch.equal(layer.bw_M, torch.eye(4, dtype=torch.float64))
+
+    def test_static_hook_is_noop(self, generator):
+        layer = _gbwbn()
+        optimizer = torch.optim.SGD(layer.parameters(), lr=0.05)
+        layer.register_optimizer_hook(optimizer)
+        data = random_SPD(4, 8, cond=10, dtype=torch.float64, generator=generator)
+        layer(data).sum().backward()
+        optimizer.step()
+        assert layer.training_step == 1
+
+
+class TestGBWBNRunningStatistics:
+    """The GBWBN running mean is stored in the input space."""
+
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_running_mean_follows_scaled_metric(self, bw_theta, generator):
+        """The BW mean is 1-homogeneous, so after M -> cM the running mean mapped
+        with the new M, M^{-1/2} B_r^theta M^{-1/2}, is exactly the batch mean in
+        the new transformed space; the transformed-space storage of version 1
+        was off by the factor c. (The running std, a distance of the deformed
+        metric, scales by 1/sqrt(c) and is not adjusted.)"""
+        from yetanotherspdnet.functions.spd_geometries.bures_wasserstein import (
+            bures_wasserstein_mean,
+        )
+        from yetanotherspdnet.functions.spd_linalg import powm_SPD
+
+        dtype = torch.float64
+        layer = _gbwbn(bw_theta=bw_theta, momentum=1.0)
+        data = random_SPD(4, 8, cond=10, dtype=dtype, generator=generator)
+        layer(data)  # running statistics with M = I
+        c = 3.0
+        data_pow = powm_SPD(data, bw_theta)[0]
+        running_pow = powm_SPD(layer.running_mean, bw_theta)[0]
+        # running mean seen with M = cI vs batch mean of the data seen with M = cI
+        assert_close(running_pow / c, bures_wasserstein_mean(data_pow / c))
+        # version 1 kept the transformed mean of M = I, c times too large
+        assert not torch.allclose(running_pow, bures_wasserstein_mean(data_pow / c))
+        # through the layer: with the std rescaled by hand, the evaluation output
+        # with M = cI equals the training output with M = cI
+        with torch.no_grad():
+            layer.bw_M = c * torch.eye(4, dtype=dtype)
+            layer.running_std_scalar /= c**0.5
+        layer.eval()
+        eval_output = layer(data)
+        layer.train()
+        assert_close(eval_output, layer(data), rtol=1e-10, atol=1e-12)
+
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_round_trip_same_metric(self, bw_theta, generator):
+        """momentum = 1: the running statistics are the batch statistics, and
+        the input-space storage round trip gives the training output back."""
+        dtype = torch.float64
+        layer = _gbwbn(bw_theta=bw_theta, momentum=1.0)
+        with torch.no_grad():
+            layer.bw_M = random_SPD(4, 1, cond=5, dtype=dtype, generator=generator)
+        data = random_SPD(4, 8, cond=10, dtype=dtype, generator=generator)
+        train_output = layer(data)
+        layer.eval()
+        assert_close(layer(data), train_output, rtol=1e-10, atol=1e-12)
+
+    @pytest.mark.parametrize("mode", ["static", "dynamic"])
+    @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+    def test_version_1_checkpoint(self, mode, bw_theta, generator):
+        """A version-1 state dict (running mean in the transformed space of its
+        M, static charts) loads and gives the same evaluation outputs."""
+        from yetanotherspdnet.functions.spd_linalg import powm_SPD, sqrtm_SPD
+
+        dtype = torch.float64
+        layer = _gbwbn(bw_theta=bw_theta, momentum=0.5)
+        with torch.no_grad():
+            layer.bw_M = random_SPD(4, 1, cond=5, dtype=dtype, generator=generator)
+        for _ in range(3):
+            layer(random_SPD(4, 8, cond=10, dtype=dtype, generator=generator))
+        layer.eval()
+        data = random_SPD(4, 8, cond=10, dtype=dtype, generator=generator)
+        expected = layer(data)
+        # the version-1 state dict of the same layer
+        state = layer.state_dict()
+        M_isqrt = torch.linalg.inv(sqrtm_SPD(layer.bw_M.detach())[0])
+        running = state["running_mean"]
+        if bw_theta != 1.0:
+            running = powm_SPD(running, bw_theta)[0]
+        state["running_mean"] = M_isqrt @ running @ M_isqrt
+        state._metadata[""]["version"] = 1
+        if mode == "dynamic":
+            state = type(state)(
+                (k, v)
+                for k, v in state.items()
+                if "reference" not in k and "last" not in k
+            )
+            state._metadata = layer.state_dict()._metadata
+            state._metadata[""]["version"] = 1
+        loaded = _gbwbn(bw_theta=bw_theta, parametrization_mode=mode)
+        loaded.load_state_dict(state, strict=True)
+        loaded.eval()
+        assert_close(loaded(data), expected, rtol=1e-9, atol=1e-11)
+        assert_close(loaded.bw_M, layer.bw_M)
+
+    def test_version_2_checkpoint_not_converted(self, generator):
+        dtype = torch.float64
+        layer = _gbwbn(momentum=0.5)
+        with torch.no_grad():
+            layer.bw_M = random_SPD(4, 1, cond=5, dtype=dtype, generator=generator)
+        layer(random_SPD(4, 8, cond=10, dtype=dtype, generator=generator))
+        loaded = _gbwbn()
+        loaded.load_state_dict(layer.state_dict())
+        assert_close(loaded.running_mean, layer.running_mean)
