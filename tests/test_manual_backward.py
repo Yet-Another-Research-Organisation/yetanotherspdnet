@@ -24,7 +24,9 @@ from yetanotherspdnet.functions.dispatch import (
 from yetanotherspdnet.functions.spd_geometries import bures_wasserstein as bw
 from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
     AffineInvariantNorm,
+    AffineInvariantStdScalar,
     affine_invariant_norm,
+    affine_invariant_std_scalar,
 )
 from yetanotherspdnet.functions.spd_linalg import (
     EighClamp,
@@ -316,6 +318,57 @@ def test_gradcheck_affine_invariant_norm(spectrum):
     torch.testing.assert_close(
         AffineInvariantNorm.apply(base, tangent), affine_invariant_norm(base, tangent)
     )
+
+
+STD_FUNCTIONS = {
+    "affine_invariant": AffineInvariantStdScalar.apply,
+    "bures_wasserstein": bw.BuresWassersteinStdScalar.apply,
+}
+
+
+@pytest.mark.parametrize("spectrum", list(SPECTRA))
+@pytest.mark.parametrize("name", list(STD_FUNCTIONS))
+def test_gradcheck_std_scalar(name, spectrum):
+    """Scalar std backwards (reusing the forward decomposition)."""
+    eigvals = SPECTRA[spectrum]
+    reference = _spd(eigvals).requires_grad_(True)
+    # data in the eigenbasis of the reference, eigenvalues rescaled: std > 0 and
+    # G^{-1/2} X G^{-1/2} well conditioned whatever kappa (with independent
+    # rotations it reaches kappa^2 and the finite differences lose all digits)
+    scalings = ([2.0, 3.0, 1.5, 2.5], [0.5, 2.0, 3.0, 1.2], [1.5, 1.5, 0.7, 4.0])
+    data = torch.stack(
+        [_spd([c * v for c, v in zip(cs, eigvals)], seed=0) for cs in scalings]
+    )
+    data = data.requires_grad_(True)
+    function = STD_FUNCTIONS[name]
+    # BW: the distance is a difference of traces of size kappa, whose rounding
+    # swamps a 1e-6 step; a 1e-3 step keeps the truncation error negligible
+    step = min(eigvals) * (1e3 if name == "bures_wasserstein" else 1.0)
+    assert _check(
+        lambda x, g: function(symmetrize(x), symmetrize(g)),
+        (data, reference),
+        step,
+    )
+
+
+@pytest.mark.parametrize("name", list(STD_FUNCTIONS))
+def test_std_scalar_matches_autograd(name):
+    autograd_functions = {
+        "affine_invariant": affine_invariant_std_scalar,
+        "bures_wasserstein": bw.bures_wasserstein_std_scalar,
+    }
+    for kappa in (1e2, 1e6):
+        data = random_spd(5, N, kappa=kappa, seed=3).requires_grad_(True)
+        reference = random_spd(1, N, kappa=kappa, seed=4)[0].requires_grad_(True)
+        grads_manual = torch.autograd.grad(
+            STD_FUNCTIONS[name](data, reference), (data, reference)
+        )
+        grads_auto = torch.autograd.grad(
+            autograd_functions[name](data, reference), (data, reference)
+        )
+        for g_manual, g_auto in zip(grads_manual, grads_auto):
+            scale = g_auto.abs().max()
+            torch.testing.assert_close(g_manual, g_auto, rtol=1e-7, atol=1e-7 * scale)
 
 
 BW_FUNCTIONS = {
