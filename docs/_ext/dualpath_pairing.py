@@ -51,3 +51,27 @@ def pair_members(
         seen.add(k)
         rows.append((autograd.get(k), manual.get(k)))
     return rows
+
+
+def deprecated_members(module) -> list[tuple[str, str]]:
+    """
+    ``(alias, message)`` for the deprecated aliases bound in *module*.
+
+    The aliases are found by their ``__deprecated__`` marker in ``vars(module)``,
+    whatever their ``__module__`` (a function alias built with
+    ``functools.wraps`` reports the module of its target).
+    """
+    return [
+        (name, str(obj.__deprecated__))
+        for name, obj in vars(module).items()
+        if not name.startswith("_") and hasattr(obj, "__deprecated__")
+    ]
+
+
+def replacement(message: str) -> str:
+    """Name or expression recommended by a deprecation message (``"use X instead"``)."""
+    start = message.find("use ")
+    end = message.find(" instead", start)
+    if start < 0 or end < 0:
+        return ""
+    return message[start + 4 : end].strip()
