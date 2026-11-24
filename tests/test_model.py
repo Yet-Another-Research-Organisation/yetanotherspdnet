@@ -417,6 +417,7 @@ class TestSPDnet:
             output_dim=3,
             bimap_parametrization_mode="dynamic",
             bimap_n_steps_ref_update=2,
+            batchnorm=True,
             batchnorm_parametrization_mode="dynamic",
             batchnorm_n_steps_ref_update=2,
             device=device,
@@ -722,7 +723,7 @@ class TestSPDnet:
                 assert layer.parametrizations.Covbias.original.grad.abs().sum() > 0, (
                     f"BatchNormSPDMean layer {i} Covbias has zero gradient"
                 )
-            elif isinstance(layer, BatchNormSPDMeanScalarVariance):
+            if isinstance(layer, BatchNormSPDMeanScalarVariance):
                 assert layer.parametrizations.stdScalarbias.original.grad is not None, (
                     f"BatchNormSPDMeanScalarVariance layer {i} stdScalarbias has no gradient"
                 )
