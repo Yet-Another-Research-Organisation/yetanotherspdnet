@@ -1,11 +1,12 @@
 """Log-Euclidean Riemannian geometry: geodesic, mean, and standard deviation."""
 
 import math
+import warnings
 
 import torch
 from torch.autograd import Function
 
-from yetanotherspdnet.functions.scalar_functions import inv
+from yetanotherspdnet.functions.scalar_functions import inv, zero_where_zero_std
 
 from ..spd_linalg import (
     ExpmSymmetric,
@@ -181,7 +182,8 @@ def log_euclidean_std_scalar(
     n_matrices = math.prod(data.shape[:-2])
     logm_data = logm_SPD(data)[0]
     logm_G = logm_SPD(reference_point)[0]
-    return torch.sqrt(torch.sum((logm_data - logm_G) ** 2) / n_matrices)
+    variance = torch.sum((logm_data - logm_G) ** 2) / n_matrices
+    return torch.sqrt(torch.clamp(variance, min=0.0))
 
 
 class LogEuclideanStdScalar(Function):
@@ -213,7 +215,8 @@ class LogEuclideanStdScalar(Function):
         n_matrices = math.prod(data.shape[:-2])
         logm_data, eigvals_data, eigvecs_data = logm_SPD(data)
         logm_G, eigvals_G, eigvecs_G = logm_SPD(reference_point)
-        std_scalar = torch.sqrt(torch.sum((logm_data - logm_G) ** 2) / n_matrices)
+        variance = torch.sum((logm_data - logm_G) ** 2) / n_matrices
+        std_scalar = torch.sqrt(torch.clamp(variance, min=0.0))
         ctx.n_matrices = n_matrices
         ctx.save_for_backward(
             logm_data,
@@ -265,7 +268,11 @@ class LogEuclideanStdScalar(Function):
         grad_input_G = eigh_operation_grad(
             grad_logm_G, eigvals_G, eigvecs_G, torch.log, inv
         )
-        return grad_input_data, grad_input_G
+        # std = 0: zero subgradient instead of 0/0
+        return (
+            zero_where_zero_std(grad_input_data, std_scalar),
+            zero_where_zero_std(grad_input_G, std_scalar),
+        )
 
 
 # ------------------
@@ -298,7 +305,7 @@ def log_euclidean_parallel_transport_SPD(
     )[0]
 
 
-def LogEuclideanParalleTransportSPD(
+def LogEuclideanParallelTransportSPD(
     data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
     """
@@ -325,6 +332,28 @@ def LogEuclideanParalleTransportSPD(
         - LogmSPD.apply(current_reference)
         + LogmSPD.apply(new_reference)
     )
+
+
+def LogEuclideanParalleTransportSPD(
+    data: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
+) -> torch.Tensor:
+    """
+    Deprecated alias of :func:`LogEuclideanParallelTransportSPD` (misspelled
+    name), kept for backward compatibility.
+    """
+    warnings.warn(
+        "LogEuclideanParalleTransportSPD is deprecated, use "
+        "LogEuclideanParallelTransportSPD instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return LogEuclideanParallelTransportSPD(data, current_reference, new_reference)
+
+
+# marker read by the documentation (docs/_ext/dualpath_pairing.py)
+LogEuclideanParalleTransportSPD.__deprecated__ = (
+    "use LogEuclideanParallelTransportSPD instead"
+)
 
 
 # -----------------------------------

@@ -145,6 +145,7 @@ select = [
     "ARG",    # flake8-unused-arguments
     "SIM",    # flake8-simplify
     "NPY",    # NumPy-specific rules
+    "T20",    # flake8-print: no print() in library code
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
@@ -156,6 +157,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
 "tests/*" = ["ARG", "S101"]  # Allow assert statements in tests
+"docs/_diagrams/*" = ["T20"]  # command-line script reporting the files it writes
 
 [tool.ruff.lint.isort]
 known-first-party = ["yetanotherspdnet"]

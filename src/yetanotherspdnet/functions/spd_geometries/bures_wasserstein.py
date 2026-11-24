@@ -17,7 +17,7 @@ import math
 import torch
 from torch.autograd import Function
 
-from yetanotherspdnet.functions.scalar_functions import inv_sqrt
+from yetanotherspdnet.functions.scalar_functions import inv_sqrt, zero_where_zero_std
 
 from ..spd_linalg import (
     eigh_operation,
@@ -544,7 +544,8 @@ def bures_wasserstein_std_scalar(
     trace_inner = torch.diagonal(inner_sqrt, dim1=-2, dim2=-1).sum(-1)
     dist_sq = trace_B + trace_X - 2 * trace_inner
     variance = dist_sq.sum() / n_matrices
-    return torch.sqrt(variance)
+    # clamp: rounding can make the variance slightly negative
+    return torch.sqrt(torch.clamp(variance, min=0.0))
 
 
 class BuresWassersteinStdScalar(Function):
@@ -593,7 +594,8 @@ class BuresWassersteinStdScalar(Function):
 
         dist_sq = trace_B + trace_X - 2 * trace_inner
         variance = dist_sq.sum() / n_matrices
-        scalar_std = torch.sqrt(variance)
+        # clamp: rounding can make the variance slightly negative
+        scalar_std = torch.sqrt(torch.clamp(variance, min=0.0))
 
         ctx.n_matrices = n_matrices
         ctx.save_for_backward(
@@ -665,7 +667,11 @@ class BuresWassersteinStdScalar(Function):
         grad_dist_sq_B = eye - data_sqrtm @ inner_B_inv_sqrt @ data_sqrtm
         grad_input_G = grad_output * arithmetic_mean(grad_dist_sq_B) / (2 * scalar_std)
 
-        return grad_input_data, grad_input_G
+        # std = 0: zero subgradient instead of 0/0
+        return (
+            zero_where_zero_std(grad_input_data, scalar_std),
+            zero_where_zero_std(grad_input_G, scalar_std),
+        )
 
 
 # ----------------------------------------

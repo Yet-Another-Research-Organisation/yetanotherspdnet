@@ -417,6 +417,7 @@ class TestSPDnet:
             output_dim=3,
             bimap_parametrization_mode="dynamic",
             bimap_n_steps_ref_update=2,
+            batchnorm=True,
             batchnorm_parametrization_mode="dynamic",
             batchnorm_n_steps_ref_update=2,
             device=device,
@@ -429,7 +430,7 @@ class TestSPDnet:
 
         for module in model.modules():
             if isinstance(
-                module, BiMap or BatchNormSPDMean or BatchNormSPDMeanScalarVariance
+                module, (BiMap, BatchNormSPDMean, BatchNormSPDMeanScalarVariance)
             ):
                 assert hasattr(module, "is_dynamic") and module.is_dynamic is True
 
@@ -441,7 +442,7 @@ class TestSPDnet:
         # check current_ref_step is correct
         for module in model.modules():
             if isinstance(
-                module, BiMap or BatchNormSPDMean or BatchNormSPDMeanScalarVariance
+                module, (BiMap, BatchNormSPDMean, BatchNormSPDMeanScalarVariance)
             ):
                 assert module.current_ref_step == 1
         loss = output.sum()
@@ -455,7 +456,7 @@ class TestSPDnet:
                     module.stiefel_parametrization.reference_point,
                     module.stiefel_parametrization.initial_reference,
                 )
-            if isinstance(module, BatchNormSPDMean or BatchNormSPDMeanScalarVariance):
+            if isinstance(module, (BatchNormSPDMean, BatchNormSPDMeanScalarVariance)):
                 assert_close(
                     module.spd_parametrization.reference_point,
                     module.spd_parametrization.initial_reference,
@@ -469,7 +470,7 @@ class TestSPDnet:
         # check current_ref_step is correct
         for module in model.modules():
             if isinstance(
-                module, BiMap or BatchNormSPDMean or BatchNormSPDMeanScalarVariance
+                module, (BiMap, BatchNormSPDMean, BatchNormSPDMeanScalarVariance)
             ):
                 assert module.current_ref_step == 2
         loss = output.sum()
@@ -490,7 +491,7 @@ class TestSPDnet:
                     ),
                 )
                 assert module.current_ref_step == 0
-            if isinstance(module, BatchNormSPDMean or BatchNormSPDMeanScalarVariance):
+            if isinstance(module, (BatchNormSPDMean, BatchNormSPDMeanScalarVariance)):
                 assert not torch.allclose(
                     module.spd_parametrization.reference_point,
                     module.spd_parametrization.initial_reference,
@@ -722,7 +723,7 @@ class TestSPDnet:
                 assert layer.parametrizations.Covbias.original.grad.abs().sum() > 0, (
                     f"BatchNormSPDMean layer {i} Covbias has zero gradient"
                 )
-            elif isinstance(layer, BatchNormSPDMeanScalarVariance):
+            if isinstance(layer, BatchNormSPDMeanScalarVariance):
                 assert layer.parametrizations.stdScalarbias.original.grad is not None, (
                     f"BatchNormSPDMeanScalarVariance layer {i} stdScalarbias has no gradient"
                 )

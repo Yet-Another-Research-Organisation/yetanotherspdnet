@@ -182,3 +182,29 @@ def inv_scaled_softplus_derivative(x: torch.Tensor) -> torch.Tensor:
         Derivative of the inverse SoftPlus of x
     """
     return 1 / (1.0 - torch.exp2(-x))
+
+
+def zero_where_zero_std(grad: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+    r"""
+    Zero a gradient where the scalar standard deviation it was divided by is 0.
+
+    The scalar standard deviations :math:`\sigma = \sqrt{v}` are not
+    differentiable at :math:`v = 0` (all the matrices equal the reference
+    point, or a variance clamped at 0): their hand-written backwards divide by
+    :math:`\sigma`, which gives 0/0 = NaN there. They return the zero
+    subgradient instead.
+
+    Parameters
+    ----------
+    grad : torch.Tensor
+        Gradient computed with a division by std
+
+    std : torch.Tensor of shape ()
+        Scalar standard deviation
+
+    Returns
+    -------
+    grad : torch.Tensor
+        grad where std > 0, zeros where std == 0
+    """
+    return torch.where(std > 0, grad, torch.zeros_like(grad))

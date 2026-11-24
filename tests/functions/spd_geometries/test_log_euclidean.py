@@ -776,7 +776,7 @@ class TestLogEuclideanParallelTransportSPD:
             generator=generator,
         )
         # transported matrices
-        data_transp_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+        data_transp_manual = log_euclidean.LogEuclideanParallelTransportSPD(
             data, current_reference, new_reference
         )
         data_transp_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
@@ -822,7 +822,7 @@ class TestLogEuclideanParallelTransportSPD:
             generator=generator,
         )
         # transport
-        data_transp_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+        data_transp_manual = log_euclidean.LogEuclideanParallelTransportSPD(
             data, current_reference, current_reference
         )
         data_transp_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
@@ -869,7 +869,7 @@ class TestLogEuclideanParallelTransportSPD:
             generator=generator,
         )
         # transport
-        data_transp_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+        data_transp_manual = log_euclidean.LogEuclideanParallelTransportSPD(
             data, current_reference, new_reference
         )
         data_transp_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
@@ -932,7 +932,7 @@ class TestLogEuclideanParallelTransportSPD:
             @ eigvecs.transpose(-2, -1)
         )
         # transport
-        data_transp_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+        data_transp_manual = log_euclidean.LogEuclideanParallelTransportSPD(
             data, current_reference, new_reference
         )
         data_transp_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
@@ -985,14 +985,14 @@ class TestLogEuclideanParallelTransportSPD:
             generator=generator,
         )
         # transport
-        data_transp_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+        data_transp_manual = log_euclidean.LogEuclideanParallelTransportSPD(
             data, current_reference, new_reference
         )
         data_transp_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
             data, current_reference, new_reference
         )
         # transport back to original reference_point
-        data_original_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+        data_original_manual = log_euclidean.LogEuclideanParallelTransportSPD(
             data_transp_manual, new_reference, current_reference
         )
         data_original_auto = log_euclidean.log_euclidean_parallel_transport_SPD(
@@ -1068,7 +1068,7 @@ class TestLogEuclideanParallelTransportSPD:
         xi_auto = data.clone().detach()
         xi_auto.requires_grad = True
 
-        eta_manual = log_euclidean.LogEuclideanParalleTransportSPD(
+        eta_manual = log_euclidean.LogEuclideanParallelTransportSPD(
             xi_manual, X_manual, Y_manual
         )
         eta_auto = log_euclidean.log_euclidean_parallel_transport_SPD(

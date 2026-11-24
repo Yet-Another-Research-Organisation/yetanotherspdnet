@@ -56,7 +56,7 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized impo
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
     LogEuclideanGeodesic,
     LogEuclideanMean,
-    LogEuclideanParalleTransportSPD,
+    LogEuclideanParallelTransportSPD,
     LogEuclideanStdScalar,
     log_euclidean_geodesic,
     log_euclidean_mean,
@@ -944,7 +944,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
                 self.parallel_transport = (
                     log_euclidean_parallel_transport_SPD
                     if self.use_autograd
-                    else LogEuclideanParalleTransportSPD
+                    else LogEuclideanParallelTransportSPD
                 )
             elif self.mean_type in (
                 "arithmetic",
@@ -1259,7 +1259,8 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         Attributes
         ----------
         Covbias : torch.Tensor of shape (n_features, n_features)
-            Learnable SPD bias.
+            Learnable SPD bias (not created for mean_type="bures_wasserstein",
+            which uses bw_G).
         stdScalarbias : torch.Tensor
             Learnable positive scalar scale :math:`s`.
         running_mean : torch.Tensor of shape (n_features, n_features)
@@ -1330,8 +1331,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         """
         Initialize bias parameters and their parametrization
         """
-        # init cov bias from parent class
-        super()._init_bias_parameters()
+        # init cov bias from parent class (GBWBN uses its own bias bw_G instead)
+        if self.mean_type != "bures_wasserstein":
+            super()._init_bias_parameters()
         # scalar variance bias parameter
         self.stdScalarbias = torch.nn.Parameter(
             torch.ones((), dtype=self.dtype, device=self.device)
@@ -1342,6 +1344,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         """
         Initialize normalization and bias functions
         """
+        if self.mean_type == "bures_wasserstein":
+            # GBWBN has its own pipeline (see _forward_bures_wasserstein)
+            return
         # init parent class norm and bias functions
         super()._init_norm_and_bias()
         # normalize and add bias scalar variance function
@@ -1355,7 +1360,8 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         """
         Auxiliray function to select std function
         """
-        if self.mean_type == "affine_invariant":
+        if self.mean_type in ("affine_invariant", "affine_invariant_gevd"):
+            # the GEVD backend computes the same affine-invariant mean
             self.std_fun = (
                 affine_invariant_std_scalar
                 if self.use_autograd
@@ -1379,7 +1385,12 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
                 if self.use_autograd
                 else RightKullbackLeiblerStdScalar.apply
             )
-        elif self.mean_type == "geometric_arithmetic_harmonic":
+        elif self.mean_type in (
+            "geometric_arithmetic_harmonic",
+            "adaptive_geometric_arithmetic_harmonic",
+        ):
+            # same dispersion as the (fixed t = 1/2) GAH mean: the symmetrized
+            # Kullback-Leibler divergence
             self.std_fun = (
                 symmetrized_kullback_leibler_std_scalar
                 if self.use_autograd
@@ -1410,7 +1421,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         Auxiliary function to handle var used for normalization with minibatch strategy
         """
         std_scalar = self.adaptive_std_fun(
-            self.std_regularizer, std_scalar_batch, self.minibatch_momentum
+            self.std_regularizer, std_scalar_batch, self.get_minibatch_momentum()
         )
         with torch.no_grad():
             self.std_regularizer = std_scalar.detach()
@@ -1481,6 +1492,51 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             Running mean and scalar std
         """
         return (self.running_mean, self.running_std_scalar)
+
+    def _post_optimizer_hook(
+        self, _optimizer: torch.optim.Optimizer, *_args, **_kwargs
+    ) -> None:
+        """
+        Hook that runs after optimizer.step() to handle dynamic parametrization
+        reference point (no-op for GBWBN, which has no Covbias).
+        See torch.optim.Optimizer.register_step_post_hook method for more details
+
+        Parameters
+        ----------
+        optimizer : torch.optim.Optimizer
+            Torch optimizer used for training
+        """
+        if self.mean_type == "bures_wasserstein":
+            return
+        super()._post_optimizer_hook(_optimizer, *_args, **_kwargs)
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ) -> None:
+        """
+        Drop the unused Covbias entries that GBWBN layers saved before Covbias
+        was removed from that mode, so that older checkpoints still load.
+        """
+        if self.mean_type == "bures_wasserstein":
+            stale = prefix + "parametrizations.Covbias."
+            for key in [k for k in state_dict if k.startswith(stale)]:
+                del state_dict[key]
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
 
     def _norm_and_bias(
         self, data: torch.Tensor, parameters: tuple[torch.Tensor, torch.Tensor]

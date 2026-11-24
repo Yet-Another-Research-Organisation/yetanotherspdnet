@@ -8,6 +8,7 @@ from torch.autograd import Function
 from yetanotherspdnet.functions.scalar_functions import (
     inv,
     inv_sqrt,
+    zero_where_zero_std,
 )
 
 from ..spd_linalg import (
@@ -633,7 +634,8 @@ def affine_invariant_std_scalar(
     G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
     transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
     eigvals = torch.linalg.eigvalsh(transformed_data)
-    return torch.sqrt(torch.sum(torch.log(eigvals) ** 2) / n_matrices)
+    variance = torch.sum(torch.log(eigvals) ** 2) / n_matrices
+    return torch.sqrt(torch.clamp(variance, min=0.0))
 
 
 class AffineInvariantStdScalar(Function):
@@ -666,9 +668,8 @@ class AffineInvariantStdScalar(Function):
         G_inv_sqrtm = inv_sqrtm_SPD(reference_point)[0]
         transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
         eigvals_transdat, eigvecs_transdat = torch.linalg.eigh(transformed_data)
-        scalar_std = torch.sqrt(
-            torch.sum(torch.log(eigvals_transdat) ** 2) / n_matrices
-        )
+        variance = torch.sum(torch.log(eigvals_transdat) ** 2) / n_matrices
+        scalar_std = torch.sqrt(torch.clamp(variance, min=0.0))
         ctx.n_matrices = n_matrices
         ctx.save_for_backward(
             data,
@@ -733,7 +734,11 @@ class AffineInvariantStdScalar(Function):
             * arithmetic_mean(data_inv_sqrtm @ middle_term_G @ data_inv_sqrtm)
             / scalar_std
         )
-        return grad_input_data, grad_input_G
+        # std = 0: zero subgradient instead of 0/0
+        return (
+            zero_where_zero_std(grad_input_data, scalar_std),
+            zero_where_zero_std(grad_input_G, scalar_std),
+        )
 
 
 # -----------------------------------

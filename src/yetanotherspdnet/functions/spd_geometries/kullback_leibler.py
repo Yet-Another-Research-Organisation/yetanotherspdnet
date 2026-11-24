@@ -5,6 +5,7 @@ import math
 import torch
 from torch.autograd import Function
 
+from ..scalar_functions import zero_where_zero_std
 from ..spd_linalg import (
     symmetrize,
 )
@@ -176,7 +177,9 @@ class ArithmeticMean(Function):
         if len(shape) == 2:
             return symmetrize(grad_output)
         n_matrices = math.prod(shape[:-2])
-        grad_input = torch.zeros(shape, device=grad_output.device)
+        grad_input = torch.zeros(
+            shape, dtype=grad_output.dtype, device=grad_output.device
+        )
         grad_input[..., :, :] = symmetrize(grad_output / n_matrices)
         return grad_input
 
@@ -304,7 +307,11 @@ class LeftKullbackLeiblerStdScalar(Function):
             / 2
             / std_scalar
         )
-        return grad_input_data, grad_input_G
+        # std = 0: zero subgradient instead of 0/0
+        return (
+            zero_where_zero_std(grad_input_data, std_scalar),
+            zero_where_zero_std(grad_input_G, std_scalar),
+        )
 
 
 # --------------
@@ -627,4 +634,8 @@ class RightKullbackLeiblerStdScalar(Function):
         grad_input_G = (
             grad_output * (arithmetic_mean(data_inv) - G_inv) / 2 / std_scalar
         )
-        return grad_input_data, grad_input_G
+        # std = 0: zero subgradient instead of 0/0
+        return (
+            zero_where_zero_std(grad_input_data, std_scalar),
+            zero_where_zero_std(grad_input_G, std_scalar),
+        )
