@@ -17,6 +17,7 @@ from yetanotherspdnet.functions.scalar_functions import (
     pow_divided_difference,
     pow_exponent_derivative,
     sqrt_derivative,
+    std_from_variance,
     zero_where_zero_std,
 )
 
@@ -538,7 +539,7 @@ def affine_invariant_std_scalar(
     transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
     eigvals = torch.linalg.eigvalsh(transformed_data)
     variance = torch.sum(torch.log(eigvals) ** 2) / n_matrices
-    return torch.sqrt(torch.clamp(variance, min=0.0))
+    return std_from_variance(variance)
 
 
 class AffineInvariantStdScalar(Function):
@@ -570,7 +571,7 @@ class AffineInvariantStdScalar(Function):
         transformed_data = G_inv_sqrtm @ data @ G_inv_sqrtm
         eigvals_transdat, eigvecs_transdat = torch.linalg.eigh(transformed_data)
         variance = torch.sum(torch.log(eigvals_transdat) ** 2) / n_matrices
-        scalar_std = torch.sqrt(torch.clamp(variance, min=0.0))
+        scalar_std = std_from_variance(variance)
         ctx.n_matrices = n_matrices
         ctx.save_for_backward(
             G_inv_sqrtm,

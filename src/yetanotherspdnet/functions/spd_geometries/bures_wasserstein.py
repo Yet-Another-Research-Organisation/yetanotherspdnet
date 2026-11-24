@@ -17,7 +17,12 @@ import math
 import torch
 from torch.autograd import Function
 
-from yetanotherspdnet.functions.scalar_functions import inv_sqrt, zero_where_zero_std
+from yetanotherspdnet.functions._constants import BW_SCALE_EPS
+from yetanotherspdnet.functions.scalar_functions import (
+    inv_sqrt,
+    std_from_variance,
+    zero_where_zero_std,
+)
 
 from ..spd_linalg import (
     SqrtmAndInvSqrtmSPD,
@@ -629,7 +634,7 @@ def _bures_wasserstein_std_scalar(
     dist_sq = trace_B + trace_X - 2 * trace_inner
     variance = dist_sq.sum() / n_matrices
     # clamp: rounding can make the variance slightly negative
-    scalar_std = torch.sqrt(torch.clamp(variance, min=0.0))
+    scalar_std = std_from_variance(variance)
     return scalar_std, B_sqrt, B_inv_sqrt, inner_sqrt, eigvals_inner, eigvecs_inner
 
 
@@ -771,7 +776,7 @@ def bures_wasserstein_scale(
     data: torch.Tensor,
     variance: torch.Tensor,
     shift: torch.Tensor,
-    eps: float = 1e-5,
+    eps: float = BW_SCALE_EPS,
 ) -> torch.Tensor:
     r"""
     Scale centered SPD data at the identity.
@@ -993,7 +998,7 @@ def BuresWassersteinScale(
     data: torch.Tensor,
     variance: torch.Tensor,
     shift: torch.Tensor,
-    eps: float = 1e-5,
+    eps: float = BW_SCALE_EPS,
 ) -> torch.Tensor:
     r"""
     Scale centered SPD data at the identity (manual backward).

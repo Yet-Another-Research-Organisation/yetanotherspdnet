@@ -27,6 +27,7 @@ from yetanotherspdnet.functions.spd_linalg import (
     eigvalsh_symmetric,
     expm_symmetric,
     logm_SPD,
+    spd_floor,
     symmetrize,
 )
 from yetanotherspdnet.nn.parametrizations import (
@@ -35,9 +36,16 @@ from yetanotherspdnet.nn.parametrizations import (
 from yetanotherspdnet.random.stiefel import random_stiefel
 
 
-# eigenvalue floor applied to the input of ResidualBlock (lower bound of the
-# eigenvalue clamp of its output, as affine_invariant_projx of the reference code)
+# absolute eigenvalue floor applied to the input of ResidualBlock (lower bound of
+# the eigenvalue clamp of its output, as affine_invariant_projx of the reference
+# code); the floor actually used is spd_floor(eigenvalues, INPUT_EIGVAL_FLOOR),
+# raised to the rounding level c n eps max(lambda) of the dtype
 INPUT_EIGVAL_FLOOR = SPD_EIGVAL_FLOOR
+
+
+def _input_floor(eigvals: torch.Tensor) -> torch.Tensor:
+    """Dtype-aware floor of the ResidualBlock eigenvalues (see spd_floor)."""
+    return spd_floor(eigvals, floor=INPUT_EIGVAL_FLOOR)
 
 
 class SpectralVectorField(nn.Module):
@@ -402,7 +410,7 @@ class ResidualBlock(nn.Module):
         floor = select_path(
             lambda x, eps: eigh_relu(x, eps)[0], EighReLu.apply, use_autograd
         )
-        self.floor = lambda x: floor(x, INPUT_EIGVAL_FLOOR)
+        self.floor = lambda x: floor(x, _input_floor)
         self.norm = select_path(
             affine_invariant.affine_invariant_norm,
             AffineInvariantNorm.apply,
@@ -439,7 +447,7 @@ class ResidualBlock(nn.Module):
         result = self.exp_map(data, tangent / norm[..., None, None])
         # projection onto the SPD matrices with spectrum in [1e-8, 1e8], as
         # projx of the reference implementation
-        return self.clamp(symmetrize(result), SPD_EIGVAL_FLOOR, SPD_EIGVAL_CEILING)
+        return self.clamp(symmetrize(result), _input_floor, SPD_EIGVAL_CEILING)
 
     def register_optimizer_hook(self, optimizer: torch.optim.Optimizer) -> None:
         """Register optimizer hooks for dynamic parametrizations."""

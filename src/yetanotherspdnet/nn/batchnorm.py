@@ -14,6 +14,7 @@ from yetanotherspdnet.functions.spd_geometries.registry import (
     get_geometry,
 )
 
+from ..functions._constants import STD_FLOOR
 from ..functions.dispatch import select_path
 from ..functions.spd_linalg import (
     CongruenceSPD,
@@ -1271,8 +1272,12 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             Transformed batch of SPD matrices
         """
         data_normalized = self.normalize_mean(data, parameters[0])
+        # guard: a batch of identical matrices has std 0; the exponent s / std
+        # is bounded by s / STD_FLOOR = s / sqrt(BW_SCALE_EPS), as in the GBWBN
+        # scaling s / sqrt(var + eps) (no effect for std >= STD_FLOOR = 3.2e-3)
+        std = parameters[1].clamp_min(STD_FLOOR)
         data_std_transf = self.norm_and_bias_var(
-            data_normalized, self.stdScalarbias / parameters[1]
+            data_normalized, self.stdScalarbias / std
         )
         data_transformed = self.add_bias_mean(data_std_transf, self.Covbias)
         return data_transformed

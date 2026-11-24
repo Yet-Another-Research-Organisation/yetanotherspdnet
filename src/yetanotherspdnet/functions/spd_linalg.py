@@ -9,6 +9,8 @@ from yetanotherspdnet._deprecation import _deprecated
 from yetanotherspdnet.functions._constants import (
     EIGVAL_TIE_GENERIC_FACTOR,
     EIGVAL_TIE_RTOL,
+    SPD_EIGVAL_FLOOR,
+    SPD_FLOOR_RTOL,
 )
 from yetanotherspdnet.functions.scalar_functions import (
     exp_divided_difference,
@@ -1456,6 +1458,83 @@ class InvScaledSoftPlusSPD(Function):
 # -----------------------------------------------------
 # ReLu activation function on eigenvalues of SPD matrix
 # -----------------------------------------------------
+# a bound of the eigenvalues: a number, a tensor broadcasting against the
+# eigenvalues, or a callable computing it from the (detached) eigenvalues
+EigvalBound = float | torch.Tensor | Callable[[torch.Tensor], torch.Tensor] | None
+
+
+def spd_floor(
+    eigvals: torch.Tensor | torch.dtype,
+    floor: float = SPD_EIGVAL_FLOOR,
+    rtol: float = SPD_FLOOR_RTOL,
+) -> torch.Tensor | float:
+    r"""
+    Dtype-aware lower bound for the eigenvalues of SPD matrices.
+
+    .. math:: \max\big(\text{floor},\; c\, n\, \varepsilon \max_k |\lambda_k|\big)
+
+    per matrix, with :math:`\varepsilon` the machine epsilon of the dtype and
+    :math:`c` = ``rtol`` (``SPD_FLOOR_RTOL`` = 10): an eigenvalue below
+    :math:`n \varepsilon \lVert X \rVert` is not resolved by the decomposition
+    (its backward error), so flooring there only removes rounding noise. In
+    float64 the relative term stays below the default absolute floor 1e-8 for
+    :math:`\max \lambda \lesssim 4 \cdot 10^{6} / n`; in float32 it bounds the
+    condition number by about :math:`10^{6} / n`.
+
+    Parameters
+    ----------
+    eigvals : torch.Tensor of shape (..., n_features) or torch.dtype
+        Eigenvalues (the result is per matrix, of shape (..., 1), detached), or a
+        dtype (the result is the float :math:`\max(\text{floor}, c\,\varepsilon)`,
+        for unit-scale matrices)
+    floor : float, optional
+        Absolute floor. Default is ``SPD_EIGVAL_FLOOR`` (1e-8)
+    rtol : float, optional
+        Factor :math:`c`. Default is ``SPD_FLOOR_RTOL`` (10)
+
+    Returns
+    -------
+    torch.Tensor of shape (..., 1) or float
+        Lower bound of the eigenvalues
+    """
+    if isinstance(eigvals, torch.dtype):
+        return max(floor, rtol * torch.finfo(eigvals).eps)
+    eigvals = eigvals.detach()
+    eps = torch.finfo(eigvals.dtype).eps
+    relative = rtol * eigvals.shape[-1] * eps * eigvals.abs().amax(-1, keepdim=True)
+    return relative.clamp_min(floor)
+
+
+def _resolve_bound(bound: EigvalBound, eigvals: torch.Tensor):
+    """Evaluate a callable eigenvalue bound on the (detached) eigenvalues."""
+    if callable(bound):
+        return bound(eigvals.detach())
+    return bound
+
+
+def _pairwise_bound(bound):
+    """Per-matrix bound of shape (..., 1) -> (..., 1, 1), for Loewner-shaped inputs."""
+    return bound.unsqueeze(-1) if isinstance(bound, torch.Tensor) else bound
+
+
+def _clamp(
+    eigvals: torch.Tensor,
+    min_eigval: float | torch.Tensor | None,
+    max_eigval: float | torch.Tensor | None,
+) -> torch.Tensor:
+    """torch.clamp accepting a number and a tensor bound together."""
+    if isinstance(min_eigval, torch.Tensor) or isinstance(max_eigval, torch.Tensor):
+        as_tensor = lambda b: (
+            None
+            if b is None
+            else torch.as_tensor(b, dtype=eigvals.dtype, device=eigvals.device)
+        )
+        return torch.clamp(
+            eigvals, min=as_tensor(min_eigval), max=as_tensor(max_eigval)
+        )
+    return torch.clamp(eigvals, min=min_eigval, max=max_eigval)
+
+
 def eigh_relu(
     data: torch.Tensor, eps: float
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -1477,8 +1556,9 @@ def eigh_relu(
     data : torch.Tensor of shape (..., n_features, n_features)
         Batch of SPD matrices
 
-    eps : float
-        Value for the rectification of the eigenvalues
+    eps : float | torch.Tensor | Callable
+        Value for the rectification of the eigenvalues: a number, a tensor of
+        shape (..., 1), or a callable of the eigenvalues (e.g. :func:`spd_floor`)
 
     Returns
     -------
@@ -1492,6 +1572,7 @@ def eigh_relu(
         Eigenvectors of matrices in data
     """
     eigvals, eigvecs = torch.linalg.eigh(data)
+    eps = _resolve_bound(eps, eigvals)
     operation = lambda x: torch.clamp(x, min=eps)
     return eigh_operation(eigvals, eigvecs, operation), eigvals, eigvecs
 
@@ -1512,8 +1593,8 @@ class EighReLu(Function):
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of SPD matrices
 
-        eps : float
-            Value for the rectification of the eigenvalues
+        eps : float | torch.Tensor | Callable
+            Value for the rectification of the eigenvalues (see :func:`eigh_relu`)
 
         Returns
         -------
@@ -1522,7 +1603,7 @@ class EighReLu(Function):
         """
         data_transformed, eigvals, eigvecs = eigh_relu(data, eps)
         ctx.save_for_backward(eigvals, eigvecs)
-        ctx.eps = eps
+        ctx.eps = _resolve_bound(eps, eigvals)
         return data_transformed
 
     @staticmethod
@@ -1546,7 +1627,9 @@ class EighReLu(Function):
         eps = ctx.eps
         eigvals, eigvecs = ctx.saved_tensors
         operation = lambda x: torch.clamp(x, min=eps)
-        operation_deriv = lambda x: (x > eps).type(x.dtype)
+        # the derivative is evaluated on (..., n, n) midpoints
+        eps_pairwise = _pairwise_bound(eps)
+        operation_deriv = lambda x: (x > eps_pairwise).type(x.dtype)
         return (
             eigh_operation_grad(
                 grad_output, eigvals, eigvecs, operation, operation_deriv
@@ -1575,9 +1658,10 @@ def eigh_clamp(
     data : torch.Tensor of shape (..., n_features, n_features)
         Batch of symmetric matrices
 
-    min_eigval, max_eigval : float | torch.Tensor | None
+    min_eigval, max_eigval : float | torch.Tensor | Callable | None
         Bounds of the eigenvalues (None: no bound); tensors broadcast against
-        the eigenvalues, of shape (..., n_features)
+        the eigenvalues, of shape (..., n_features); a callable is evaluated on
+        the detached eigenvalues (e.g. :func:`spd_floor`)
 
     Returns
     -------
@@ -1591,7 +1675,9 @@ def eigh_clamp(
         Eigenvectors of matrices in data
     """
     eigvals, eigvecs = torch.linalg.eigh(data)
-    operation = lambda x: torch.clamp(x, min=min_eigval, max=max_eigval)
+    min_eigval = _resolve_bound(min_eigval, eigvals)
+    max_eigval = _resolve_bound(max_eigval, eigvals)
+    operation = lambda x: _clamp(x, min_eigval, max_eigval)
     return eigh_operation(eigvals, eigvecs, operation), eigvals, eigvecs
 
 
@@ -1630,8 +1716,8 @@ class EighClamp(Function):
         data : torch.Tensor of shape (..., n_features, n_features)
             Batch of symmetric matrices
 
-        min_eigval, max_eigval : float | torch.Tensor | None
-            Bounds of the eigenvalues (None: no bound), not differentiated
+        min_eigval, max_eigval : float | torch.Tensor | Callable | None
+            Bounds of the eigenvalues (see :func:`eigh_clamp`), not differentiated
 
         Returns
         -------
@@ -1640,7 +1726,10 @@ class EighClamp(Function):
         """
         data_transformed, eigvals, eigvecs = eigh_clamp(data, min_eigval, max_eigval)
         ctx.save_for_backward(eigvals, eigvecs)
-        ctx.bounds = (min_eigval, max_eigval)
+        ctx.bounds = (
+            _resolve_bound(min_eigval, eigvals),
+            _resolve_bound(max_eigval, eigvals),
+        )
         return data_transformed
 
     @staticmethod
@@ -1663,8 +1752,10 @@ class EighClamp(Function):
         """
         eigvals, eigvecs = ctx.saved_tensors
         min_eigval, max_eigval = ctx.bounds
-        operation = lambda x: torch.clamp(x, min=min_eigval, max=max_eigval)
-        operation_deriv = lambda x: _clamp_derivative(x, min_eigval, max_eigval)
+        operation = lambda x: _clamp(x, min_eigval, max_eigval)
+        # the derivative is evaluated on (..., n, n) midpoints
+        bounds_pairwise = (_pairwise_bound(min_eigval), _pairwise_bound(max_eigval))
+        operation_deriv = lambda x: _clamp_derivative(x, *bounds_pairwise)
         grad_input = eigh_operation_grad(
             grad_output, eigvals, eigvecs, operation, operation_deriv
         )

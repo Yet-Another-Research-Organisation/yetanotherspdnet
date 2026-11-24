@@ -377,3 +377,29 @@ def pow_divided_difference(
     """
     lo, _, gap = _sorted_pair(a, b)
     return torch.pow(lo, exponent) * torch.expm1(exponent * torch.log1p(gap / lo)) / gap
+
+
+def std_from_variance(variance: torch.Tensor) -> torch.Tensor:
+    r"""
+    Return :math:`\sqrt{\max(v, 0)}`, with a zero subgradient at :math:`v \le 0`.
+
+    Rounding can make a variance slightly negative (clamped to 0), and
+    :math:`\sqrt{\cdot}` has an infinite derivative at 0, which autograd turns
+    into NaN (``inf * 0``) for a batch of identical matrices. The value is
+    exactly ``torch.sqrt(torch.clamp(variance, min=0))``; the gradient is the
+    zero subgradient where the variance is not positive, as in the
+    hand-written backwards (:func:`zero_where_zero_std`).
+
+    Parameters
+    ----------
+    variance : torch.Tensor
+        Variance(s)
+
+    Returns
+    -------
+    std : torch.Tensor
+        Standard deviation(s)
+    """
+    positive = variance > 0
+    safe = torch.where(positive, variance, torch.ones_like(variance))
+    return torch.where(positive, torch.sqrt(safe), torch.zeros_like(variance))
