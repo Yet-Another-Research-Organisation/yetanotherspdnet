@@ -178,6 +178,14 @@ def test_affine_invariant_norm_moved_from_rresnet_layers(spd_batch):
     torch.testing.assert_close(out, expected, rtol=0, atol=0)
 
 
+def test_affine_invariant_projx_is_eigh_clamp(spd_batch):
+    data = spd_batch + 0.01 * torch.ones_like(spd_batch).triu()
+    with pytest.warns(DeprecationWarning, match="eigh_clamp"):
+        out = affine_invariant.affine_invariant_projx(data)
+    expected = spd_linalg.eigh_clamp(spd_linalg.symmetrize(data), 1e-8, 1e8)[0]
+    torch.testing.assert_close(out, expected, rtol=0, atol=0)
+
+
 # ---------------------------------------------------------------------------
 # the library itself never goes through a deprecated alias
 # ---------------------------------------------------------------------------

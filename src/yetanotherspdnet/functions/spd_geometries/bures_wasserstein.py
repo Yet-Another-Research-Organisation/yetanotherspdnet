@@ -20,6 +20,8 @@ from torch.autograd import Function
 from yetanotherspdnet.functions.scalar_functions import inv_sqrt, zero_where_zero_std
 
 from ..spd_linalg import (
+    SqrtmAndInvSqrtmSPD,
+    SqrtmSPD,
     eigh_operation,
     inv_sqrtm_SPD,
     solve_sylvester_SPD,
@@ -383,19 +385,117 @@ class ParallelTransportFromIdentityBW(Function):
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Gradients with respect to the tangent vectors and the target."""
         eigvecs, scale, rotated = ctx.saved_tensors
-        grad_rot = eigvecs.transpose(-2, -1) @ grad_output @ eigvecs
-        grad_tangent = eigvecs @ (scale * grad_rot) @ eigvecs.transpose(-2, -1)
-        n = scale.shape[-1]
-        grad_rot = grad_rot.reshape(-1, n, n)
-        rotated = rotated.expand_as(grad_output).reshape(-1, n, n)
-        # kernel[p, q, j] = 1 / (b_pj + b_qj)
+        # d sqrt(a) between Lyapunov eigenvalues: 1 / (b_p + b_q)
         kernel = 1.0 / (scale.unsqueeze(1) + scale.unsqueeze(0))
-        first = torch.einsum("bpj,bqj->pqj", grad_rot, rotated)
-        second = torch.einsum("bip,biq->pqi", rotated, grad_rot)
-        grad_rot_target = 0.5 * ((first + second) * kernel).sum(dim=-1)
-        grad_target = eigvecs @ grad_rot_target @ eigvecs.transpose(-2, -1)
-        grad_target = symmetrize(grad_target)
-        return grad_tangent, grad_target
+        return _lyapunov_transport_backward(
+            grad_output, eigvecs, scale, rotated, kernel
+        )
+
+
+def _lyapunov_transport_backward(
+    grad_output: torch.Tensor,
+    eigvecs: torch.Tensor,
+    multiplier: torch.Tensor,
+    rotated: torch.Tensor,
+    kernel: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    r"""
+    Backward of a transport :math:`S \mapsto \varphi(\mathcal{A}_P)(S)`.
+
+    :math:`\mathcal{A}_P(S) = (PS + SP)/2` has eigenvalues
+    :math:`a_{ij} = (\lambda_i + \lambda_j)/2` in the eigenbasis :math:`U` of
+    :math:`P`; the transport multiplies :math:`\tilde S = U^\top S U` entrywise by
+    ``multiplier`` :math:`= \varphi(a)`, and its derivative with respect to
+    :math:`P` is the Daleckii-Krein formula on the operator :math:`\mathcal{A}_P`,
+    with ``kernel[p, q, j]`` the divided difference
+    :math:`\varphi[a_{pj}, a_{qj}]`.
+
+    Parameters
+    ----------
+    grad_output : torch.Tensor of shape (..., n, n)
+        Gradient with respect to the transported vectors
+    eigvecs : torch.Tensor of shape (n, n)
+        Eigenvectors :math:`U` of :math:`P`
+    multiplier : torch.Tensor of shape (n, n)
+        :math:`\varphi(a_{ij})`
+    rotated : torch.Tensor of shape (..., n, n)
+        :math:`U^\top S U`
+    kernel : torch.Tensor of shape (n, n, n)
+        :math:`\varphi[a_{pj}, a_{qj}]`
+
+    Returns
+    -------
+    grad_tangent : torch.Tensor of shape (..., n, n)
+        Gradient with respect to the tangent vectors
+    grad_point : torch.Tensor of shape (n, n)
+        Gradient with respect to :math:`P`
+    """
+    grad_rot = eigvecs.transpose(-2, -1) @ grad_output @ eigvecs
+    grad_tangent = eigvecs @ (multiplier * grad_rot) @ eigvecs.transpose(-2, -1)
+    n = multiplier.shape[-1]
+    grad_rot = grad_rot.reshape(-1, n, n)
+    rotated = rotated.expand_as(grad_output).reshape(-1, n, n)
+    first = torch.einsum("bpj,bqj->pqj", grad_rot, rotated)
+    second = torch.einsum("bip,biq->pqi", rotated, grad_rot)
+    grad_rot_point = 0.5 * ((first + second) * kernel).sum(dim=-1)
+    grad_point = eigvecs @ grad_rot_point @ eigvecs.transpose(-2, -1)
+    return grad_tangent, symmetrize(grad_point)
+
+
+class ParallelTransportToIdentityBW(Function):
+    r"""
+    Bures-Wasserstein parallel transport to the identity, with a manual backward.
+
+    :math:`\Gamma_{B\to I} = \mathcal{A}_B^{-1/2}`, the inverse of
+    :class:`ParallelTransportFromIdentityBW`: in the eigenbasis of :math:`B` it
+    multiplies :math:`(U^\top S U)_{ij}` by :math:`1 / b_{ij}`,
+    :math:`b_{ij} = \sqrt{(\lambda_i + \lambda_j)/2}`. Its derivative with
+    respect to :math:`B` uses the divided difference of :math:`a^{-1/2}`,
+    :math:`-1 / (b_p b_q (b_p + b_q))`, whose denominators are positive (no
+    :math:`1/(\lambda_i - \lambda_j)` term, finite at repeated eigenvalues).
+    """
+
+    @staticmethod
+    def forward(ctx, tangent_vec: torch.Tensor, source: torch.Tensor) -> torch.Tensor:
+        """
+        Transport tangent vectors from *source* to the identity.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        tangent_vec : torch.Tensor of shape (..., n_features, n_features)
+            Tangent vectors at *source*
+
+        source : torch.Tensor of shape (n_features, n_features)
+            Source point :math:`B` (SPD)
+
+        Returns
+        -------
+        transported : torch.Tensor of shape (..., n_features, n_features)
+            Tangent vectors at the identity
+        """
+        if source.ndim != 2:
+            raise ValueError(
+                "ParallelTransportToIdentityBW expects a single source matrix, "
+                f"got shape {tuple(source.shape)}"
+            )
+        eigvals, eigvecs = torch.linalg.eigh(source)
+        scale = torch.sqrt((eigvals.unsqueeze(-1) + eigvals.unsqueeze(-2)) / 2.0)
+        rotated = eigvecs.transpose(-2, -1) @ tangent_vec @ eigvecs
+        ctx.save_for_backward(eigvecs, scale, rotated)
+        return eigvecs @ (rotated / scale) @ eigvecs.transpose(-2, -1)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Gradients with respect to the tangent vectors and the source."""
+        eigvecs, scale, rotated = ctx.saved_tensors
+        b_p, b_q = scale.unsqueeze(1), scale.unsqueeze(0)
+        kernel = -1.0 / (b_p * b_q * (b_p + b_q))
+        return _lyapunov_transport_backward(
+            grad_output, eigvecs, 1.0 / scale, rotated, kernel
+        )
 
 
 # ----------------------------------------
@@ -481,29 +581,6 @@ def bures_wasserstein_mean(data: torch.Tensor, n_iterations: int = 1) -> torch.T
         T = arithmetic_mean(whitened_sqrt)
         G = G_inv_sqrt @ (T @ T) @ G_inv_sqrt
     return G
-
-
-def BuresWassersteinMean(data: torch.Tensor, n_iterations: int = 1) -> torch.Tensor:
-    """
-    Bures-Wasserstein barycenter (Frechet mean) -- CamelCase wrapper.
-
-    Since the fixed-point iteration composes differentiable operations
-    (eigh, matmul, sqrtm), autograd handles the backward automatically.
-
-    Parameters
-    ----------
-    data : torch.Tensor of shape (..., n_features, n_features)
-        Batch of SPD matrices. The mean is computed along ``...`` axes.
-
-    n_iterations : int
-        Number of fixed-point iterations, by default 1
-
-    Returns
-    -------
-    barycenter : torch.Tensor of shape (n_features, n_features)
-        BW barycenter
-    """
-    return bures_wasserstein_mean(data, n_iterations=n_iterations)
 
 
 # ----------------------------------------
@@ -776,5 +853,209 @@ def bures_wasserstein_bias(
     log_at_I = bures_wasserstein_log_identity(data)
     # degenerate-safe backward: bias_point is typically a learnable parameter
     # initialized at the identity (all eigenvalues equal)
+    transported = ParallelTransportFromIdentityBW.apply(log_at_I, bias_point)
+    return _bures_wasserstein_exp(transported, bias_point)
+
+
+# ----------------------------------------------------------------
+# Manual-backward data path (use_autograd=False)
+# ----------------------------------------------------------------
+# The functions below compose the manual-backward square roots (SqrtmSPD,
+# SqrtmAndInvSqrtmSPD: Daleckii-Krein backward), the Lyapunov transports and the
+# Lyapunov solve with products and sums differentiated by autograd: no matrix
+# decomposition is differentiated by autograd, so the gradients stay finite at
+# repeated eigenvalues (a batch of scalar matrices cI, parameters at the identity).
+
+
+def _sqrtm(data: torch.Tensor) -> torch.Tensor:
+    return SqrtmSPD.apply(data)
+
+
+def BuresWassersteinLogIdentity(X: torch.Tensor) -> torch.Tensor:
+    r"""
+    Logarithmic map at the identity, :math:`2(X^{1/2} - I)` (manual backward).
+
+    Parameters
+    ----------
+    X : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    Returns
+    -------
+    S : torch.Tensor of shape (..., n_features, n_features)
+        Symmetric matrices in the tangent space at I
+    """
+    eye = torch.eye(X.shape[-1], dtype=X.dtype, device=X.device)
+    return 2 * (_sqrtm(X) - eye)
+
+
+def BuresWassersteinLog(X: torch.Tensor, base: torch.Tensor) -> torch.Tensor:
+    r"""
+    Logarithmic map at *base*, :math:`(XB)^{1/2} + (BX)^{1/2} - 2B` (manual backward).
+
+    Same formula as :func:`bures_wasserstein_log`.
+
+    Parameters
+    ----------
+    X : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    base : torch.Tensor of shape (..., n_features, n_features) or (n_features, n_features)
+        Base point (SPD matrix)
+
+    Returns
+    -------
+    tangent : torch.Tensor of shape (..., n_features, n_features)
+        Tangent vectors at *base*
+    """
+    B_sqrt, B_inv_sqrt = SqrtmAndInvSqrtmSPD.apply(base)
+    S_sqrt = _sqrtm(B_sqrt @ X @ B_sqrt)
+    BX_sqrt = B_sqrt @ S_sqrt @ B_inv_sqrt
+    return BX_sqrt.transpose(-2, -1) + BX_sqrt - 2 * base
+
+
+def BuresWassersteinGeodesic(
+    point1: torch.Tensor, point2: torch.Tensor, t: float | torch.Tensor
+) -> torch.Tensor:
+    r"""
+    Bures-Wasserstein geodesic :math:`E_2(X_1, X_2; t)` (manual backward).
+
+    Same formula as :func:`bures_wasserstein_geodesic`.
+
+    Parameters
+    ----------
+    point1, point2 : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    t : float | torch.Tensor
+        Interpolation parameter in [0, 1]
+
+    Returns
+    -------
+    point : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices on the geodesic
+    """
+    p1_sqrt, p1_inv_sqrt = SqrtmAndInvSqrtmSPD.apply(point1)
+    M_sqrt = _sqrtm(p1_sqrt @ point2 @ p1_sqrt)
+    cross = p1_sqrt @ M_sqrt @ p1_inv_sqrt
+    cross_T = cross.transpose(-2, -1)
+    return (1 - t) ** 2 * point1 + t**2 * point2 + t * (1 - t) * (cross + cross_T)
+
+
+def BuresWassersteinMean(data: torch.Tensor, n_iterations: int = 1) -> torch.Tensor:
+    r"""
+    Bures-Wasserstein barycenter by fixed-point iteration (manual backward).
+
+    Same iteration as :func:`bures_wasserstein_mean`, built on the
+    manual-backward square roots. The gradient is the exact gradient of the
+    ``n_iterations`` steps that are computed (the default single step is not
+    a converged fixed point, so implicit differentiation of the fixed-point
+    equation would differentiate another function).
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices. The mean is computed along ``...`` axes.
+
+    n_iterations : int
+        Number of fixed-point iterations, by default 1
+
+    Returns
+    -------
+    barycenter : torch.Tensor of shape (n_features, n_features)
+        BW barycenter
+    """
+    if data.ndim == 2:
+        return data
+    G = arithmetic_mean(data)
+    for _ in range(n_iterations):
+        G_sqrt, G_inv_sqrt = SqrtmAndInvSqrtmSPD.apply(G)
+        T = arithmetic_mean(_sqrtm(G_sqrt @ data @ G_sqrt))
+        G = G_inv_sqrt @ (T @ T) @ G_inv_sqrt
+    return G
+
+
+def BuresWassersteinCenter(
+    data: torch.Tensor, barycenter: torch.Tensor
+) -> torch.Tensor:
+    r"""
+    Center SPD data at the identity (manual backward).
+
+    :math:`\mathrm{Exp}_I\big(\Gamma_{B\to I}(\mathrm{Log}_B(X))\big)`, as
+    :func:`bures_wasserstein_center`, with :class:`ParallelTransportToIdentityBW`.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices
+
+    barycenter : torch.Tensor of shape (n_features, n_features)
+        BW barycenter
+
+    Returns
+    -------
+    centered : torch.Tensor of shape (..., n_features, n_features)
+        Centered SPD matrices (around the identity)
+    """
+    log_at_bary = BuresWassersteinLog(data, barycenter)
+    transported = ParallelTransportToIdentityBW.apply(log_at_bary, barycenter)
+    return bures_wasserstein_exp_identity(transported)
+
+
+def BuresWassersteinScale(
+    data: torch.Tensor,
+    variance: torch.Tensor,
+    shift: torch.Tensor,
+    eps: float = 1e-5,
+) -> torch.Tensor:
+    r"""
+    Scale centered SPD data at the identity (manual backward).
+
+    :math:`\big(I + \frac{s}{\sqrt{\text{var} + \epsilon}}(X^{1/2} - I)\big)^2`, as
+    :func:`bures_wasserstein_scale`.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Centered SPD matrices (around the identity)
+
+    variance : torch.Tensor of shape ()
+        Frechet variance
+
+    shift : torch.Tensor of shape ()
+        Learnable scaling parameter
+
+    eps : float
+        Small constant for numerical stability, by default 1e-5
+
+    Returns
+    -------
+    scaled : torch.Tensor of shape (..., n_features, n_features)
+        Scaled SPD matrices
+    """
+    factor = shift / torch.sqrt(variance + eps)
+    return bures_wasserstein_exp_identity(factor * BuresWassersteinLogIdentity(data))
+
+
+def BuresWassersteinBias(data: torch.Tensor, bias_point: torch.Tensor) -> torch.Tensor:
+    r"""
+    Bias SPD data by transporting from the identity to *bias_point* (manual backward).
+
+    As :func:`bures_wasserstein_bias`.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        SPD matrices around the identity
+
+    bias_point : torch.Tensor of shape (n_features, n_features)
+        Learned bias (SPD matrix)
+
+    Returns
+    -------
+    biased : torch.Tensor of shape (..., n_features, n_features)
+        Biased SPD matrices
+    """
+    log_at_I = BuresWassersteinLogIdentity(data)
     transported = ParallelTransportFromIdentityBW.apply(log_at_I, bias_point)
     return _bures_wasserstein_exp(transported, bias_point)

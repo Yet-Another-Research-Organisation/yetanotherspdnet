@@ -1555,6 +1555,196 @@ class EighReLu(Function):
         )
 
 
+def eigh_clamp(
+    data: torch.Tensor,
+    min_eigval: float | torch.Tensor | None = None,
+    max_eigval: float | torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    r"""
+    Clamp the eigenvalues of symmetric matrices to :math:`[\lambda_-, \lambda_+]`.
+
+    .. math::
+
+        U \operatorname{diag}\big(\min(\max(\lambda, \lambda_-), \lambda_+)\big) U^\top
+
+    A projection onto the SPD matrices with bounded spectrum (with
+    ``max_eigval=None`` it is :func:`eigh_relu`).
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    min_eigval, max_eigval : float | torch.Tensor | None
+        Bounds of the eigenvalues (None: no bound); tensors broadcast against
+        the eigenvalues, of shape (..., n_features)
+
+    Returns
+    -------
+    data_transformed : torch.Tensor of shape (..., n_features, n_features)
+        Batch of matrices with clamped eigenvalues
+
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues of matrices in data
+
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors of matrices in data
+    """
+    eigvals, eigvecs = torch.linalg.eigh(data)
+    operation = lambda x: torch.clamp(x, min=min_eigval, max=max_eigval)
+    return eigh_operation(eigvals, eigvecs, operation), eigvals, eigvecs
+
+
+def _clamp_derivative(
+    eigvals: torch.Tensor,
+    min_eigval: float | torch.Tensor | None,
+    max_eigval: float | torch.Tensor | None,
+) -> torch.Tensor:
+    """1 strictly inside the bounds, 0 outside (subgradient 0 at a bound)."""
+    inside = torch.ones_like(eigvals, dtype=torch.bool)
+    if min_eigval is not None:
+        inside = inside & (eigvals > min_eigval)
+    if max_eigval is not None:
+        inside = inside & (eigvals < max_eigval)
+    return inside.to(eigvals.dtype)
+
+
+class EighClamp(Function):
+    """Clamp the eigenvalues of symmetric matrices, with a Daleckii-Krein backward."""
+
+    @staticmethod
+    def forward(
+        ctx,
+        data: torch.Tensor,
+        min_eigval: float | torch.Tensor | None = None,
+        max_eigval: float | torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Forward pass of the eigenvalue clamp.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        min_eigval, max_eigval : float | torch.Tensor | None
+            Bounds of the eigenvalues (None: no bound), not differentiated
+
+        Returns
+        -------
+        data_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Batch of matrices with clamped eigenvalues
+        """
+        data_transformed, eigvals, eigvecs = eigh_clamp(data, min_eigval, max_eigval)
+        ctx.save_for_backward(eigvals, eigvecs)
+        ctx.bounds = (min_eigval, max_eigval)
+        return data_transformed
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None, None]:
+        """
+        Backward pass of the eigenvalue clamp.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        grad_output : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the output batch
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input batch
+        """
+        eigvals, eigvecs = ctx.saved_tensors
+        min_eigval, max_eigval = ctx.bounds
+        operation = lambda x: torch.clamp(x, min=min_eigval, max=max_eigval)
+        operation_deriv = lambda x: _clamp_derivative(x, min_eigval, max_eigval)
+        grad_input = eigh_operation_grad(
+            grad_output, eigvals, eigvecs, operation, operation_deriv
+        )
+        return grad_input, None, None
+
+
+def eigvalsh_symmetric(data: torch.Tensor) -> torch.Tensor:
+    r"""
+    Eigenvalues of symmetric matrices, in ascending order.
+
+    ``torch.linalg.eigvalsh``, differentiated by autograd. Its gradient
+    :math:`U \operatorname{diag}(\bar\lambda) U^\top` has no eigenvalue gap, but
+    see :class:`EigvalshSymmetric` for the manual-backward twin.
+
+    Parameters
+    ----------
+    data : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    Returns
+    -------
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues, ascending
+    """
+    return torch.linalg.eigvalsh(data)
+
+
+class EigvalshSymmetric(Function):
+    r"""
+    Eigenvalues of symmetric matrices, with the backward :math:`U \operatorname{diag}(\bar\lambda) U^\top`.
+
+    The derivative of a simple eigenvalue is :math:`d\lambda_i = u_i^\top dX u_i`;
+    for repeated eigenvalues the formula gives the gradient of their (symmetric)
+    sum, the only differentiable combination.
+    """
+
+    @staticmethod
+    def forward(ctx, data: torch.Tensor) -> torch.Tensor:
+        """
+        Eigenvalues of a batch of symmetric matrices.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        Returns
+        -------
+        eigvals : torch.Tensor of shape (..., n_features)
+            Eigenvalues, ascending
+        """
+        eigvals, eigvecs = torch.linalg.eigh(data)
+        ctx.save_for_backward(eigvecs)
+        return eigvals
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
+        """
+        Gradient with respect to the matrices.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        grad_output : torch.Tensor of shape (..., n_features)
+            Gradient of the loss with respect to the eigenvalues
+
+        Returns
+        -------
+        grad_input : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the matrices
+        """
+        (eigvecs,) = ctx.saved_tensors
+        return (eigvecs * grad_output.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)
+
+
 def _clamped_bias_operation(bias: torch.Tensor, eps: float) -> Callable:
     """Eigenvalue map of ReEigBias: shift by ``bias`` then clamp to [eps, 1/eps]."""
     return lambda x: torch.clamp(x + bias, min=eps, max=1 / eps)

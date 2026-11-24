@@ -8,11 +8,12 @@ The layers look their operations up here instead of branching on
 ``mean_type``, so a missing operation is reported when the layer is built.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import torch
 
+from ..dispatch import DualPath
 from . import (
     affine_invariant,
     affine_invariant_gevd,
@@ -22,52 +23,6 @@ from . import (
     kullback_leibler_symmetrized,
     log_euclidean,
 )
-
-
-@dataclass(frozen=True)
-class DualPath:
-    """
-    One operation with its autograd and manual-backward implementations.
-
-    Attributes
-    ----------
-    autograd : Callable or None
-        Implementation differentiated by ``torch.autograd``; None when the
-        autograd path is not supported (``unsupported_reason`` says why).
-    manual : Callable
-        Implementation with a hand-written backward.
-    unsupported_reason : str
-        Why the autograd path is not available (empty if it is).
-    """
-
-    autograd: Callable | None
-    manual: Callable
-    unsupported_reason: str = ""
-
-    def select(self, use_autograd: bool) -> Callable:
-        """
-        Return the autograd or the manual-backward implementation.
-
-        Parameters
-        ----------
-        use_autograd : bool
-            Whether to return the autograd implementation.
-
-        Returns
-        -------
-        Callable
-            The selected implementation.
-
-        Raises
-        ------
-        ValueError
-            If ``use_autograd`` is True and the autograd path is not supported.
-        """
-        if not use_autograd:
-            return self.manual
-        if self.autograd is None:
-            raise ValueError(self.unsupported_reason)
-        return self.autograd
 
 
 @dataclass(frozen=True)
@@ -242,17 +197,22 @@ GEOMETRIES: dict[str, Geometry] = {
     ),
     "bures_wasserstein": Geometry(
         mean=DualPath(_BW.bures_wasserstein_mean, _BW.BuresWassersteinMean),
-        # no manual backward: the geodesic is only used without gradient or
-        # through autograd
-        geodesic=DualPath(
-            _BW.bures_wasserstein_geodesic, _BW.bures_wasserstein_geodesic
-        ),
+        geodesic=DualPath(_BW.bures_wasserstein_geodesic, _BW.BuresWassersteinGeodesic),
         std=DualPath(
             _BW.bures_wasserstein_std_scalar, _BW.BuresWassersteinStdScalar.apply
         ),
         transport=None,
         mean_options={"n_iterations": 1},
     ),
+}
+
+
+# GBWBN normalization steps (BatchNormSPDMeanScalarVariance with
+# mean_type="bures_wasserstein"): center at the identity, scale, bias
+BURES_WASSERSTEIN_STEPS: dict[str, DualPath] = {
+    "center": DualPath(_BW.bures_wasserstein_center, _BW.BuresWassersteinCenter),
+    "scale": DualPath(_BW.bures_wasserstein_scale, _BW.BuresWassersteinScale),
+    "bias": DualPath(_BW.bures_wasserstein_bias, _BW.BuresWassersteinBias),
 }
 
 

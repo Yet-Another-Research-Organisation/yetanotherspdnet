@@ -9,13 +9,12 @@ import torch
 from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
 
-from yetanotherspdnet.functions.spd_geometries.bures_wasserstein import (
-    bures_wasserstein_bias,
-    bures_wasserstein_center,
-    bures_wasserstein_scale,
+from yetanotherspdnet.functions.spd_geometries.registry import (
+    BURES_WASSERSTEIN_STEPS,
+    get_geometry,
 )
-from yetanotherspdnet.functions.spd_geometries.registry import get_geometry
 
+from ..functions.dispatch import select_path
 from ..functions.spd_linalg import (
     CongruenceSPD,
     InvSqrtmSPD,
@@ -692,9 +691,11 @@ class BatchNormSPDMean(BatchNormSPDBase):
     def _init_norm_and_bias(self) -> None:
         """Initialize normalization and bias functions."""
         if self.norm_and_bias_mode == "whitening":
-            self.normalize_mean = whitening if self.use_autograd else Whitening.apply
-            self.add_bias_mean = (
-                congruence_SPD if self.use_autograd else CongruenceSPD.apply
+            self.normalize_mean = select_path(
+                whitening, Whitening.apply, self.use_autograd
+            )
+            self.add_bias_mean = select_path(
+                congruence_SPD, CongruenceSPD.apply, self.use_autograd
             )
             self._norm_and_bias_fun = self._norm_and_bias_whitening
         elif self.norm_and_bias_mode == "parallel_transport":
@@ -1088,10 +1089,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         # init parent class norm and bias functions
         super()._init_norm_and_bias()
         # normalize and add bias scalar variance function
-        self.norm_and_bias_var = (
-            (lambda data, exponent: powm_SPD(data, exponent)[0])
-            if self.use_autograd
-            else PowmSPD.apply
+        self.norm_and_bias_var = select_path(
+            lambda data, exponent: powm_SPD(data, exponent)[0],
+            PowmSPD.apply,
+            self.use_autograd,
         )
 
     def _init_std(self) -> None:
@@ -1312,16 +1313,24 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         # manual (Daleckii-Krein) backwards keep its gradient finite, whereas
         # autograd through torch.linalg.eigh is undefined for repeated
         # eigenvalues
-        if self.use_autograd:
-            inv_sqrtm = lambda x: inv_sqrtm_SPD(x)[0]
-            sqrtm = lambda x: sqrtm_SPD(x)[0]
-            powm = lambda x, p: powm_SPD(x, p)[0]
-        else:
-            inv_sqrtm, sqrtm = InvSqrtmSPD.apply, SqrtmSPD.apply
+        inv_sqrtm = select_path(
+            lambda x: inv_sqrtm_SPD(x)[0], InvSqrtmSPD.apply, self.use_autograd
+        )
+        sqrtm = select_path(
+            lambda x: sqrtm_SPD(x)[0], SqrtmSPD.apply, self.use_autograd
+        )
 
-            def powm(x: torch.Tensor, p: float) -> torch.Tensor:
-                exponent = torch.tensor(p, dtype=x.dtype, device=x.device)
-                return PowmSPD.apply(x, exponent)
+        def _powm_manual(x: torch.Tensor, p: float) -> torch.Tensor:
+            exponent = torch.tensor(p, dtype=x.dtype, device=x.device)
+            return PowmSPD.apply(x, exponent)
+
+        powm = select_path(
+            lambda x, p: powm_SPD(x, p)[0], _powm_manual, self.use_autograd
+        )
+        center, scale, bias = (
+            BURES_WASSERSTEIN_STEPS[step].select(self.use_autograd)
+            for step in ("center", "scale", "bias")
+        )
 
         M_isqrt = inv_sqrtm(M)
         data_pow = powm(data, theta) if theta != 1.0 else data
@@ -1352,9 +1361,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             std = self.running_std_scalar.to(data.device)
 
         # BW center, scale, bias
-        centered = bures_wasserstein_center(data_hat, mean)
-        scaled = bures_wasserstein_scale(centered, std**2, self.stdScalarbias)
-        biased = bures_wasserstein_bias(scaled, G_hat)
+        centered = center(data_hat, mean)
+        scaled = scale(centered, std**2, self.stdScalarbias)
+        biased = bias(scaled, G_hat)
 
         # Post-transform: output = (M^{1/2} X_tilde M^{1/2})^{1/theta}
         M_sqrt = sqrtm(M)

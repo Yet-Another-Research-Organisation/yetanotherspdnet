@@ -25,6 +25,7 @@ from ..spd_linalg import (
     InvSqrtmSPD,
     SqrtmAndInvSqrtmSPD,
     congruence_rectangular,
+    eigh_clamp,
     eigh_operation,
     eigh_operation_grad,
     expm_symmetric,
@@ -983,9 +984,106 @@ def affine_invariant_norm(base: torch.Tensor, tangent: torch.Tensor) -> torch.Te
         Affine-invariant norms
     """
     cholesky = torch.linalg.cholesky(base)
-    half = torch.linalg.solve_triangular(cholesky, tangent, upper=False)
-    whitened = torch.linalg.solve_triangular(cholesky, half.mT, upper=False)
-    return torch.linalg.matrix_norm(whitened)
+    return torch.linalg.matrix_norm(_whiten_cholesky(cholesky, tangent))
+
+
+def _whiten_cholesky(cholesky: torch.Tensor, mat: torch.Tensor) -> torch.Tensor:
+    r""":math:`L^{-1} M L^{-\top}` for symmetric :math:`M` (triangular solves)."""
+    half = torch.linalg.solve_triangular(cholesky, mat, upper=False)
+    return torch.linalg.solve_triangular(cholesky, half.mT, upper=False)
+
+
+def _unwhiten_cholesky(cholesky: torch.Tensor, mat: torch.Tensor) -> torch.Tensor:
+    r""":math:`L^{-\top} M L^{-1}` for symmetric :math:`M` (triangular solves)."""
+    upper = cholesky.mT
+    half = torch.linalg.solve_triangular(upper, mat, upper=True)
+    return torch.linalg.solve_triangular(upper, half.mT, upper=True)
+
+
+class AffineInvariantNorm(Function):
+    r"""
+    Affine-invariant norm of tangent vectors, with a hand-written backward.
+
+    With :math:`W = L^{-1} V L^{-\top}` (:math:`X = LL^\top`) and
+    :math:`\nu = \lVert W \rVert_F`:
+
+    .. math::
+
+        \bar V = \frac{\bar\nu}{\nu} X^{-1} V X^{-1}
+            = \frac{\bar\nu}{\nu} L^{-\top} W L^{-1},
+        \qquad
+        \bar X = -\frac{\bar\nu}{\nu} X^{-1} V X^{-1} V X^{-1}
+            = -\frac{\bar\nu}{\nu} L^{-\top} W^2 L^{-1}
+
+    (zero subgradient at :math:`\nu = 0`). The Cholesky factor of the forward
+    is reused: no decomposition is differentiated.
+    """
+
+    @staticmethod
+    def forward(ctx, base: torch.Tensor, tangent: torch.Tensor) -> torch.Tensor:
+        r"""
+        Affine-invariant norms :math:`\lVert X^{-1/2} V X^{-1/2} \rVert_F`.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        base : torch.Tensor of shape (..., n, n)
+            SPD base points
+
+        tangent : torch.Tensor of shape (..., n, n)
+            Symmetric tangent vectors at *base*
+
+        Returns
+        -------
+        norm : torch.Tensor of shape (...)
+            Affine-invariant norms
+        """
+        cholesky = torch.linalg.cholesky(base)
+        whitened = _whiten_cholesky(cholesky, tangent)
+        norm = torch.linalg.matrix_norm(whitened)
+        ctx.save_for_backward(cholesky, whitened, norm)
+        ctx.shapes = (base.shape, tangent.shape)
+        return norm
+
+    @staticmethod
+    def backward(
+        ctx, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """
+        Gradients with respect to the base points and the tangent vectors.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        grad_output : torch.Tensor of shape (...)
+            Gradient of the loss with respect to the norms
+
+        Returns
+        -------
+        grad_base : torch.Tensor of shape (..., n, n)
+            Gradient with respect to the base points
+
+        grad_tangent : torch.Tensor of shape (..., n, n)
+            Gradient with respect to the tangent vectors
+        """
+        cholesky, whitened, norm = ctx.saved_tensors
+        base_shape, tangent_shape = ctx.shapes
+        safe_norm = torch.where(norm > 0, norm, torch.ones_like(norm))
+        factor = torch.where(norm > 0, grad_output / safe_norm, torch.zeros_like(norm))[
+            ..., None, None
+        ]
+        grad_base = grad_tangent = None
+        if ctx.needs_input_grad[1]:
+            grad_tangent = factor * _unwhiten_cholesky(cholesky, whitened)
+            grad_tangent = grad_tangent.sum_to_size(tangent_shape)
+        if ctx.needs_input_grad[0]:
+            grad_base = -factor * _unwhiten_cholesky(cholesky, whitened @ whitened)
+            grad_base = symmetrize(grad_base).sum_to_size(base_shape)
+        return grad_base, grad_tangent
 
 
 # ----------------------------
@@ -1024,24 +1122,17 @@ def affine_invariant_log(base: torch.Tensor, point: torch.Tensor) -> torch.Tenso
 # -------------------------------------------
 # Affine-invariant projection onto SPD
 # -------------------------------------------
-def affine_invariant_projx(data: torch.Tensor) -> torch.Tensor:
-    """
-    Project matrices onto the SPD manifold.
+def _projx(data: torch.Tensor) -> torch.Tensor:
+    """Symmetrize, then clamp the eigenvalues to [1e-8, 1e8] (reference RResNet)."""
+    return eigh_clamp(symmetrize(data), SPD_EIGVAL_FLOOR, SPD_EIGVAL_CEILING)[0]
 
-    Symmetrize and clamp the eigenvalues to [1e-8, 1e8] (as in the reference RResNet
-    implementation, which also bounds the conditioning).
 
-    Parameters
-    ----------
-    data : torch.Tensor of shape (..., n, n)
-        Batch of matrices
-
-    Returns
-    -------
-    projected : torch.Tensor of shape (..., n, n)
-        Batch of SPD matrices
-    """
-    data = symmetrize(data)
-    eigvals, eigvecs = torch.linalg.eigh(data)
-    eigvals = eigvals.clamp(min=SPD_EIGVAL_FLOOR, max=SPD_EIGVAL_CEILING)
-    return (eigvecs * eigvals.unsqueeze(-2)) @ eigvecs.transpose(-1, -2)
+affine_invariant_projx = _deprecated(
+    "affine_invariant_projx",
+    eigh_clamp,
+    note=(
+        "affine_invariant_projx(x) is eigh_clamp(symmetrize(x), 1e-8, 1e8)[0]; "
+        "EighClamp is its manual-backward twin."
+    ),
+    call=_projx,
+)
