@@ -273,11 +273,88 @@ class TestAffineInvariantGeodesic:
         assert is_symmetric(X_auto.grad)
         assert_close(X_manual.grad, X_auto.grad)
 
+    @pytest.mark.parametrize("n_features, cond", [(4, 10), (10, 100)])
+    @pytest.mark.parametrize("t_value", [0.2, 0.5, 0.9])
+    def test_backward_t(self, n_features, cond, t_value, device, dtype, generator):
+        """
+        The manual gradient with respect to t matches autograd
+        (t is the learnable parameter of the adaptive GAH mean)
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        t_auto = torch.tensor(t_value, device=device, dtype=dtype, requires_grad=True)
+        t_manual = t_auto.detach().clone().requires_grad_(True)
+        G_auto = affine_invariant.affine_invariant_geodesic(X[0], X[1], t_auto)
+        G_manual = affine_invariant.AffineInvariantGeodesic.apply(X[0], X[1], t_manual)
+        assert_close(G_manual, G_auto)
+        torch.norm(G_auto).backward()
+        torch.norm(G_manual).backward()
+        assert t_manual.grad is not None
+        assert t_manual.grad.shape == t_manual.shape
+        assert_close(t_manual.grad, t_auto.grad)
+
+    @pytest.mark.parametrize("n_features, cond", [(4, 10)])
+    def test_backward_t_finite_differences(
+        self, n_features, cond, device, dtype, generator
+    ):
+        """
+        The manual gradient with respect to t matches central finite differences
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        t_value, eps = 0.5, 1e-6
+        geodesic = affine_invariant.AffineInvariantGeodesic.apply
+        t_plus = torch.tensor(t_value + eps, device=device, dtype=dtype)
+        t_minus = torch.tensor(t_value - eps, device=device, dtype=dtype)
+        grad_numerical = (
+            geodesic(X[0], X[1], t_plus).sum() - geodesic(X[0], X[1], t_minus).sum()
+        ) / (2 * eps)
+        t = torch.tensor(t_value, device=device, dtype=dtype, requires_grad=True)
+        geodesic(X[0], X[1], t).sum().backward()
+        assert_close(t.grad, grad_numerical, rtol=1e-4, atol=1e-6)
+
+    @pytest.mark.parametrize("n_features, cond", [(3, 10)])
+    def test_gradcheck(self, n_features, cond, device, dtype, generator):
+        """
+        Manual backward with respect to point1, point2 and t passes gradcheck
+        """
+        X = random_SPD(
+            n_features,
+            n_matrices=2,
+            cond=cond,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        point1 = X[0].clone().requires_grad_(True)
+        point2 = X[1].clone().requires_grad_(True)
+        t = torch.tensor(0.3, device=device, dtype=dtype, requires_grad=True)
+
+        def geodesic(p1, p2, t):
+            # the backward assumes symmetric inputs: perturb symmetrically
+            return affine_invariant.AffineInvariantGeodesic.apply(
+                spd_linalg.symmetrize(p1), spd_linalg.symmetrize(p2), t
+            )
+
+        assert torch.autograd.gradcheck(geodesic, (point1, point2, t))
+
 
 class TestAffineInvariantMean2points:
     """
-    Test suite for the computation of the affine-invariant mean of 2 points,
-    which is known in closed form
+    Test suite for the affine-invariant mean of 2 points (the geodesic at
+    t = 1/2), which is known in closed form
     """
 
     @pytest.mark.parametrize("n_features, cond", [(100, 1000)])
@@ -295,8 +372,8 @@ class TestAffineInvariantMean2points:
             generator=generator,
         )
         # compute mean
-        G_auto = affine_invariant.affine_invariant_mean_2points(X[0], X[1])
-        G_manual = affine_invariant.AffineInvariantMean2Points.apply(X[0], X[1])
+        G_auto = affine_invariant.affine_invariant_geodesic(X[0], X[1], 0.5)
+        G_manual = affine_invariant.AffineInvariantGeodesic.apply(X[0], X[1], 0.5)
 
         assert G_auto.shape == (n_features, n_features)
         assert G_auto.device == X.device
@@ -326,11 +403,11 @@ class TestAffineInvariantMean2points:
         )
         diagvals = diagmats.diagonal(dim1=-1, dim2=-2)
 
-        G_auto = affine_invariant.affine_invariant_mean_2points(
-            diagmats[0], diagmats[1]
+        G_auto = affine_invariant.affine_invariant_geodesic(
+            diagmats[0], diagmats[1], 0.5
         )
-        G_manual = affine_invariant.AffineInvariantMean2Points.apply(
-            diagmats[0], diagmats[1]
+        G_manual = affine_invariant.AffineInvariantGeodesic.apply(
+            diagmats[0], diagmats[1], 0.5
         )
 
         expected = torch.diag_embed(torch.pow(torch.prod(diagvals, dim=0), 1 / 2))
@@ -364,8 +441,8 @@ class TestAffineInvariantMean2points:
 
         data = eigvecs @ diagmats @ eigvecs.transpose(-2, -1)
 
-        G_auto = affine_invariant.affine_invariant_mean_2points(data[0], data[1])
-        G_manual = affine_invariant.AffineInvariantMean2Points.apply(data[0], data[1])
+        G_auto = affine_invariant.affine_invariant_geodesic(data[0], data[1], 0.5)
+        G_manual = affine_invariant.AffineInvariantGeodesic.apply(data[0], data[1], 0.5)
 
         expected_eigvals = torch.diag_embed(
             torch.pow(torch.prod(diagvals, dim=0), 1 / 2)
@@ -407,8 +484,8 @@ class TestAffineInvariantMean2points:
             G_true_sqrtm @ spd_linalg.expm_symmetric(tangent_vectors)[0] @ G_true_sqrtm
         )
 
-        G_auto = affine_invariant.affine_invariant_mean_2points(data[0], data[1])
-        G_manual = affine_invariant.AffineInvariantMean2Points.apply(data[0], data[1])
+        G_auto = affine_invariant.affine_invariant_geodesic(data[0], data[1], 0.5)
+        G_manual = affine_invariant.AffineInvariantGeodesic.apply(data[0], data[1], 0.5)
 
         assert_close(G_auto, G_true)
         assert_close(G_manual, G_true)
@@ -432,10 +509,10 @@ class TestAffineInvariantMean2points:
         X_auto = X.clone().detach()
         X_auto.requires_grad = True
 
-        G_manual = affine_invariant.AffineInvariantMean2Points.apply(
-            X_manual[0], X_manual[1]
+        G_manual = affine_invariant.AffineInvariantGeodesic.apply(
+            X_manual[0], X_manual[1], 0.5
         )
-        G_auto = affine_invariant.affine_invariant_mean_2points(X_auto[0], X_auto[1])
+        G_auto = affine_invariant.affine_invariant_geodesic(X_auto[0], X_auto[1], 0.5)
 
         loss_manual = torch.norm(G_manual)
         loss_manual.backward()
@@ -467,17 +544,11 @@ class TestAffineInvariantMean2points:
         )
 
         G_geodesic = affine_invariant.affine_invariant_geodesic(data[0], data[1], t=0.5)
-        G_2points_auto = affine_invariant.affine_invariant_mean_2points(
-            data[0], data[1]
-        )
         G_fixedpoint_auto = affine_invariant.affine_invariant_mean(
             data, n_iterations=30
         )
 
-        assert_close(G_geodesic, G_2points_auto)
-        assert_close(G_fixedpoint_auto, G_2points_auto)
-
-    # TODO: Also add comparison of gradients adequation between the 3
+        assert_close(G_fixedpoint_auto, G_geodesic)
 
 
 class TestAffineInvariantMean:

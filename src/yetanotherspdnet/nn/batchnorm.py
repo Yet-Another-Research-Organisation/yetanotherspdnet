@@ -42,12 +42,10 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler import (
     right_kullback_leibler_std_scalar,
 )
 from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized import (
-    AdaptiveGeometricArithmeticHarmonicGeodesic,
     AdaptiveGeometricArithmeticHarmonicMean,
     GeometricArithmeticHarmonicMean,
     GeometricEuclideanHarmonicCurve,
     SymmetrizedKullbackLeiblerStdScalar,
-    adaptive_geometric_arithmetic_harmonic_geodesic,
     adaptive_geometric_arithmetic_harmonic_mean,
     geometric_arithmetic_harmonic_mean,
     geometric_euclidean_harmonic_curve,
@@ -438,14 +436,12 @@ class BatchNormSPDBase(ABC, nn.Module):
         elif self.mean_type == "geometric_arithmetic_harmonic":
             self.adaptive_mean_fun = geometric_euclidean_harmonic_curve
         elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
-            # Use the adaptive geodesic with learnable t for running mean update
+            # running mean update on the affine-invariant geodesic
             if self.use_autograd:
-                self.adaptive_mean_fun = lambda p1, p2, t: (
-                    adaptive_geometric_arithmetic_harmonic_geodesic(p1, p2, t)
-                )
+                self.adaptive_mean_fun = affine_invariant_geodesic
             else:
                 self.adaptive_mean_fun = lambda p1, p2, t: (
-                    AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
+                    AffineInvariantGeodesic.apply(
                         p1, p2, torch.tensor(t, dtype=self.dtype, device=self.device)
                     )
                 )
@@ -498,12 +494,10 @@ class BatchNormSPDBase(ABC, nn.Module):
                 )
             elif self.mean_type == "adaptive_geometric_arithmetic_harmonic":
                 if self.use_autograd:
-                    self.regularize_mean_fun = (
-                        adaptive_geometric_arithmetic_harmonic_geodesic
-                    )
+                    self.regularize_mean_fun = affine_invariant_geodesic
                 else:
                     self.regularize_mean_fun = lambda p1, p2, t: (
-                        AdaptiveGeometricArithmeticHarmonicGeodesic.apply(
+                        AffineInvariantGeodesic.apply(
                             p1,
                             p2,
                             torch.tensor(t, dtype=self.dtype, device=self.device),

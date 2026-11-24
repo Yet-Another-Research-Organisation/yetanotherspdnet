@@ -5,6 +5,7 @@ import math
 import torch
 from torch.autograd import Function
 
+from yetanotherspdnet._deprecation import _deprecated
 from yetanotherspdnet.functions.scalar_functions import (
     inv,
     inv_sqrt,
@@ -25,7 +26,6 @@ from ..spd_linalg import (
     logm_SPD,
     solve_sylvester_SPD,
     sqrtm_and_inv_sqrtm_SPD,
-    sqrtm_SPD,
     symmetrize,
 )
 from .kullback_leibler import arithmetic_mean
@@ -253,131 +253,19 @@ class AffineInvariantGeodesic(Function):
 # -----------------------------------
 # Affine-invariant mean of two points
 # -----------------------------------
-# TODO: These are probably to be removed when a Function class for affine-invariant geodesics
-# will be implemented (needed for minibatch batchnorm approach)
-def affine_invariant_mean_2points(
-    point1: torch.Tensor, point2: torch.Tensor
-) -> torch.Tensor:
-    r"""
-    Affine-invariant (geometric) mean of two SPD matrices.
-
-    .. math::
-
-        G(P_1, P_2) = P_1^{1/2}
-            \big(P_1^{-1/2} P_2 P_1^{-1/2}\big)^{1/2}
-            P_1^{1/2}
-
-    the midpoint (:math:`t=1/2`) of the affine-invariant geodesic between
-    :math:`P_1` and :math:`P_2` (see :func:`affine_invariant_geodesic`).
-
-    Parameters
-    ----------
-    point1 : torch.Tensor of shape (..., nfeatures, nfeatures)
-        SPD matrices
-
-    point2 : torch.Tensor of shape (..., nfeatures, nfeatures)
-        SPD matrices
-
-    Returns
-    -------
-    mean : torch.Tensor of shape (..., nfeatures, nfeatures)
-        Geometric means of point1 and point2
-    """
-    point1_sqrtm, point1_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point1)
-    middle_term1 = sqrtm_SPD(point1_inv_sqrtm @ point2 @ point1_inv_sqrtm)[0]
-    return point1_sqrtm @ middle_term1 @ point1_sqrtm
-
-
-class AffineInvariantMean2Points(Function):
-    """
-    Affine-invariant (geometric) mean of two SPD matrices
-    """
-
-    @staticmethod
-    def forward(ctx, point1: torch.Tensor, point2: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the geometric mean of two SPD matrices
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        point1 : torch.Tensor of shape (..., nfeatures, nfeatures)
-            SPD matrices
-
-        point2 : torch.Tensor of shape (..., nfeatures, nfeatures)
-            SPD matrices
-
-        Returns
-        -------
-        mean : torch.Tensor of shape (..., nfeatures, nfeatures)
-            Geometric means of point1 and point2
-        """
-        point1_sqrtm, point1_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point1)
-        eigvals_middle_term1, eigvecs_middle_term1 = torch.linalg.eigh(
-            point1_inv_sqrtm @ point2 @ point1_inv_sqrtm
-        )
-        middle_term1 = eigh_operation(
-            eigvals_middle_term1, eigvecs_middle_term1, torch.sqrt
-        )
-        ctx.save_for_backward(
-            point1_sqrtm,
-            point1_inv_sqrtm,
-            eigvals_middle_term1,
-            eigvecs_middle_term1,
-            point1,
-            point2,
-        )
-        return point1_sqrtm @ middle_term1 @ point1_sqrtm
-
-    @staticmethod
-    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Backward pass of the geometric mean of two SPD matrices
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function._ContextMethodMixin
-            Context object to retrieve tensors saved during the forward pass
-
-        grad_output : torch.Tensor of shape (..., nfeatures, nfeatures)
-            Gradient of the loss with respect to the geometric mean of two SPD matrices
-
-        Returns
-        -------
-        grad_input1 : torch.Tensor of shape (..., nfeatures, nfeatures)
-            Gradient of the loss with respect to point1
-
-        grad_input2 : torch.Tensor of shape (..., nfeatures, nfeatures)
-            Gradient of the loss with respect to point2
-        """
-        (
-            point1_sqrtm,
-            point1_inv_sqrtm,
-            eigvals_middle_term1,
-            eigvecs_middle_term1,
-            point1,
-            point2,
-        ) = ctx.saved_tensors
-        point2_sqrtm, point2_inv_sqrtm, _, _ = sqrtm_and_inv_sqrtm_SPD(point2)
-        eigvals_middle_term2, eigvecs_middle_term2 = torch.linalg.eigh(
-            point2_inv_sqrtm @ point1 @ point2_inv_sqrtm
-        )
-        syl_sol1 = solve_sylvester_SPD(
-            torch.sqrt(eigvals_middle_term2),
-            eigvecs_middle_term2,
-            point2_sqrtm @ grad_output @ point2_sqrtm,
-        )
-        syl_sol2 = solve_sylvester_SPD(
-            torch.sqrt(eigvals_middle_term1),
-            eigvecs_middle_term1,
-            point1_sqrtm @ grad_output @ point1_sqrtm,
-        )
-        return (
-            point2_inv_sqrtm @ syl_sol1 @ point2_inv_sqrtm,
-            point1_inv_sqrtm @ syl_sol2 @ point1_inv_sqrtm,
-        )
+# the geometric mean of two points is the midpoint of the geodesic
+affine_invariant_mean_2points = _deprecated(
+    "affine_invariant_mean_2points",
+    affine_invariant_geodesic,
+    call=lambda point1, point2: affine_invariant_geodesic(point1, point2, 0.5),
+    replacement="affine_invariant_geodesic(point1, point2, 0.5)",
+)
+AffineInvariantMean2Points = _deprecated(
+    "AffineInvariantMean2Points",
+    AffineInvariantGeodesic,
+    call=lambda point1, point2: AffineInvariantGeodesic.apply(point1, point2, 0.5),
+    replacement="AffineInvariantGeodesic.apply(point1, point2, 0.5)",
+)
 
 
 # ---------------------
