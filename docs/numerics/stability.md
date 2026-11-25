@@ -91,7 +91,9 @@ Two separate problems, two remedies:
   not on the condition number as such; it is the cause of the remaining float32
   failures of GBWBN. Remedies: `bw_init_metric="trace_scale"` (absorbs the
   common scale), $\theta < 1$ (compresses the spread), float64
-  ({doc}`../user_guide/batchnorm`).
+  ({doc}`../user_guide/batchnorm`). At the bias step, the transport map
+  $I + Z$ of $\mathrm{Exp}_G$ is projected onto $\{I + Z \succeq \tau I\}$,
+  $\tau = \varepsilon^{|\theta|/4}$, so the layer output stays numerically SPD.
 
 ## CPU and GPU decompositions
 

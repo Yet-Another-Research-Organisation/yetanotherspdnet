@@ -108,6 +108,29 @@ dependence on $c$, and only a large spread ($\kappa \approx 10^4$) still folds,
 at $\theta = 1$ but not at $\theta = 1/2$.
 ```
 
+### The bias step: projection onto the domain of $\mathrm{Exp}_G$
+
+The bias step $\mathrm{Exp}_{\hat G}(V) = T \hat G T$, with $T = I + Z$ and
+$\hat G Z + Z \hat G = V$, has the same domain: $T$ is the optimal (Brenier)
+transport map from $\hat G$ to the output, positive definite inside the domain.
+The transport $\Gamma_{I \to \hat G}$ is an isometry but does not preserve
+the domain: in the eigenbasis of $\hat G$ (eigenvalues $\delta_i$),
+$Z_{ij} = \mathrm{Log}_I(X)_{ij} / \sqrt{2(\delta_i + \delta_j)}$, so a bias
+with small eigenvalues and a large scaling $s / \sigma$ push $T$ to the
+boundary, where the output is singular.
+In training this happens without any fold of the centring: the second GBWBN of
+a 2-BiMap SPDnet on HDM05 reached $\lambda_{\min}(T) = 8 \cdot 10^{-5}$
+($\lambda_{\min}(\hat G) = 0.07$, $s/\sigma = 4.9$), an output of
+$\kappa \approx 10^{16}$ after the power $1/\theta$, and a negative
+eigenvalue in `LogEig` (NaN loss). The layer therefore projects $T$ onto
+$\{T \succeq \tau I\}$ (eigenvalues clamped at $\tau$, manual backward)
+with $\tau = \varepsilon^{|\theta|/4}$ ($\varepsilon$ the machine epsilon of
+the data dtype; float64: $1.2 \cdot 10^{-2}$ at $\theta = 1/2$, $1.2 \cdot
+10^{-4}$ at $\theta = 1$, see `bw_transport_floor`): a direction at the bound
+shrinks the output by at most $\tau^{2/|\theta|} = \sqrt{\varepsilon}$
+relative to $\hat G$. The projection is exactly the identity (bit for bit) when
+$T \succ \tau I$. The centring and the scaling steps are not projected.
+
 ## Implementation
 
 - **Manual backwards everywhere** (`use_autograd=False`, the default): the

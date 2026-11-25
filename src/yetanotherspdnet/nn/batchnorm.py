@@ -16,7 +16,7 @@ from yetanotherspdnet.functions.spd_geometries.registry import (
     get_geometry,
 )
 
-from ..functions._constants import STD_FLOOR
+from ..functions._constants import BW_TRANSPORT_FLOOR_POWER, STD_FLOOR
 from ..functions.dispatch import select_path
 from ..functions.spd_linalg import (
     CongruenceSPD,
@@ -107,6 +107,43 @@ def _check_bw_theta(theta: float) -> float:
             f"variance is divided by theta^2), got {theta!r}"
         )
     return value
+
+
+def bw_transport_floor(dtype: torch.dtype, theta: float) -> float:
+    r"""
+    Lower bound of the eigenvalues of the transport map of the GBWBN bias.
+
+    The bias step is :math:`\mathrm{Exp}_{\hat G}(V) = T \hat G T` with
+    :math:`T = I + Z` the Brenier map, which must be positive definite (the
+    domain of the BW exponential, see
+    :func:`~yetanotherspdnet.functions.spd_geometries.bures_wasserstein._bures_wasserstein_exp`).
+    The layer output is :math:`(M^{1/2} T \hat G T M^{1/2})^{1/\theta}`: a
+    direction where :math:`T = \tau` shrinks it, relative to :math:`\hat G`,
+    by :math:`\tau^{2/|\theta|}`. With
+
+    .. math:: \tau = \varepsilon^{|\theta| / 4}
+
+    (:math:`\varepsilon` the machine epsilon of the dtype) that shrinkage is at
+    most :math:`\sqrt{\varepsilon}`, which leaves a condition number of
+    :math:`1/\sqrt{\varepsilon}` (6.7e7 in float64) to :math:`M` and
+    :math:`\hat G` before the output is numerically singular. :math:`T` is
+    dimensionless (invariant when the data and :math:`\hat G` are scaled
+    together), so the bound is absolute. float64: 1.2e-2 for
+    :math:`\theta = 0.5`, 1.2e-4 for :math:`\theta = 1`.
+
+    Parameters
+    ----------
+    dtype : torch.dtype
+        dtype of the data
+    theta : float
+        Power deformation of GBWBN
+
+    Returns
+    -------
+    float
+        Lower bound :math:`\tau`
+    """
+    return float(torch.finfo(dtype).eps ** (BW_TRANSPORT_FLOOR_POWER * abs(theta)))
 
 
 class BatchNormSPDBase(ABC, nn.Module):
@@ -1619,7 +1656,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         # BW center, scale, bias
         centered = center(data_hat, mean)
         scaled = scale(centered, std**2, self.stdScalarbias)
-        biased = bias(scaled, G_hat)
+        # the transported vector can leave the domain of Exp_G (I + Z > 0, Z the
+        # Lyapunov solution): its transport map is projected back into it, see
+        # bw_transport_floor
+        biased = bias(scaled, G_hat, bw_transport_floor(data.dtype, theta))
 
         # Post-transform: output = (M^{1/2} X_tilde M^{1/2})^{1/theta}
         return to_input(biased)
