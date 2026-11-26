@@ -367,7 +367,6 @@ class SymMatrixToCoordinates(Function):
         grad_input : torch.Tensor of shape (..., n_features, n_features)
             Gradient with respect to data
         """
-        print(sym_coordinates_to_matrix(grad_output, ctx.n_features))
         return sym_coordinates_to_matrix(grad_output, ctx.n_features)
 
 
