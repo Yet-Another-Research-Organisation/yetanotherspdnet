@@ -1641,3 +1641,10 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
         )
         # send back to SPD manifold
         return self.coordinates_to_SPD_fun(data_transp_bias, self.Covbias)
+
+    def _post_optimizer_hook(
+        self, optimizer: torch.optim.Optimizer, *args, **kwargs
+    ) -> None:
+        raise NotImplementedError(
+            "Not implemented yet. You should not have been able to reach this though."
+        )
