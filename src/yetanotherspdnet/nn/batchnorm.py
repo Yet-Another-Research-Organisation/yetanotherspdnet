@@ -34,19 +34,23 @@ from yetanotherspdnet.functions.spd_geometries.kullback_leibler_symmetrized impo
     SymmetrizedKullbackLeiblerStdScalar,
 )
 from yetanotherspdnet.functions.spd_geometries.log_euclidean import (
+    LogEuclideanExpCoordinates,
     LogEuclideanGeodesic,
     LogEuclideanLogCoordinates,
     LogEuclideanMean,
     LogEuclideanParalleTransportSPD,
     LogEuclideanStdScalar,
 )
+from yetanotherspdnet.functions.spd_linalg import InvSqrtmSPD
 
 from ..functions.spd_geometries.affine_invariant import (
     AffineInvariantCoordinatesTransport,
+    AffineInvariantExpCoordinates,
     AffineInvariantGeodesic,
     AffineInvariantLogCoordinates,
     AffineInvariantMean,
     AffineInvariantParallelTransport,
+    AffineInvariantParallelTransportCoordinates,
     AffineInvariantParallelTransportTangentTensor,
     AffineInvariantStdScalar,
 )
@@ -1198,7 +1202,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         )
 
 
-def _transport_tensor_fun_identity(
+def _transport_fun_identity(
     tensor: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
 ) -> torch.Tensor:
     """
@@ -1220,10 +1224,28 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
     _TRANSPORT_TENSOR_FUNS = {
         "affine_invariant": AffineInvariantParallelTransportTangentTensor,
         "affine_invariant_gevd": AffineInvariantParallelTransportTangentTensor,  # TODO make native function for gevd
-        "log_euclidean": _transport_tensor_fun_identity,
+        "log_euclidean": _transport_fun_identity,
         "arithmetic": AffineInvariantParallelTransportTangentTensor,
         "harmonic": AffineInvariantParallelTransportTangentTensor,
         "geometric_arithmetic_harmonic": AffineInvariantParallelTransportTangentTensor,
+    }
+
+    _TRANSPORT_COORDINATES_FUNS = {
+        "affine_invariant": AffineInvariantParallelTransportCoordinates,
+        "affine_invariant_gevd": AffineInvariantParallelTransportCoordinates,  # TODO make native function for gevd
+        "log_euclidean": _transport_fun_identity,
+        "arithmetic": AffineInvariantParallelTransportCoordinates,
+        "harmonic": AffineInvariantParallelTransportCoordinates,
+        "geometric_arithmetic_harmonic": AffineInvariantParallelTransportCoordinates,
+    }
+
+    _EXP_COORDINATES_FUNS = {
+        "affine_invariant": AffineInvariantExpCoordinates,
+        "affine_invariant_gevd": AffineInvariantExpCoordinates,  # TODO make native function for gevd
+        "log_euclidean": LogEuclideanExpCoordinates,
+        "arithmetic": AffineInvariantExpCoordinates,
+        "harmonic": AffineInvariantExpCoordinates,
+        "geometric_arithmetic_harmonic": AffineInvariantExpCoordinates,
     }
 
     def __init__(
@@ -1378,7 +1400,7 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
         self.fisher_vec_fun = self._FISHER_VEC_FUNS[self.mean_type]
         # to compute variance or covariance of Fisher vectors
         if self.tensor_format == "diagonal":
-            self.transport_tensor_fun = _transport_tensor_fun_identity
+            self.transport_tensor_fun = _transport_fun_identity
             self.var_fun = SampleVariance.apply
             self.get_norm_var = self.get_norm_var_identity
             # set running tensor
@@ -1389,7 +1411,7 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
         elif self.tensor_format == "full":
             # select tensor transport function
             if self.norm_strategy == "whitening":
-                self.transport_tensor_fun = _transport_tensor_fun_identity
+                self.transport_tensor_fun = _transport_fun_identity
             elif self.norm_strategy == "parallel_transport":
                 self.transport_tensor_fun = self._TRANSPORT_TENSOR_FUNS[self.mean_type]
             # select covariance tensor estimator
@@ -1475,6 +1497,58 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
                 self.dim, mapping="softplus"
             )
         register_parametrization(self, "Tensorbias", self.tensor_parametrization)
+
+    def _init_norm_and_bias(self) -> None:
+        """
+        Initialize norm and bias functions
+        """
+        if self.tensor_format == "diagonal":
+            self.tensor_norm_fun = self._tensor_norm_diagonal
+            self.tensor_bias_fun = self._tensor_bias_diagonal
+            self.coordinates_transport_fun = _transport_fun_identity
+        elif self.tensor_format == "full":
+            self.tensor_norm_fun = self._tensor_norm_full
+            self.tensor_bias_fun = self._tensor_bias_full
+            if self.norm_strategy == "whitening":
+                self.coordinates_transport_fun = _transport_fun_identity
+            elif self.norm_strategy == "parallel_transport":
+                self.coordinates_transport_fun = self._TRANSPORT_COORDINATES_FUNS[
+                    self.mean_type
+                ]
+        self.coordinates_to_SPD_fun = self._EXP_COORDINATES_FUNS[self.mean_type]
+
+    def _tensor_norm_diagonal(
+        self, data: torch.Tensor, CovTensor: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Normalize Fisher vectors with diagonal tensor
+        """
+        return data / torch.sqrt(CovTensor)
+
+    def _tensor_norm_full(
+        self, data: torch.Tensor, CovTensor: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Normalize Fisher vectors with full tensor
+        """
+        CovTensor_inv_sqrtm = InvSqrtmSPD.apply(CovTensor)
+        return CovTensor_inv_sqrtm @ data
+
+    def _tensor_bias_diagonal(
+        self, data: torch.Tensor, Tensorbias: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Bias Fisher vectors with diagonal tensor
+        """
+        return Tensorbias * data
+
+    def _tensor_bias_full(
+        self, data: torch.Tensor, Tensorbias: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Bias Fisher vectors with full tensor
+        """
+        return Tensorbias @ data
 
     def _get_norm_parameters(
         self, data: torch.Tensor
