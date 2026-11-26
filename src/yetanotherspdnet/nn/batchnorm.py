@@ -26,6 +26,7 @@ from ..functions.spd_linalg import (
     Whitening,
     congruence_SPD,
     eigh_context,
+    eigh_precision,
     inv_sqrtm_SPD,
     powm_SPD,
     sqrtm_SPD,
@@ -109,6 +110,16 @@ def _check_bw_theta(theta: float) -> float:
     return value
 
 
+#: dtype of the GBWBN computations (``BatchNormSPDMeanScalarVariance`` with
+#: ``mean_type="bures_wasserstein"``): data, parameters and running statistics are
+#: cast to it on the fly and the output is cast back to the dtype of the input.
+#: The Bures-Wasserstein pipeline (square roots, cross terms, Lyapunov solves, the
+#: power 1/theta of the post-transform) squares condition numbers, and its domain
+#: projection needs a bound tied to the precision (bw_transport_floor): float32
+#: would need tau ~ 0.14 at theta = 0.5.
+BW_COMPUTE_DTYPE = torch.float64
+
+
 def bw_transport_floor(dtype: torch.dtype, theta: float) -> float:
     r"""
     Lower bound of the eigenvalues of the transport map of the GBWBN bias.
@@ -131,10 +142,13 @@ def bw_transport_floor(dtype: torch.dtype, theta: float) -> float:
     together), so the bound is absolute. float64: 1.2e-2 for
     :math:`\theta = 0.5`, 1.2e-4 for :math:`\theta = 1`.
 
+    The layer computes in :data:`BW_COMPUTE_DTYPE` (float64) whatever the dtype
+    of its data, so it always uses the float64 bound.
+
     Parameters
     ----------
     dtype : torch.dtype
-        dtype of the data
+        dtype of the computation
     theta : float
         Power deformation of GBWBN
 
@@ -434,11 +448,14 @@ class BatchNormSPDBase(ABC, nn.Module):
         mean : torch.Tensor of shape (n_features, n_features)
             SPD mean used for normalization
         """
+        # the buffer keeps its dtype: GBWBN computes in BW_COMPUTE_DTYPE
         mean = self.regularize_mean_fun(
-            self.mean_regularizer, mean_batch, self.get_minibatch_momentum()
+            self.mean_regularizer.to(mean_batch),
+            mean_batch,
+            self.get_minibatch_momentum(),
         )
         with torch.no_grad():
-            self.mean_regularizer = mean.detach()
+            self.mean_regularizer = mean.detach().to(self.mean_regularizer.dtype)
         return mean
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -1277,10 +1294,12 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
     def _handle_minibatch_std(self, std_scalar_batch: torch.Tensor) -> torch.Tensor:
         """Auxiliary function to handle var used for normalization with minibatch strategy."""
         std_scalar = self.adaptive_std_fun(
-            self.std_regularizer, std_scalar_batch, self.get_minibatch_momentum()
+            self.std_regularizer.to(std_scalar_batch),
+            std_scalar_batch,
+            self.get_minibatch_momentum(),
         )
         with torch.no_grad():
-            self.std_regularizer = std_scalar.detach()
+            self.std_regularizer = std_scalar.detach().to(self.std_regularizer.dtype)
         return std_scalar
 
     def adaptive_std_fun(
@@ -1416,7 +1435,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             eye = torch.eye(self.n_features, dtype=self.dtype, device=data.device)
             self._move_reference_point("bw_M", scale * eye)
             self._move_reference_point("bw_G", scale ** (1.0 / theta) * eye)
-            self.running_mean = scale ** (1.0 / theta) * eye
+            self.running_mean = (scale ** (1.0 / theta) * eye).to(
+                self.running_mean.dtype
+            )
             self.bw_metric_initialized.fill_(True)
 
     def _move_reference_point(self, name: str, value: torch.Tensor) -> None:
@@ -1572,7 +1593,22 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         Pipeline: pre-transform -> BW center -> BW scale -> BW bias -> post-transform
         (Algorithm 1 of Wang et al., "GBWBN", 2025). The variance is the one of
         the theta-deformed metric, d_BW^2(X^theta, Y^theta) / theta^2.
+
+        Computed in :data:`BW_COMPUTE_DTYPE` (float64): the data, :math:`M`,
+        :math:`G`, :math:`s` and the running statistics are cast to it (the
+        casts are differentiable, so float32 parameters get float32 gradients;
+        parameters and buffers keep their dtype), every eigendecomposition is
+        computed in it (:func:`~yetanotherspdnet.functions.spd_linalg.eigh_precision`),
+        and the output is cast back to the dtype of *data*. No-op casts for
+        float64 data.
         """
+        output_dtype = data.dtype
+        data = data.to(BW_COMPUTE_DTYPE)
+        with eigh_precision(BW_COMPUTE_DTYPE):
+            return self._forward_bures_wasserstein_compute(data).to(output_dtype)
+
+    def _forward_bures_wasserstein_compute(self, data: torch.Tensor) -> torch.Tensor:
+        """GBWBN forward pass on data of dtype BW_COMPUTE_DTYPE."""
         theta = self.bw_theta
         if (
             self.bw_init_metric == "trace_scale"
@@ -1581,7 +1617,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             and data.shape[:-2].numel() >= 2
         ):
             self._init_metric_trace_scale(data)
-        M = self.bw_M
+        M = self.bw_M.to(data)
 
         # Pre-transform: X_hat = M^{-1/2} X^theta M^{-1/2}
         # bw_M is initialized at the identity: with use_autograd=False the
@@ -1623,7 +1659,7 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
             return powm_SPD(x, p)[0]
 
         data_hat = to_transformed(data)
-        G_hat = to_transformed(cast(torch.Tensor, self.bw_G))
+        G_hat = to_transformed(cast(torch.Tensor, self.bw_G).to(data))
 
         if _use_batch_statistics(self, data):
             with torch.set_grad_enabled(
@@ -1637,25 +1673,24 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
                 # the running mean is stored in the input space (see
                 # _load_from_state_dict): pulled to the transformed space of the
                 # current M, moved along the BW geodesic, pushed back
-                running_mean = to_transformed(
-                    self.running_mean.to(data.device), powm_no_grad
-                )
+                # (buffers keep their dtype)
+                running_mean = to_transformed(self.running_mean.to(data), powm_no_grad)
                 self.running_mean = to_input(
                     self.adaptive_mean_fun(running_mean, mean_batch, self.momentum)
-                )
+                ).to(self.running_mean.dtype)
                 self.running_std_scalar = self.adaptive_std_fun(
-                    self.running_std_scalar.to(data.device), std_batch, self.momentum
-                )
+                    self.running_std_scalar.to(data), std_batch, self.momentum
+                ).to(self.running_std_scalar.dtype)
             self.training_step = self.training_step + 1
             if self.is_dynamic:
                 self.current_ref_step += 1
         else:
-            mean = to_transformed(self.running_mean.to(data.device), powm_no_grad)
-            std = self.running_std_scalar.to(data.device)
+            mean = to_transformed(self.running_mean.to(data), powm_no_grad)
+            std = self.running_std_scalar.to(data)
 
         # BW center, scale, bias
         centered = center(data_hat, mean)
-        scaled = scale(centered, std**2, self.stdScalarbias)
+        scaled = scale(centered, std**2, self.stdScalarbias.to(data))
         # the transported vector can leave the domain of Exp_G (I + Z > 0, Z the
         # Lyapunov solution): its transport map is projected back into it, see
         # bw_transport_floor

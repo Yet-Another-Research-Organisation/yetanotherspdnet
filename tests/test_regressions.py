@@ -550,3 +550,86 @@ def test_gbwbn_short_training_stays_finite():
             assert torch.isfinite(loss), f"non-finite loss at epoch {epoch}"
             loss.backward()
             optimizer.step()
+
+
+# ---------------------------------------------------------------------------
+# GBWBN computes in float64 for float32 data (its domain projection would
+# otherwise need the float32 bound, tau ~ 0.14 at theta = 0.5)
+# ---------------------------------------------------------------------------
+def _gbwbn_pair(norm_strategy="classical"):
+    """The same GBWBN layer in float64 and in float32 (parameters off the identity)."""
+    layers = {}
+    for dtype in (torch.float64, torch.float32):
+        layers[dtype] = BatchNormSPDMeanScalarVariance(
+            5,
+            mean_type="bures_wasserstein",
+            norm_strategy=norm_strategy,
+            minibatch_mode="constant" if norm_strategy == "minibatch" else "",
+            dtype=dtype,
+        )
+    gen = torch.Generator().manual_seed(7)
+    M = random_SPD(5, 1, cond=3, dtype=torch.float32, generator=gen)
+    G = random_SPD(5, 1, cond=3, dtype=torch.float32, generator=gen)
+    for dtype, layer in layers.items():
+        layer._move_reference_point("bw_M", M.to(dtype))
+        layer._move_reference_point("bw_G", G.to(dtype))
+        with torch.no_grad():
+            layer.stdScalarbias = torch.tensor(1.3, dtype=dtype)
+    X = random_SPD(5, 16, cond=10, dtype=torch.float32, generator=gen)
+    return layers[torch.float64], layers[torch.float32], X
+
+
+@pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
+def test_gbwbn_float32_data_matches_float64(norm_strategy):
+    layer64, layer32, X = _gbwbn_pair(norm_strategy)
+    for _ in range(3):  # training steps (running statistics), then evaluation
+        out32, out64 = layer32(X), layer64(X.double())
+        assert out32.dtype == torch.float32
+        assert_close(out32.double(), out64, rtol=1e-6, atol=1e-6)
+    layer32.eval()
+    layer64.eval()
+    assert_close(layer32(X).double(), layer64(X.double()), rtol=1e-6, atol=1e-6)
+    # parameters and buffers keep their dtype
+    for name, value in layer32.state_dict().items():
+        if value.is_floating_point():
+            assert value.dtype == torch.float32, name
+
+
+def test_gbwbn_float32_gradients_reach_parameters():
+    layer64, layer32, X = _gbwbn_pair()
+    X32 = X.clone().requires_grad_(True)
+    X64 = X.double().requires_grad_(True)
+    layer32(X32).square().sum().backward()
+    layer64(X64).square().sum().backward()
+    params64 = dict(layer64.named_parameters())
+    for name, parameter in layer32.named_parameters():
+        assert parameter.grad is not None, name
+        assert parameter.grad.dtype == torch.float32, name
+        assert_close(parameter.grad.double(), params64[name].grad, rtol=1e-4, atol=1e-5)
+    assert X32.grad.dtype == torch.float32
+    assert_close(X32.grad.double(), X64.grad, rtol=1e-4, atol=1e-5)
+
+
+@pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+def test_gbwbn_float32_projection_uses_float64_bound(monkeypatch, bw_theta):
+    from yetanotherspdnet.functions.dispatch import DualPath
+    from yetanotherspdnet.nn import batchnorm
+
+    calls = []
+    original = batchnorm.BURES_WASSERSTEIN_STEPS["bias"]
+
+    def spy(data, bias_point, bound):
+        calls.append((data.dtype, bias_point.dtype, bound))
+        return original.manual(data, bias_point, bound)
+
+    monkeypatch.setitem(
+        batchnorm.BURES_WASSERSTEIN_STEPS, "bias", DualPath(original.autograd, spy)
+    )
+    layer = BatchNormSPDMeanScalarVariance(
+        4, mean_type="bures_wasserstein", bw_theta=bw_theta, dtype=torch.float32
+    )
+    X = random_SPD(4, 8, cond=10, dtype=torch.float32)
+    layer(X)
+    tau = torch.finfo(torch.float64).eps ** (bw_theta / 4)
+    assert calls == [(torch.float64, torch.float64, pytest.approx(tau))]
+    assert batchnorm.bw_transport_floor(torch.float64, bw_theta) == pytest.approx(tau)
