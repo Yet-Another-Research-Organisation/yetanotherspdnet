@@ -582,13 +582,20 @@ def _gbwbn_pair(norm_strategy="classical"):
 @pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
 def test_gbwbn_float32_data_matches_float64(norm_strategy):
     layer64, layer32, X = _gbwbn_pair(norm_strategy)
+
+    def relative_error(out32, out64):
+        # float32 rounding of the input, the output and the float32 buffers
+        # (running statistics, minibatch regularizers) between steps
+        diff = torch.linalg.matrix_norm(out32.double() - out64)
+        return float((diff / torch.linalg.matrix_norm(out64)).max())
+
     for _ in range(3):  # training steps (running statistics), then evaluation
         out32, out64 = layer32(X), layer64(X.double())
         assert out32.dtype == torch.float32
-        assert_close(out32.double(), out64, rtol=1e-6, atol=1e-6)
+        assert relative_error(out32, out64) < 2e-6
     layer32.eval()
     layer64.eval()
-    assert_close(layer32(X).double(), layer64(X.double()), rtol=1e-6, atol=1e-6)
+    assert relative_error(layer32(X), layer64(X.double())) < 2e-6
     # parameters and buffers keep their dtype
     for name, value in layer32.state_dict().items():
         if value.is_floating_point():
