@@ -616,7 +616,8 @@ def test_gbwbn_float32_data_matches_float64(norm_strategy):
     def relative_error(out32, out64):
         # float32 rounding of the input, the output and the float32 buffers
         # (running statistics, minibatch regularizers) between steps
-        diff = torch.linalg.matrix_norm(out32.double() - out64)
+        out32, out64 = out32.detach().double(), out64.detach()
+        diff = torch.linalg.matrix_norm(out32 - out64)
         return float((diff / torch.linalg.matrix_norm(out64)).max())
 
     for _ in range(3):  # training steps (running statistics), then evaluation

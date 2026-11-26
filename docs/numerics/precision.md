@@ -10,7 +10,7 @@ layer in float32 and in mixed precision, and a recommendation.
 | your data (condition number $\kappa$ of the inputs) | use |
 |---|---|
 | $\kappa \le 10^{2}$ | float32 for every layer and model |
-| $\kappa \le 10^{4}$ | float32 for `SPDnet`, `RResNet`, `GBWBNRResNet`, the residual blocks and the batch normalizations (the GBWBN layer computes in float64 internally), except `residual="branch_pt"` (float64); mixed precision (`eigh_dtype=torch.float64`) for a margin |
+| $\kappa \le 10^{4}$ | float32 for `SPDnet`, `RResNet`, `GBWBNRResNet`, the residual blocks and the batch normalizations (GBWBN computes in float64 internally; keep a ReEig after it), except `residual="branch_pt"` (float64); mixed precision (`eigh_dtype=torch.float64`) for a margin |
 | $\kappa \le 10^{6}$ | mixed precision for `SPDnet`, `RResNet` and ReEig (safe); float64 for the batch normalizations (degraded or unsafe in float32) and for `GBWBNRResNet` (its float32 runs pass, but its mixed-precision runs fail on 1 batch in 8) |
 | $\kappa > 10^{6}$ | float64 |
 | `basis="eigenbasis"` | float64 only |
@@ -119,7 +119,23 @@ their dtype, float32 parameters get float32 gradients) and the output is cast
 back, so in a float32 model it matches the float64 layer up to the rounding of
 its input and output (`tests/test_float32.py` at $\kappa \le 10^{4}$ with the
 tolerances of the other batch normalizations). Its rows in the table above were
-measured before that change. Folding itself is not a precision problem: keep
+measured before that change.
+
+**Float32 networks with GBWBN.** Measured on the E1 protocol (SPDnet-2BiMap,
+`BiMap -> GBWBN -> ReEig`, HDM05 and GSOFF fold 0, seeds 0 and 1): a float32
+network (GBWBN in float64) trained without failure, with macro F1 0.714 against
+0.723 in float64 on HDM05 and 0.566 against 0.552 on GSOFF (within the spread
+of the seeds), and the same time per epoch (the GBWBN layers dominate and run in
+float64 in both). Float64 weights copied into the float32 network give logits
+within $3 \cdot 10^{-2}$ (relative) at initialization, where the running
+statistics are still the identity and the batch norms see the raw inputs
+($\kappa \approx 10^{6}$), and within $5 \cdot 10^{-4}$ after 5 to 80 epochs;
+the batch-norm outputs stay at $\kappa \le 4 \cdot 10^{2}$.
+`eigh_dtype=torch.float64` for the other layers changed nothing there. With the
+GBWBN after the ReEig (`batchnorm_position="after_reeig"`, then followed by a
+`LogEig`), a float32 network diverged on HDM05 (NaN at epochs 12–14): the
+outputs of GBWBN reached $\kappa \approx 10^{9}$, which float32 cannot hold.
+Folding itself is not a precision problem: keep
 the spectrum close to 1 ($\theta < 1$, `bw_init_metric="trace_scale"` for the
 common scale). `GBWBNRResNet` (a BiMap
 to $n/2$ first) is safe in float32 up to $\kappa = 10^{6}$; in mixed precision

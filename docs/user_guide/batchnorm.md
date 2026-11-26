@@ -108,38 +108,79 @@ dependence on $c$, and only a large spread ($\kappa \approx 10^4$) still folds,
 at $\theta = 1$ but not at $\theta = 1/2$.
 ```
 
-### The bias step: projection onto the domain of $\mathrm{Exp}_G$
+### Singular outputs at the bias step: put a ReEig after GBWBN
 
-The bias step $\mathrm{Exp}_{\hat G}(V) = T \hat G T$, with $T = I + Z$ and
-$\hat G Z + Z \hat G = V$, has the same domain: $T$ is the optimal (Brenier)
-transport map from $\hat G$ to the output, positive definite inside the domain.
-The transport $\Gamma_{I \to \hat G}$ is an isometry but does not preserve
-the domain: in the eigenbasis of $\hat G$ (eigenvalues $\delta_i$),
-$Z_{ij} = \mathrm{Log}_I(X)_{ij} / \sqrt{2(\delta_i + \delta_j)}$, so a bias
-with small eigenvalues and a large scaling $s / \sigma$ push $T$ to the
-boundary, where the output is singular.
-In training this happens without any fold of the centring: the second GBWBN of
-a 2-BiMap SPDnet on HDM05 reached $\lambda_{\min}(T) = 8 \cdot 10^{-5}$
-($\lambda_{\min}(\hat G) = 0.07$, $s/\sigma = 4.9$), an output of
-$\kappa \approx 10^{16}$ after the power $1/\theta$, and a negative
-eigenvalue in `LogEig` (NaN loss). The layer therefore projects $T$ onto
-$\{T \succeq \tau I\}$ (eigenvalues clamped at $\tau$, manual backward)
-with $\tau = \varepsilon^{|\theta|/4}$ ($\varepsilon$ the float64 machine
-epsilon: $1.2 \cdot 10^{-2}$ at $\theta = 1/2$, $1.2 \cdot 10^{-4}$ at
-$\theta = 1$, see `bw_transport_floor`): a direction at the bound
-shrinks the output by at most $\tau^{2/|\theta|} = \sqrt{\varepsilon}$
-relative to $\hat G$. The projection is exactly the identity (bit for bit) when
-$T \succ \tau I$. The centring and the scaling steps are not projected.
+```{warning}
+GBWBN can output singular matrices. Follow it by a `ReEig`
+(`BiMap -> GBWBN -> ReEig`), as the reference architecture. `SPDnet` does it
+by default for GBWBN (`batchnorm_position`); with the other placement a
+`LogEig` (or the next GBWBN) can receive a singular matrix and the loss becomes
+NaN.
+```
+
+**The domain of the BW exponential.** The bias step is
+$\mathrm{Exp}_{\hat G}(V) = T \hat G T$ with $T = I + Z$ and
+$\hat G Z + Z \hat G = V$ ($Z = \mathcal{L}_{\hat G}^{-1}[V]$): $T$ is the
+optimal (Brenier) transport map from $\hat G$ to the output. The exponential is
+a geodesic, and a diffeomorphism onto the SPD cone, only for $T \succ 0$.
+Outside, the output folds back into the cone; on the boundary it is singular.
+The layer uses this formula as the paper and the reference code do.
+
+**A scalar example.** With $\hat G = gI$ and a scaled matrix $X$ (after the
+centring and the scaling), $Z = (X^{1/2} - I)/\sqrt g$, and an eigenvalue
+$\lambda$ of $X^{1/2}$ gives the output eigenvalue
+
+$$
+g\left(1 + \frac{\lambda - 1}{\sqrt g}\right)^2 = (\lambda + \sqrt g - 1)^2 ,
+$$
+
+which folds for $\lambda < 1 - \sqrt g$ and is zero at $\lambda = 1 - \sqrt g$.
+In general, in the eigenbasis of $\hat G$ (eigenvalues $\delta_i$),
+$Z_{ij} = \mathrm{Log}_I(X)_{ij} / \sqrt{2(\delta_i + \delta_j)}$: the smaller
+the eigenvalues of the learned bias, the closer the boundary.
+
+**When it happens.** In the E1 benchmark (2-BiMap SPDnet, BN after each ReEig),
+the second GBWBN learned a bias with $\lambda_{\min}(\hat G) \approx 0.07$ on
+HDM05 (0.14 on GSOFF), and $s/\sigma \approx 5$–$8$: the smallest eigenvalue of
+$T$ reached $5 \cdot 10^{-5}$, the output (after the power $1/\theta$) a
+condition number of $10^{15}$–$10^{16}$, and the `LogEig` right after it read a
+negative eigenvalue ($-1.7 \cdot 10^{-16}$): NaN loss on every HDM05 seed
+(epochs 21–44) and on one GSOFF seed. The forward pass failed, not the backward.
+
+**Why the reference code survives.** Its networks place the batch
+normalization before the ReEig (`BiMap -> GBWBN -> ReEig -> LogEig`; the
+RResNet variant floors the eigenvalues at the start of the residual block), and
+its eigendecompositions are SVDs, which return $|\lambda|$: a folded or
+singular output is floored before the next logarithm.
+
+**Recommended architecture.** `BiMap -> GBWBN -> ReEig`, the default of
+`SPDnet` for GBWBN (`batchnorm_position=None` resolves to `"before_reeig"`;
+`"after_reeig"` keeps the former placement). The ReEig floors the singular
+directions at `reeig_eps`; its gradient there is zero, as for any clamped
+eigenvalue. `GBWBNRResNet` and `RResNet` already floor the output of GBWBN at
+the start of their residual block. An alternative, not used by the layer: the
+geometry functions (`bures_wasserstein_bias`, `BuresWassersteinBias`) accept
+`min_transport_eigval`, which projects $T$ onto $\{T \succeq \tau I\}$; it
+changes the outputs wherever the formula folds.
 
 **Precision.** GBWBN computes in float64 whatever the dtype of its data
 (`BW_COMPUTE_DTYPE`): the data, $M$, $G$, $s$ and the running statistics are
 cast to float64 on the fly, every decomposition is computed in float64, and the
 output is cast back to the input dtype. Parameters and buffers keep the dtype
 of the layer (state dicts are unchanged) and float32 parameters receive float32
-gradients through the casts. In a float32 model the layer therefore matches the
-float64 layer up to the rounding of its input and output, at the cost of
-float64 arithmetic for this layer only; the bound $\tau$ above is always the
-float64 one (float32 would need $\tau \approx 0.14$ at $\theta = 1/2$).
+gradients through the casts. The layer therefore matches the float64 layer up
+to the rounding of its input and output. With the ReEig after it, a float32
+network trains like the float64 one (no failure, the same accuracy within the
+spread of the seeds on HDM05 and GSOFF, {doc}`../numerics/precision`); with a
+`LogEig` right after it, a float32 network diverged on HDM05.
+
+**`bw_init_metric="trace_scale"` in the E1 benchmark.** It reduces the folding
+of the centring of the first GBWBN (fraction of the matrices with
+$I + V/2 \not\succ 0$: HDM05 100 % to 96 %, GSOFF 84 % to 46 %, HyperLeaf
+72 % to 12 %; smallest eigenvalue −18 to −5 on HDM05), but it lowered the macro
+F1 on the three datasets (HDM05 0.724 to 0.688, GSOFF 0.523 to 0.497,
+HyperLeaf 0.417 to 0.367, and one of three HyperLeaf runs failed): the default
+stays `"identity"`.
 
 ## Implementation
 
@@ -269,12 +310,12 @@ of folded matrices:
 | $10^6$, $[10^{-3}, 10^{3}]$ | 64 | 0.5 | 100 % | 57 % |
 
 Initializing $M$ alone would move the folding to the bias step (97 % at scale
-$10^2$, $\theta = 1$). In practice: rescale the data or use
-`bw_init_metric="trace_scale"`, keep $\theta < 1$ when the spectrum is wide,
-and keep `use_autograd=False` ($M$ and $G$ start at the identity, where the
-manual backwards are finite). The layer computes in float64 even in a float32
-model, so folded matrices close to singular keep their digits
-({doc}`../numerics/precision`).
+$10^2$, $\theta = 1$). In practice: keep $\theta < 1$ when the spectrum is
+wide; rescaling the data or `bw_init_metric="trace_scale"` removes the folding
+caused by the common scale, but it did not improve the accuracy in the E1
+benchmark (see the bias-step section above); and keep `use_autograd=False` ($M$ and $G$ start at the identity, where the
+manual backwards are finite). Keep a `ReEig` after the layer (the `SPDnet`
+default for GBWBN); the layer computes in float64 even in a float32 model.
 
 ```python
 import torch
