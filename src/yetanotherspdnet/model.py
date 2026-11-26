@@ -151,6 +151,9 @@ class SPDnet(_ModelMixin, nn.Module):
     Implements the architecture of Huang & Van Gool (AAAI 2017), with optional
     Riemannian batch normalization after each ReEig. (The SPDNetBN paper of
     Brooks et al., NeurIPS 2019, places it between the BiMap and the ReEig.)
+    GBWBN goes between the BiMap and the ReEig by default
+    (``[BiMap -> GBWBN -> ReEig] x L``, as in the GBWBN reference code), see
+    ``batchnorm_position``.
 
     """
 
@@ -183,6 +186,7 @@ class SPDnet(_ModelMixin, nn.Module):
         batchnorm_parametrization_mode: str = "static",
         batchnorm_n_steps_ref_update: int = 100,
         batchnorm_bw_options: dict | None = None,
+        batchnorm_position: str | None = None,
         vec_type: str = "vec",
         use_logeig: bool = True,
         use_autograd: bool | dict = False,
@@ -298,6 +302,17 @@ class SPDnet(_ModelMixin, nn.Module):
             ``batchnorm_type="mean_var_scalar"``.
             Default is None (the layer defaults)
 
+        batchnorm_position : str or None, optional
+            Where the batch normalization goes in each block:
+            ``"after_reeig"`` (``BiMap -> ReEig -> BatchNorm``) or
+            ``"before_reeig"`` (``BiMap -> BatchNorm -> ReEig``, the SPDNetBN and
+            GBWBN reference architectures). Default is None:
+            ``"before_reeig"`` for GBWBN (``batchnorm_type="mean_var_scalar"``,
+            ``batchnorm_mean_type="bures_wasserstein"``), whose bias
+            exponential can output singular matrices that the ReEig then floors
+            (see :class:`~yetanotherspdnet.nn.batchnorm.BatchNormSPDMeanScalarVariance`),
+            ``"after_reeig"`` otherwise.
+
         vec_type : str, optional
             Whether to use Vec or Vech module.
             Default is "vec".
@@ -369,6 +384,9 @@ class SPDnet(_ModelMixin, nn.Module):
         self.batchnorm_parametrization_mode = batchnorm_parametrization_mode
         self.batchnorm_n_steps_ref_update = batchnorm_n_steps_ref_update
         self.batchnorm_bw_options = batchnorm_bw_options
+        self.batchnorm_position = _resolve_batchnorm_position(
+            batchnorm_position, batchnorm_type, batchnorm_mean_type
+        )
 
         self.vec_type = vec_type
         if self.vec_type not in ("vec", "vech"):
@@ -418,6 +436,10 @@ class SPDnet(_ModelMixin, nn.Module):
             )
         ]
 
+        before_reeig = batchnorm and self.batchnorm_position == "before_reeig"
+        after_reeig = batchnorm and self.batchnorm_position == "after_reeig"
+        if before_reeig:
+            spdnet_layers.append(make_batchnorm(self.hidden_layers_size[0]))
         spdnet_layers.append(
             ReEig(
                 eps=self.reeig_eps,
@@ -426,7 +448,7 @@ class SPDnet(_ModelMixin, nn.Module):
             )
         )
 
-        if batchnorm:
+        if after_reeig:
             spdnet_layers.append(make_batchnorm(self.hidden_layers_size[0]))
         for i in range(1, len(hidden_layers_size)):
             spdnet_layers.append(
@@ -443,6 +465,8 @@ class SPDnet(_ModelMixin, nn.Module):
                     generator=self.generator,
                 )
             )
+            if before_reeig:
+                spdnet_layers.append(make_batchnorm(self.hidden_layers_size[i]))
             spdnet_layers.append(
                 ReEig(
                     eps=self.reeig_eps,
@@ -451,7 +475,7 @@ class SPDnet(_ModelMixin, nn.Module):
                 )
             )
 
-            if batchnorm:
+            if after_reeig:
                 spdnet_layers.append(make_batchnorm(self.hidden_layers_size[i]))
 
         # Conditionally add LogEig layer
@@ -505,6 +529,12 @@ class SPDnet(_ModelMixin, nn.Module):
                 X = self.softmax_layer(X)
             return X
 
+    def _batchnorm_position_repr(self) -> str:
+        """``batchnorm_position`` line of the representation, empty for "after_reeig"."""
+        if not self.batchnorm or self.batchnorm_position == "after_reeig":
+            return ""
+        return f"  batchnorm_position='{self.batchnorm_position}',\n"
+
     def __repr__(self) -> str:
         """Return the string representation of SPDnet."""
         return (
@@ -532,6 +562,9 @@ class SPDnet(_ModelMixin, nn.Module):
             f"  batchnorm_parametrization_mode={self.batchnorm_parametrization_mode},\n"
             f"  batchnorm_n_steps_ref_update={self.batchnorm_n_steps_ref_update},\n"
             f"  batchnorm_bw_options={self.batchnorm_bw_options},\n"
+            # only when not "after_reeig" (the only placement before the option
+            # existed): the hashes of the existing configurations stay valid
+            f"{self._batchnorm_position_repr()}"
             f"  vec_type='{self.vec_type}',\n"
             f"  use_logeig={self.use_logeig},\n"
             f"  use_autograd={self._use_autograd_original},\n"
@@ -541,6 +574,31 @@ class SPDnet(_ModelMixin, nn.Module):
             f"  dtype={self.dtype},\n"
             f")"
         )
+
+
+BATCHNORM_POSITIONS = ("after_reeig", "before_reeig")
+
+
+def _resolve_batchnorm_position(
+    position: str | None, batchnorm_type: str, mean_type: str
+) -> str:
+    """
+    Resolve ``batchnorm_position`` of SPDnet (None: the default of the batch norm).
+
+    GBWBN (``mean_var_scalar`` with the Bures-Wasserstein mean) goes before the
+    ReEig, as in the reference code: its bias exponential can output singular
+    matrices, which the ReEig floors before the next layer. The other batch
+    normalizations output congruences of SPD matrices and stay after the ReEig.
+    """
+    if position is None:
+        gbwbn = batchnorm_type == "mean_var_scalar" and mean_type == "bures_wasserstein"
+        return "before_reeig" if gbwbn else "after_reeig"
+    if position not in BATCHNORM_POSITIONS:
+        raise ValueError(
+            f"batchnorm_position must be in {list(BATCHNORM_POSITIONS)} or None, "
+            f"got {position!r}"
+        )
+    return position
 
 
 def _make_batchnorm(

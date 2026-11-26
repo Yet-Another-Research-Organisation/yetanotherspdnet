@@ -42,12 +42,3 @@ BW_SCALE_EPS = 1e-5
 # identical matrices (std = 0), as the GBWBN scaling; no effect for
 # std >= 3.2e-3
 STD_FLOOR = BW_SCALE_EPS**0.5
-
-# GBWBN bias exponential Exp_G(V) = T G T: lower bound eps(dtype) ** (BW_TRANSPORT_FLOOR_POWER
-# * |theta|) of the eigenvalues of its transport map T = I + Z (see
-# batchnorm.bw_transport_floor). The output is (M^{1/2} T G T M^{1/2})^{1/theta},
-# so a direction of T at the bound shrinks the output, relative to G, by
-# tau^{2/|theta|} = eps^{1/2}: half of the dtype's precision goes to the transport
-# map, half is left for the conditioning of M and G before the output becomes
-# numerically singular (float64, theta = 0.5: tau = 1.2e-2; theta = 1: 1.2e-4)
-BW_TRANSPORT_FLOOR_POWER = 0.25

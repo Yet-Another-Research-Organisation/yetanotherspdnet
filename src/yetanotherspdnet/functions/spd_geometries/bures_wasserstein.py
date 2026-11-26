@@ -971,7 +971,10 @@ def bures_wasserstein_bias(
         the domain of :math:`\mathrm{Exp}_G` (the transport is an isometry, but
         the domain is not invariant: it is scaled by about
         :math:`\sqrt{\lambda_{\min}(G)}` in the directions of the small
-        eigenvalues of :math:`G`). Default is None (no projection)
+        eigenvalues of :math:`G`). Default is None (no projection: the formula
+        of the paper and of the reference code, used by the GBWBN layer). The
+        projection is an alternative to a ``ReEig`` after the layer; it changes
+        the outputs wherever the formula folds
 
     Returns
     -------

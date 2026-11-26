@@ -1287,6 +1287,9 @@ _MODEL_HASHES = [
             "batchnorm": True,
             "batchnorm_type": "mean_var_scalar",
             "batchnorm_mean_type": "bures_wasserstein",
+            # the placement of GBWBN before batchnorm_position existed (the
+            # default is now GBWBN -> ReEig, which changes the hash)
+            "batchnorm_position": "after_reeig",
             "use_autograd": {"bimap": True},
         },
         "5a2bd627",
@@ -1325,6 +1328,28 @@ _MODEL_HASHES = [
         },
         "ed8eb3c6",
     ),
+    # SPDnet + GBWBN: "after_reeig" is the placement (and the hash) before
+    # batchnorm_position existed; the default is now GBWBN -> ReEig
+    *[
+        (
+            SPDnet,
+            {
+                "input_dim": 8,
+                "hidden_layers_size": [6],
+                "output_dim": 3,
+                "batchnorm": True,
+                "batchnorm_type": "mean_var_scalar",
+                "batchnorm_mean_type": "bures_wasserstein",
+                **position,
+            },
+            expected,
+        )
+        for position, expected in [
+            ({}, "5d81eefe"),
+            ({"batchnorm_position": "before_reeig"}, "5d81eefe"),
+            ({"batchnorm_position": "after_reeig"}, "475b16dd"),
+        ]
+    ],
     (GBWBNRResNet, {"input_dim": 8, "hidden_dim": 6, "output_dim": 3}, "29deb207"),
     (
         GBWBNRResNet,
