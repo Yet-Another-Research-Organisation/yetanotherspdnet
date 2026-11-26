@@ -2188,18 +2188,14 @@ def _spectral(matrix: torch.Tensor, fun) -> torch.Tensor:
     return (eigvecs * fun(eigvals).unsqueeze(-2)) @ eigvecs.mT
 
 
-def _gbwbn_paper_formula(data, M, G, theta, shift, eps=1e-5, min_transport_eigval=None):
+def _gbwbn_paper_formula(data, M, G, theta, shift, eps=1e-5):
     """Algorithm 1 of the GBWBN paper (Wang et al., 2025), written independently
     of the library with eigendecompositions and the paper's formulas. The step
     names (pal1, scale1, pal2, ExpG) follow the reference code (jjscc/GBWBN),
     but this is the paper's formula, not the reference code: the variance is
     measured to the batch mean (the reference code measures it to the identity)
     and the batch mean is one fixed-point iteration from the arithmetic mean.
-    The variance is the Frechet variance of the theta-deformed metric.
-
-    ``min_transport_eigval``: Exp_{G_hat} restricted to its domain, as in the
-    layer: the eigenvalues of the transport map T = I + Z are clamped from
-    below (None: the paper's formula as is, which folds when T is indefinite)."""
+    The variance is the Frechet variance of the theta-deformed metric."""
     eye = torch.eye(data.shape[-1], dtype=data.dtype, device=data.device)
     M_isqrt = _spectral(M, lambda s: s.rsqrt())
     M_sqrt = _spectral(M, torch.sqrt)
@@ -2230,12 +2226,6 @@ def _gbwbn_paper_formula(data, M, G, theta, shift, eps=1e-5, min_transport_eigva
     V = P @ (torch.sqrt((a[:, None] + a[None, :]) / 2) * (P.mT @ V @ P)) @ P.mT
     Z = P @ ((P.mT @ V @ P) / (a[:, None] + a[None, :])) @ P.mT
     X = G_hat + V + Z @ G_hat @ Z
-    if min_transport_eigval is not None:
-        t, Q = torch.linalg.eigh(eye + Z)
-        if (t[..., 0] < min_transport_eigval).any():
-            T_plus = Q @ torch.diag_embed(t.clamp_min(min_transport_eigval)) @ Q.mT
-            inside = (t[..., 0] >= min_transport_eigval)[..., None, None]
-            X = torch.where(inside, X, T_plus @ G_hat @ T_plus)
     return _spectral(M_sqrt @ X @ M_sqrt, lambda s: s ** (1 / theta))
 
 
@@ -2261,12 +2251,7 @@ class TestGBWBNConformity:
             layer.bw_G = G
             layer.stdScalarbias = torch.tensor(1.7, dtype=dtype)
         data = random_SPD(n_features, 8, cond=20, dtype=dtype, generator=generator)
-        # the bias exponential is restricted to its domain (at theta = 0.75 the
-        # transport map of one matrix of this batch is indefinite)
-        tau = batchnorm.bw_transport_floor(dtype, bw_theta)
-        expected = _gbwbn_paper_formula(
-            data, M, G, bw_theta, shift=1.7, min_transport_eigval=tau
-        )
+        expected = _gbwbn_paper_formula(data, M, G, bw_theta, shift=1.7)
         assert_close(layer(data), expected, rtol=1e-8, atol=1e-10)
 
     def test_default_theta_is_paper_best(self):
