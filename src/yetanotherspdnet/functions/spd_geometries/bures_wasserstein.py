@@ -51,13 +51,16 @@ from yetanotherspdnet.functions.scalar_functions import (
 )
 
 from ..spd_linalg import (
+    EighClamp,
     PolarFactor,
     SqrtmSPD,
+    eigh_clamp,
     eigh_operation_grad,
     polar_factor,
     solve_sylvester_SPD,
     sqrtm_SPD,
     symmetric_eigh,
+    symmetric_eigvalsh,
     symmetrize,
 )
 from .euclidean import arithmetic_mean
@@ -273,15 +276,18 @@ class LyapunovSolveSPD(Function):
 
 
 def _bures_wasserstein_exp(
-    tangent_vec: torch.Tensor, base: torch.Tensor
+    tangent_vec: torch.Tensor,
+    base: torch.Tensor,
+    min_transport_eigval: float | None = None,
+    use_autograd: bool = False,
 ) -> torch.Tensor:
     r"""
     Exponential map at a general base point under BW geometry.
 
     .. math::
 
-        \mathrm{Exp}_B(V) = B + V + Z B Z, \quad\text{where } Z \text{ solves }
-        B Z + Z B = V
+        \mathrm{Exp}_B(V) = B + V + Z B Z = (I + Z) B (I + Z), \quad\text{where }
+        Z \text{ solves } B Z + Z B = V
 
     (a Lyapunov equation, solved by
     :func:`~yetanotherspdnet.functions.spd_linalg.solve_sylvester_SPD`).
@@ -289,6 +295,19 @@ def _bures_wasserstein_exp(
     transport map from :math:`B` to :math:`X`, :math:`\mathrm{Log}_B(X) =
     TB + BT - 2B` gives :math:`Z = T - I` and :math:`\mathrm{Exp}_B = TBT = X`.
     At :math:`B = I` it reduces to :func:`bures_wasserstein_exp_identity`.
+
+    **Domain.** :math:`T = I + Z` is the optimal (Brenier) transport map from
+    :math:`B` to :math:`\mathrm{Exp}_B(V)`, which is positive definite: the BW
+    exponential is a geodesic, and a diffeomorphism onto the SPD cone, only on
+    :math:`\{V : I + Z \succ 0\}`. Outside, :math:`TBT` folds back into the
+    cone, and on the boundary it is singular. With ``min_transport_eigval``
+    :math:`\tau > 0`, :math:`T` is projected onto :math:`\{T \succeq \tau I\}`
+    by clamping its eigenvalues,
+    :math:`T_+ = T + U \operatorname{diag}\big((\tau - \lambda)_+\big) U^\top`,
+    so that the result stays in the open cone with
+    :math:`\lambda_{\min}(T_+ B T_+) \ge \tau^2 \lambda_{\min}(B)`. The
+    correction is exactly zero (the result is unchanged, bit for bit) when
+    :math:`T \succ \tau I`.
 
     Parameters
     ----------
@@ -298,13 +317,43 @@ def _bures_wasserstein_exp(
     base : torch.Tensor of shape (..., n_features, n_features) or (n_features, n_features)
         Base point (SPD matrix)
 
+    min_transport_eigval : float or None, optional
+        Lower bound :math:`\tau` of the eigenvalues of the transport map
+        :math:`I + Z` (dimensionless). Default is None (no projection)
+
+    use_autograd : bool, optional
+        Differentiate the projection with autograd through ``torch.linalg.eigh``
+        rather than with the manual backward of
+        :class:`~yetanotherspdnet.functions.spd_linalg.EighClamp`.
+        Default is False
+
     Returns
     -------
     point : torch.Tensor of shape (..., n_features, n_features)
         SPD matrices
     """
     Z = LyapunovSolveSPD.apply(base, tangent_vec)
-    return base + tangent_vec + Z @ base @ Z
+    point = base + tangent_vec + Z @ base @ Z
+    if min_transport_eigval is None:
+        return point
+    eye = torch.eye(Z.shape[-1], dtype=Z.dtype, device=Z.device)
+    # (tau - lambda)_+ of T = I + Z as the ReLU of tau I - T: exactly zero
+    # (no rounding) when every eigenvalue of T is above tau
+    deficit = symmetrize((min_transport_eigval - 1.0) * eye - Z)
+    if use_autograd:
+        # autograd through eigh is undefined at repeated eigenvalues even where
+        # the correction vanishes: only differentiated when the projection acts
+        with torch.no_grad():
+            active = bool((symmetric_eigvalsh(deficit)[..., -1] > 0).any())
+        if not active:
+            return point
+        correction = eigh_clamp(deficit, 0.0)[0]
+    else:
+        correction = EighClamp.apply(deficit, 0.0, None)
+    # T_+ B T_+ = T B T + D B T + T B D + D B D, with D the correction
+    transport = eye + Z
+    cross = correction @ base @ transport
+    return point + cross + cross.transpose(-2, -1) + correction @ base @ correction
 
 
 # ----------------------------------------
@@ -892,7 +941,9 @@ def bures_wasserstein_scale(
 
 
 def bures_wasserstein_bias(
-    data: torch.Tensor, bias_point: torch.Tensor
+    data: torch.Tensor,
+    bias_point: torch.Tensor,
+    min_transport_eigval: float | None = None,
 ) -> torch.Tensor:
     r"""
     Bias SPD data by parallel-transporting from the identity to *bias_point*.
@@ -913,6 +964,15 @@ def bures_wasserstein_bias(
     bias_point : torch.Tensor of shape (n_features, n_features)
         Learned bias (SPD matrix)
 
+    min_transport_eigval : float or None, optional
+        Lower bound of the eigenvalues of the transport map of
+        :math:`\mathrm{Exp}_G` (see :func:`_bures_wasserstein_exp`): the
+        transported vector :math:`\Gamma_{I\to G}(\mathrm{Log}_I(X))` can leave
+        the domain of :math:`\mathrm{Exp}_G` (the transport is an isometry, but
+        the domain is not invariant: it is scaled by about
+        :math:`\sqrt{\lambda_{\min}(G)}` in the directions of the small
+        eigenvalues of :math:`G`). Default is None (no projection)
+
     Returns
     -------
     biased : torch.Tensor of shape (..., n_features, n_features)
@@ -922,7 +982,9 @@ def bures_wasserstein_bias(
     # degenerate-safe backward: bias_point is typically a learnable parameter
     # initialized at the identity (all eigenvalues equal)
     transported = ParallelTransportFromIdentityBW.apply(log_at_I, bias_point)
-    return _bures_wasserstein_exp(transported, bias_point)
+    return _bures_wasserstein_exp(
+        transported, bias_point, min_transport_eigval, use_autograd=True
+    )
 
 
 # ----------------------------------------------------------------
@@ -1095,7 +1157,11 @@ def BuresWassersteinScale(
     return bures_wasserstein_exp_identity(factor * BuresWassersteinLogIdentity(data))
 
 
-def BuresWassersteinBias(data: torch.Tensor, bias_point: torch.Tensor) -> torch.Tensor:
+def BuresWassersteinBias(
+    data: torch.Tensor,
+    bias_point: torch.Tensor,
+    min_transport_eigval: float | None = None,
+) -> torch.Tensor:
     r"""
     Bias SPD data by transporting from the identity to *bias_point* (manual backward).
 
@@ -1109,6 +1175,11 @@ def BuresWassersteinBias(data: torch.Tensor, bias_point: torch.Tensor) -> torch.
     bias_point : torch.Tensor of shape (n_features, n_features)
         Learned bias (SPD matrix)
 
+    min_transport_eigval : float or None, optional
+        Lower bound of the eigenvalues of the transport map of
+        :math:`\mathrm{Exp}_G`, see :func:`bures_wasserstein_bias`.
+        Default is None (no projection)
+
     Returns
     -------
     biased : torch.Tensor of shape (..., n_features, n_features)
@@ -1116,4 +1187,4 @@ def BuresWassersteinBias(data: torch.Tensor, bias_point: torch.Tensor) -> torch.
     """
     log_at_I = BuresWassersteinLogIdentity(data)
     transported = ParallelTransportFromIdentityBW.apply(log_at_I, bias_point)
-    return _bures_wasserstein_exp(transported, bias_point)
+    return _bures_wasserstein_exp(transported, bias_point, min_transport_eigval)

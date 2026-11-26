@@ -409,3 +409,234 @@ def test_bures_wasserstein_batchnorm_dynamic_optimizer_step(generator):
         optimizer.zero_grad()
         layer(X).sum().backward()
         optimizer.step()
+
+
+# ---------------------------------------------------------------------------
+# GBWBN: the bias exponential Exp_G left its domain (I + Z > 0) and produced a
+# numerically singular output, which LogEig turned into NaN (E1 benchmark,
+# HDM05 and GSOFF)
+# ---------------------------------------------------------------------------
+def _diagonal_batch(rows):
+    return torch.diag_embed(torch.tensor(rows, dtype=DTYPE))
+
+
+def _gbwbn_at_the_boundary(use_autograd):
+    """GBWBN layer (theta = 1, M = I) whose bias transport map is singular.
+
+    Diagonal (commuting) data: the transport map of Exp_G is diagonal,
+    T = 1 + (|1 + f (c^{1/2} - 1)| - 1) / g^{1/2} with c the centered data and
+    f = s / sqrt(var + eps) the scaling factor; s is chosen so that T = 0 for
+    the first coordinate of the first matrix.
+    """
+    X = _diagonal_batch(
+        [[0.3, 1.0, 2.0], [1.5, 0.8, 1.0], [1.2, 1.3, 0.6], [0.9, 1.1, 1.4]]
+    )
+    g = 0.01
+    layer = BatchNormSPDMeanScalarVariance(
+        3,
+        mean_type="bures_wasserstein",
+        bw_theta=1.0,
+        use_autograd=use_autograd,
+        dtype=DTYPE,
+    )
+    layer._move_reference_point("bw_G", torch.diag(torch.tensor([g, 1.0, 1.0])))
+    bw = bures_wasserstein
+    mean = bw.bures_wasserstein_mean(X)
+    std = bw.bures_wasserstein_std_scalar(X, mean)
+    c = bw.bures_wasserstein_center(X, mean)[0, 0, 0]
+    assert c < 1
+    factor = g**0.5 / (1 - c**0.5)
+    with torch.no_grad():
+        layer.stdScalarbias = factor * torch.sqrt(std**2 + 1e-5)
+    return layer, X, g
+
+
+@pytest.mark.parametrize("use_autograd", [False, True])
+def test_gbwbn_bias_exponential_stays_in_the_spd_cone(use_autograd):
+    from yetanotherspdnet.nn import LogEig
+
+    layer, X, g = _gbwbn_at_the_boundary(use_autograd)
+    output = layer(X)
+    # output = T G T with T >= tau = eps^(1/4) (bw_transport_floor, theta = 1):
+    # lambda_min >= tau^2 lambda_min(G); before, 1e-13 (numerically singular)
+    tau = torch.finfo(DTYPE).eps ** 0.25
+    eigvals = torch.linalg.eigvalsh(output)
+    assert eigvals.min() >= 0.99 * tau**2 * g
+    features = LogEig(use_autograd=use_autograd)(output)
+    assert torch.isfinite(features).all()
+    if use_autograd:
+        # autograd through eigh is undefined at M = I (repeated eigenvalues)
+        return
+    features.square().sum().backward()
+    for name, parameter in layer.named_parameters():
+        assert torch.isfinite(parameter.grad).all(), name
+
+
+def test_bw_bias_projection_is_exact_inside_the_domain(generator):
+    data = random_SPD(5, 6, cond=4, dtype=DTYPE, generator=generator)
+    bias = random_SPD(5, 1, cond=4, dtype=DTYPE, generator=generator)
+    bw = bures_wasserstein
+    for fun in (bw.bures_wasserstein_bias, bw.BuresWassersteinBias):
+        # all the transport maps are above the bound: unchanged, bit for bit
+        assert torch.equal(fun(data, bias, 1e-3), fun(data, bias))
+
+
+def test_bw_bias_projection_gradients(generator):
+    """Manual backward of the projected bias = autograd = finite differences."""
+    bw = bures_wasserstein
+    data = random_SPD(4, 3, cond=50, dtype=DTYPE, generator=generator)
+    eigvals = torch.tensor([0.02, 0.3, 1.0, 1.5], dtype=DTYPE)
+    Q = torch.linalg.qr(torch.randn(4, 4, dtype=DTYPE, generator=generator))[0]
+    bias = Q @ torch.diag(eigvals) @ Q.mT
+    tau = 0.2
+    # the projection acts on some transport maps (none is at the bound)
+    Z = bw.LyapunovSolveSPD.apply(
+        bias,
+        bw.bures_wasserstein_parallel_transport_from_identity(
+            bw.bures_wasserstein_log_identity(data), bias
+        ),
+    )
+    t_min = torch.linalg.eigvalsh(torch.eye(4, dtype=DTYPE) + Z)[:, 0]
+    assert (t_min < tau - 1e-2).any()
+    assert ((t_min - tau).abs() > 1e-3).all()
+
+    data.requires_grad_(True)
+    bias.requires_grad_(True)
+    grads = []
+    for fun in (bw.BuresWassersteinBias, bw.bures_wasserstein_bias):
+        out = fun(data, bias, tau)
+        assert torch.linalg.eigvalsh(out).min() >= 0.99 * tau**2 * eigvals[0]
+        grads.append(torch.autograd.grad(out.square().sum(), (data, bias)))
+    for manual, auto in zip(*grads):
+        assert_close(manual, auto)
+    sym = lambda A: (A + A.mT) / 2
+    assert gradcheck(
+        lambda x, b: bw.BuresWassersteinBias(sym(x), sym(b), tau),
+        (data, bias),
+    )
+
+
+def test_gbwbn_short_training_stays_finite():
+    """Deterministic SPDnet + GBWBN training on synthetic data (NaN at step 184 before)."""
+    seed, n = 2, 20
+    g = torch.Generator().manual_seed(seed)
+    batches, labels = [], []
+    for label in range(3):
+        C = random_SPD(n, 1, cond=50, dtype=DTYPE, generator=g)
+        L = torch.linalg.cholesky(C)
+        A = torch.randn(40, n, 3 * n, generator=g, dtype=DTYPE)
+        batches.append(L @ (A @ A.mT / (3 * n)) @ L.mT)
+        labels.append(torch.full((40,), label))
+    X, y = torch.cat(batches), torch.cat(labels)
+    torch.manual_seed(seed)
+    model = SPDnet(
+        n,
+        [16, 12],
+        3,
+        batchnorm=True,
+        batchnorm_type="mean_var_scalar",
+        batchnorm_mean_type="bures_wasserstein",
+        batchnorm_momentum=0.1,
+        generator=torch.Generator().manual_seed(seed),
+    )
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
+    shuffle = torch.Generator().manual_seed(seed)
+    for epoch in range(25):
+        perm = torch.randperm(len(y), generator=shuffle)
+        for i in range(0, len(y), 16):
+            idx = perm[i : i + 16]
+            optimizer.zero_grad()
+            loss = torch.nn.functional.cross_entropy(model(X[idx]), y[idx])
+            assert torch.isfinite(loss), f"non-finite loss at epoch {epoch}"
+            loss.backward()
+            optimizer.step()
+
+
+# ---------------------------------------------------------------------------
+# GBWBN computes in float64 for float32 data (its domain projection would
+# otherwise need the float32 bound, tau ~ 0.14 at theta = 0.5)
+# ---------------------------------------------------------------------------
+def _gbwbn_pair(norm_strategy="classical"):
+    """The same GBWBN layer in float64 and in float32 (parameters off the identity)."""
+    layers = {}
+    for dtype in (torch.float64, torch.float32):
+        layers[dtype] = BatchNormSPDMeanScalarVariance(
+            5,
+            mean_type="bures_wasserstein",
+            norm_strategy=norm_strategy,
+            minibatch_mode="constant" if norm_strategy == "minibatch" else "",
+            dtype=dtype,
+        )
+    gen = torch.Generator().manual_seed(7)
+    M = random_SPD(5, 1, cond=3, dtype=torch.float32, generator=gen)
+    G = random_SPD(5, 1, cond=3, dtype=torch.float32, generator=gen)
+    for dtype, layer in layers.items():
+        layer._move_reference_point("bw_M", M.to(dtype))
+        layer._move_reference_point("bw_G", G.to(dtype))
+        with torch.no_grad():
+            layer.stdScalarbias = torch.tensor(1.3, dtype=dtype)
+    X = random_SPD(5, 16, cond=10, dtype=torch.float32, generator=gen)
+    return layers[torch.float64], layers[torch.float32], X
+
+
+@pytest.mark.parametrize("norm_strategy", ["classical", "minibatch"])
+def test_gbwbn_float32_data_matches_float64(norm_strategy):
+    layer64, layer32, X = _gbwbn_pair(norm_strategy)
+
+    def relative_error(out32, out64):
+        # float32 rounding of the input, the output and the float32 buffers
+        # (running statistics, minibatch regularizers) between steps
+        diff = torch.linalg.matrix_norm(out32.double() - out64)
+        return float((diff / torch.linalg.matrix_norm(out64)).max())
+
+    for _ in range(3):  # training steps (running statistics), then evaluation
+        out32, out64 = layer32(X), layer64(X.double())
+        assert out32.dtype == torch.float32
+        assert relative_error(out32, out64) < 2e-6
+    layer32.eval()
+    layer64.eval()
+    assert relative_error(layer32(X), layer64(X.double())) < 2e-6
+    # parameters and buffers keep their dtype
+    for name, value in layer32.state_dict().items():
+        if value.is_floating_point():
+            assert value.dtype == torch.float32, name
+
+
+def test_gbwbn_float32_gradients_reach_parameters():
+    layer64, layer32, X = _gbwbn_pair()
+    X32 = X.clone().requires_grad_(True)
+    X64 = X.double().requires_grad_(True)
+    layer32(X32).square().sum().backward()
+    layer64(X64).square().sum().backward()
+    params64 = dict(layer64.named_parameters())
+    for name, parameter in layer32.named_parameters():
+        assert parameter.grad is not None, name
+        assert parameter.grad.dtype == torch.float32, name
+        assert_close(parameter.grad.double(), params64[name].grad, rtol=1e-4, atol=1e-5)
+    assert X32.grad.dtype == torch.float32
+    assert_close(X32.grad.double(), X64.grad, rtol=1e-4, atol=1e-5)
+
+
+@pytest.mark.parametrize("bw_theta", [1.0, 0.5])
+def test_gbwbn_float32_projection_uses_float64_bound(monkeypatch, bw_theta):
+    from yetanotherspdnet.functions.dispatch import DualPath
+    from yetanotherspdnet.nn import batchnorm
+
+    calls = []
+    original = batchnorm.BURES_WASSERSTEIN_STEPS["bias"]
+
+    def spy(data, bias_point, bound):
+        calls.append((data.dtype, bias_point.dtype, bound))
+        return original.manual(data, bias_point, bound)
+
+    monkeypatch.setitem(
+        batchnorm.BURES_WASSERSTEIN_STEPS, "bias", DualPath(original.autograd, spy)
+    )
+    layer = BatchNormSPDMeanScalarVariance(
+        4, mean_type="bures_wasserstein", bw_theta=bw_theta, dtype=torch.float32
+    )
+    X = random_SPD(4, 8, cond=10, dtype=torch.float32)
+    layer(X)
+    tau = torch.finfo(torch.float64).eps ** (bw_theta / 4)
+    assert calls == [(torch.float64, torch.float64, pytest.approx(tau))]
+    assert batchnorm.bw_transport_floor(torch.float64, bw_theta) == pytest.approx(tau)

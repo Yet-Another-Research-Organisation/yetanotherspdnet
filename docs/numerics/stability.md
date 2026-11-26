@@ -11,7 +11,7 @@ and what the package does about it.
 | nearly equal eigenvalues | the quotient $\frac{f(\lambda_i) - f(\lambda_j)}{\lambda_i - \lambda_j}$ cancels | closed-form divided differences, relative tie threshold | {doc}`manual_backward` |
 | eigenvalues near 0 | $\log$, $x^{-1/2}$ overflow; float32 has no digits left | floors (`spd_floor`, ReEig), mixed precision | below |
 | products of ill-conditioned matrices | $B^{1/2} X B^{1/2}$ squares the conditioning | SVD / polar factor of $X^{1/2} B^{1/2}$ | {doc}`manual_backward` |
-| Bures–Wasserstein exponential outside its domain | folding, nearly singular outputs | `bw_init_metric="trace_scale"`, $\theta < 1$, float64 | {doc}`../user_guide/batchnorm` |
+| Bures–Wasserstein exponential outside its domain | folding, nearly singular outputs | `bw_init_metric="trace_scale"`, $\theta < 1$; the bias step is projected onto its domain and GBWBN computes in float64 | {doc}`../user_guide/batchnorm` |
 | unnormalized residual steps | $\lVert V \rVert_X \sim 1/\lambda_{\min}$, the exponential overflows | unit step, floored input | below |
 | zero dispersion (identical matrices) | $s/\sigma$ and $\sqrt{\sigma^2}$ backward divide by 0 | floors on $\sigma$, subgradient 0 at 0 | below |
 | a batch of one matrix | its statistics are trivial | running statistics, `UserWarning` | {doc}`../user_guide/batchnorm` |
@@ -91,7 +91,12 @@ Two separate problems, two remedies:
   not on the condition number as such; it is the cause of the remaining float32
   failures of GBWBN. Remedies: `bw_init_metric="trace_scale"` (absorbs the
   common scale), $\theta < 1$ (compresses the spread), float64
-  ({doc}`../user_guide/batchnorm`).
+  ({doc}`../user_guide/batchnorm`). At the bias step, the transport map
+  $I + Z$ of $\mathrm{Exp}_G$ is projected onto $\{I + Z \succeq \tau I\}$,
+  $\tau = \varepsilon_{64}^{|\theta|/4}$, so the layer output stays numerically
+  SPD. GBWBN computes in float64 for any input dtype (casts on the fly, output
+  cast back), so $\tau$ is always the float64 bound (float32 would need
+  $\tau \approx 0.14$ at $\theta = 1/2$).
 
 ## CPU and GPU decompositions
 

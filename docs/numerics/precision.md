@@ -10,7 +10,7 @@ layer in float32 and in mixed precision, and a recommendation.
 | your data (condition number $\kappa$ of the inputs) | use |
 |---|---|
 | $\kappa \le 10^{2}$ | float32 for every layer and model |
-| $\kappa \le 10^{4}$ | float32 for `SPDnet`, `RResNet`, `GBWBNRResNet`, the residual blocks and the batch normalizations, except the GBWBN layer on its own and `residual="branch_pt"` (float64); mixed precision (`eigh_dtype=torch.float64`) for a margin |
+| $\kappa \le 10^{4}$ | float32 for `SPDnet`, `RResNet`, `GBWBNRResNet`, the residual blocks and the batch normalizations (the GBWBN layer computes in float64 internally), except `residual="branch_pt"` (float64); mixed precision (`eigh_dtype=torch.float64`) for a margin |
 | $\kappa \le 10^{6}$ | mixed precision for `SPDnet`, `RResNet` and ReEig (safe); float64 for the batch normalizations (degraded or unsafe in float32) and for `GBWBNRResNet` (its float32 runs pass, but its mixed-precision runs fail on 1 batch in 8) |
 | $\kappa > 10^{6}$ | float64 |
 | `basis="eigenbasis"` | float64 only |
@@ -107,13 +107,21 @@ longer fail in float32 up to $\kappa = 10^{6}$ (the geodesic through the
 eigendecomposition of $B^{1/2}XB^{1/2}$ failed at $10^{6}$ and was 50 times
 less accurate at $10^{4}$), and their forward errors are equal or smaller
 everywhere.
-The scalar-variance normalization (GBWBN) stays unsafe in float32 and mixed
+The scalar-variance normalization (GBWBN) was unsafe in float32 and mixed
 precision from $\kappa = 10^{4}$ at $n = 64$ (12–62 % of the batches): the
 eigenvalues of these batches spread over $[10^{-2}, 10^{2}]$, the centring
 folds (see {doc}`../user_guide/batchnorm`) and returns matrices that are singular to
 rounding, whose square root in the next step has no float32 digits left.
-Use float64 for it, or keep the spectrum close to 1 ($\theta < 1$,
-`bw_init_metric="trace_scale"` for the common scale). `GBWBNRResNet` (a BiMap
+The layer now computes in float64 whatever the dtype of its data
+(`yetanotherspdnet.nn.batchnorm.BW_COMPUTE_DTYPE`): the data, $M$, $G$, $s$
+and the running statistics are cast on the fly (parameters and buffers keep
+their dtype, float32 parameters get float32 gradients) and the output is cast
+back, so in a float32 model it matches the float64 layer up to the rounding of
+its input and output (`tests/test_float32.py` at $\kappa \le 10^{4}$ with the
+tolerances of the other batch normalizations). Its rows in the table above were
+measured before that change. Folding itself is not a precision problem: keep
+the spectrum close to 1 ($\theta < 1$, `bw_init_metric="trace_scale"` for the
+common scale). `GBWBNRResNet` (a BiMap
 to $n/2$ first) is safe in float32 up to $\kappa = 10^{6}$; in mixed precision
 it still fails on 1 batch in 8 at $\kappa = 10^{6}$ and $n = 64$ (the rows
 of the models were measured on the code with both the SVD cross term and the
@@ -134,7 +142,7 @@ as the log-Euclidean block followed by LogEig.
   in float64 (repeated, nearly repeated eigenvalues, the identity,
   $\kappa = 10^{6}$) and compared with the autograd path; every layer is run in
   float32 against a float64 reference for $\kappa \le 10^{4}$, except the
-  layers rated unsafe there (GBWBN, `residual="branch_pt"`), tested at
+  layer rated unsafe there (`residual="branch_pt"`), tested at
   $\kappa \le 10^{2}$ (`MAX_KAPPA` in `tests/test_float32.py`).
 
 The benchmark protocol is described in {doc}`../development/benchmarks`.

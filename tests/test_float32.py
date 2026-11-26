@@ -119,17 +119,16 @@ for _mt in MEAN_TYPES:
     LAYERS[f"BatchNormSPDMeanScalarVariance[{_mt}]"] = (
         lambda dt, mt=_mt: BatchNormSPDMeanScalarVariance(N, mean_type=mt, dtype=dt),
         2e-4,
-        5e-2 if _mt == "bures_wasserstein" else 5e-3,
+        5e-3,
     )
 
 
 # largest kappa tested per layer by test_float32_matches_float64 (default 1e4).
-# The BW scalar-variance layer folds on these spectra spread around 1 from
-# kappa 1e4 (the centred matrices come close to singular); it is tested at
-# kappa 1e4 by test_bw_scalar_variance_kappa_1e4, on spectra in [1e-4, 1] that
-# stay inside the injectivity domain of Exp_I.
+# The BW scalar-variance layer (GBWBN) computes in float64 whatever the dtype of
+# its data (batchnorm.BW_COMPUTE_DTYPE), so it is tested at kappa 1e4 with the
+# tolerances of the other batch normalizations although these spectra fold its
+# centring from kappa 1e4.
 MAX_KAPPA: dict[str, float] = {
-    "BatchNormSPDMeanScalarVariance[bures_wasserstein]": 1e2,
     # the transport whitens the branch output by X: N = X^{-1/2} Z X^{-1/2}
     # has condition number up to kappa(X) kappa(Z)
     "ResidualBlock[branch_pt]": 1e2,

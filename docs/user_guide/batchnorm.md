@@ -108,6 +108,39 @@ dependence on $c$, and only a large spread ($\kappa \approx 10^4$) still folds,
 at $\theta = 1$ but not at $\theta = 1/2$.
 ```
 
+### The bias step: projection onto the domain of $\mathrm{Exp}_G$
+
+The bias step $\mathrm{Exp}_{\hat G}(V) = T \hat G T$, with $T = I + Z$ and
+$\hat G Z + Z \hat G = V$, has the same domain: $T$ is the optimal (Brenier)
+transport map from $\hat G$ to the output, positive definite inside the domain.
+The transport $\Gamma_{I \to \hat G}$ is an isometry but does not preserve
+the domain: in the eigenbasis of $\hat G$ (eigenvalues $\delta_i$),
+$Z_{ij} = \mathrm{Log}_I(X)_{ij} / \sqrt{2(\delta_i + \delta_j)}$, so a bias
+with small eigenvalues and a large scaling $s / \sigma$ push $T$ to the
+boundary, where the output is singular.
+In training this happens without any fold of the centring: the second GBWBN of
+a 2-BiMap SPDnet on HDM05 reached $\lambda_{\min}(T) = 8 \cdot 10^{-5}$
+($\lambda_{\min}(\hat G) = 0.07$, $s/\sigma = 4.9$), an output of
+$\kappa \approx 10^{16}$ after the power $1/\theta$, and a negative
+eigenvalue in `LogEig` (NaN loss). The layer therefore projects $T$ onto
+$\{T \succeq \tau I\}$ (eigenvalues clamped at $\tau$, manual backward)
+with $\tau = \varepsilon^{|\theta|/4}$ ($\varepsilon$ the float64 machine
+epsilon: $1.2 \cdot 10^{-2}$ at $\theta = 1/2$, $1.2 \cdot 10^{-4}$ at
+$\theta = 1$, see `bw_transport_floor`): a direction at the bound
+shrinks the output by at most $\tau^{2/|\theta|} = \sqrt{\varepsilon}$
+relative to $\hat G$. The projection is exactly the identity (bit for bit) when
+$T \succ \tau I$. The centring and the scaling steps are not projected.
+
+**Precision.** GBWBN computes in float64 whatever the dtype of its data
+(`BW_COMPUTE_DTYPE`): the data, $M$, $G$, $s$ and the running statistics are
+cast to float64 on the fly, every decomposition is computed in float64, and the
+output is cast back to the input dtype. Parameters and buffers keep the dtype
+of the layer (state dicts are unchanged) and float32 parameters receive float32
+gradients through the casts. In a float32 model the layer therefore matches the
+float64 layer up to the rounding of its input and output, at the cost of
+float64 arithmetic for this layer only; the bound $\tau$ above is always the
+float64 one (float32 would need $\tau \approx 0.14$ at $\theta = 1/2$).
+
 ## Implementation
 
 - **Manual backwards everywhere** (`use_autograd=False`, the default): the
@@ -238,9 +271,10 @@ of folded matrices:
 Initializing $M$ alone would move the folding to the bias step (97 % at scale
 $10^2$, $\theta = 1$). In practice: rescale the data or use
 `bw_init_metric="trace_scale"`, keep $\theta < 1$ when the spectrum is wide,
-use float64 (folded matrices close to singular have no float32 digits left,
-{doc}`../numerics/precision`), and keep `use_autograd=False` ($M$ and $G$
-start at the identity, where the manual backwards are finite).
+and keep `use_autograd=False` ($M$ and $G$ start at the identity, where the
+manual backwards are finite). The layer computes in float64 even in a float32
+model, so folded matrices close to singular keep their digits
+({doc}`../numerics/precision`).
 
 ```python
 import torch
