@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import torch
-from torch import nn, tensor
+import torch.nn as nn
 from torch.nn.utils.parametrize import register_parametrization
 
 from yetanotherspdnet.functions.covariance import (
@@ -47,11 +47,12 @@ from ..functions.spd_geometries.affine_invariant import (
     AffineInvariantLogCoordinates,
     AffineInvariantMean,
     AffineInvariantParallelTransport,
+    AffineInvariantParallelTransportTangentTensor,
     AffineInvariantStdScalar,
 )
 from .parametrizations import (
+    ElementwiseSoftPlusParametrization,
     SPDAdaptiveParametrization,
-    ScalarSoftPlusParametrization,
     SPDParametrization,
 )
 
@@ -401,19 +402,21 @@ class BatchNormSPDBase(ABC, nn.Module):
             Batch of transformed (normalized then biased) SPD matrices
         """
         if self.training:
-            parameters, parameters_batch = self._get_norm_parameters(data)
+            parameters, parameters_batch, data_remapped = self._get_norm_parameters(
+                data
+            )
             with torch.no_grad():
-                self._update_running_parameters(parameters_batch)
+                self._update_running_parameters(parameters, parameters_batch)
             self.training_step = self.training_step + 1
             if self.is_dynamic:
                 self.current_ref_step += 1
         else:
             # training over, use overall parameters learnt on all batches
-            parameters = self._get_running_parameters()
-        return self._norm_and_bias(data, parameters)
+            parameters, data_remapped = self._get_running_parameters(data)
+        return self._norm_and_bias(data_remapped, parameters)
 
     @abstractmethod
-    def _get_norm_parameters(self, data: torch.Tensor) -> tuple[Any, Any]:
+    def _get_norm_parameters(self, data: torch.Tensor) -> tuple[Any, Any, torch.Tensor]:
         """
         Get parameters used to normalize data
 
@@ -430,28 +433,44 @@ class BatchNormSPDBase(ABC, nn.Module):
         parameters_batch
             Parameters of the batch of data
             (different from parameters in minibatch mode)
+
+        data_remapped : torch.Tensor
+            Data potentially remapped, to avoid unecessary computations
+            in _norm_and_bias
         """
 
     @abstractmethod
-    def _update_running_parameters(self, parameters_batch) -> None:
+    def _update_running_parameters(self, parameters, parameters_batch) -> None:
         """
         Update running parameters
 
         Parameters
         ----------
+        parameters
+            Parameters used for normalization
+
         parameters_batch
             Parameters of the batch of data
         """
 
     @abstractmethod
-    def _get_running_parameters(self) -> Any:
+    def _get_running_parameters(self, data: torch.Tensor) -> tuple[Any, torch.Tensor]:
         """
         Get running parameters for normalization in inference
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
 
         Returns
         -------
         running_parameters
             Running parameters
+
+        data_remapped : torch.Tensor
+            Data potentially remapped, to avoid unecessary computations
+            in _norm_and_bias
         """
 
     @abstractmethod
@@ -726,7 +745,7 @@ class BatchNormSPDMean(BatchNormSPDBase):
 
     def _get_norm_parameters(
         self, data: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get parameters used to normalize data
 
@@ -743,17 +762,25 @@ class BatchNormSPDMean(BatchNormSPDBase):
         mean_batch : torch.Tensor of shape (n_features, n_features)
             SPD mean of data
             (different from mean in minibatch mode)
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Original batch of SPD matrices
         """
         mean_batch = self.mean_fun(data)
         mean = self.get_norm_mean(mean_batch)
-        return mean, mean_batch
+        return mean, mean_batch, data
 
-    def _update_running_parameters(self, parameters_batch: torch.Tensor) -> None:
+    def _update_running_parameters(
+        self, parameters: torch.Tensor, parameters_batch: torch.Tensor
+    ) -> None:
         """
         Update running parameters
 
         Parameters
         ----------
+        parameters : torch.Tensor of shape (n_features, n_features)
+            SPD mean used for normalization
+
         parameters_batch : torch.Tensor of shape (n_features, n_features)
             SPD mean of the batch of data
         """
@@ -763,16 +790,26 @@ class BatchNormSPDMean(BatchNormSPDBase):
             self.momentum,
         )
 
-    def _get_running_parameters(self) -> torch.Tensor:
+    def _get_running_parameters(
+        self, data: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Get running parameters for normalization in inference
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
 
         Returns
         -------
         running_parameters
             Running mean
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Original batch of SPD matrices
         """
-        return self.running_mean
+        return self.running_mean, data
 
     def _post_optimizer_hook(
         self, optimizer: torch.optim.Optimizer, *args, **kwargs
@@ -1005,7 +1042,9 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         self.stdScalarbias = torch.nn.Parameter(
             torch.ones((), dtype=self.dtype, device=self.device)
         )
-        register_parametrization(self, "stdScalarbias", ScalarSoftPlusParametrization())
+        register_parametrization(
+            self, "stdScalarbias", ElementwiseSoftPlusParametrization()
+        )
 
     # No need to change  _init_norm_and_bias, only _norm_and_bias
     def _norm_and_bias(self, data: torch.Tensor, parameters) -> torch.Tensor:
@@ -1055,7 +1094,11 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
 
     def _get_norm_parameters(
         self, data: torch.Tensor
-    ) -> tuple[tuple[torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]:
+    ) -> tuple[
+        tuple[torch.Tensor, torch.Tensor],
+        tuple[torch.Tensor, torch.Tensor],
+        torch.Tensor,
+    ]:
         """
         Get parameters used to normalize data
 
@@ -1072,40 +1115,58 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         parameters_batch : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and ()
             SPD mean and scalar std of data
             (different from mean in minibatch mode)
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Original batch of SPD matrices
         """
-        mean, mean_batch = super()._get_norm_parameters(data)
+        mean, mean_batch, data = super()._get_norm_parameters(data)
         std_batch = self.std_fun(data, mean)
         std = self.get_norm_std(std_batch)
-        return (mean, std), (mean_batch, std_batch)
+        return (mean, std), (mean_batch, std_batch), data
 
     def _update_running_parameters(
-        self, parameters_batch: tuple[torch.Tensor, torch.Tensor]
+        self,
+        parameters: tuple[torch.Tensor, torch.Tensor],
+        parameters_batch: tuple[torch.Tensor, torch.Tensor],
     ) -> None:
         """
         Update running parameters
 
         Parameters
         ----------
+        parameters : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and ()
+            SPD mean and scalar std used for normalization
+
         parameters_batch : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and ()
             SPD mean and scalar std of the batch of data
         """
-        super()._update_running_parameters(parameters_batch[0])
+        super()._update_running_parameters(parameters[0], parameters_batch[0])
         self.running_std_scalar = self.adaptive_std_fun(
             self.running_std_scalar.to(parameters_batch[1].device),
             parameters_batch[1],
             self.momentum,
         )
 
-    def _get_running_parameters(self) -> tuple[torch.Tensor, torch.Tensor]:
+    def _get_running_parameters(
+        self, data: torch.Tensor
+    ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
         """
         Get running parameters for normalization in inference
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
 
         Returns
         -------
         running_parameters : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and ()
             Running mean and scalar std
+
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Original batch of SPD matrices
         """
-        return (self.running_mean, self.running_std_scalar)
+        return (self.running_mean, self.running_std_scalar), data
 
     def __repr__(self) -> str:
         """
@@ -1137,6 +1198,15 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         )
 
 
+def _transport_tensor_fun_identity(
+    tensor: torch.Tensor, current_reference: torch.Tensor, new_reference: torch.Tensor
+) -> torch.Tensor:
+    """
+    Transport tensor function that directly returns tensor.
+    """
+    return tensor
+
+
 class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
     _FISHER_VEC_FUNS = {
         "affine_invariant": AffineInvariantLogCoordinates,
@@ -1145,6 +1215,15 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
         "arithmetic": LeftKullbackLeiblerFisherVectorAffineInvariantCoordinates,
         "harmonic": RightKullbackLeiblerFisherVectorAffineInvariantCoordinates,
         "geometric_arithmetic_harmonic": SymmetrizedKullbackLeiblerFisherVectorAffineInvariantCoordinates,
+    }
+
+    _TRANSPORT_TENSOR_FUNS = {
+        "affine_invariant": AffineInvariantParallelTransportTangentTensor,
+        "affine_invariant_gevd": AffineInvariantParallelTransportTangentTensor,  # TODO make native function for gevd
+        "log_euclidean": _transport_tensor_fun_identity,
+        "arithmetic": AffineInvariantParallelTransportTangentTensor,
+        "harmonic": AffineInvariantParallelTransportTangentTensor,
+        "geometric_arithmetic_harmonic": AffineInvariantParallelTransportTangentTensor,
     }
 
     def __init__(
@@ -1299,24 +1378,192 @@ class BatchNormSPDMeanMultivariateVariance(BatchNormSPDBase):
         self.fisher_vec_fun = self._FISHER_VEC_FUNS[self.mean_type]
         # to compute variance or covariance of Fisher vectors
         if self.tensor_format == "diagonal":
+            self.transport_tensor_fun = _transport_tensor_fun_identity
             self.var_fun = SampleVariance.apply
+            self.get_norm_var = self.get_norm_var_identity
+            # set running tensor
+            self.register_buffer(
+                "running_covTensor",
+                torch.ones((self.dim,), dtype=self.dtype, device=self.device),
+            )
         elif self.tensor_format == "full":
+            # select tensor transport function
+            if self.norm_strategy == "whitening":
+                self.transport_tensor_fun = _transport_tensor_fun_identity
+            elif self.norm_strategy == "parallel_transport":
+                self.transport_tensor_fun = self._TRANSPORT_TENSOR_FUNS[self.mean_type]
+            # select covariance tensor estimator
             if self.tensor_full_mode == "ledoit_wolf":
                 self.var_fun = LedoitWolfCovariance.apply
+                self.get_norm_var = self.get_norm_var_identity
             elif self.tensor_full_mode == "adaptive":
-                self.var_fun = self._adaptive_var_fun  # to implement ! Uses SampleCovariance and looks like minibatch stuffs
+                self.var_fun = SampleCovariance.apply
+                self.get_norm_var = self.get_norm_var_adaptive
+                self.register_buffer(
+                    "previous_mean",
+                    torch.eye(self.n_features, dtype=self.dtype, device=self.device),
+                )
                 self.register_buffer(
                     "CovTensor_adaptive",
                     torch.eye(self.dim, dtype=self.dtype, device=self.device),
                 )
+            # set running tensor
+            self.register_buffer(
+                "running_covTensor",
+                torch.eye(self.dim, dtype=self.dtype, device=self.device),
+            )
 
-    def _adaptive_var_fun(self, data: torch.Tensor) -> torch.Tensor:
+    def get_norm_var_identity(
+        self, CovTensor_batch: torch.Tensor, mean: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Auxiliary function
+        """
+        return CovTensor_batch
+
+    def get_norm_var_adaptive(
+        self, CovTensor_batch: torch.Tensor, mean: torch.Tensor
+    ) -> torch.Tensor:
         """
         Auxiliary function for computing adaptive covariance tensor of Fisher vectors
         """
-        SCM = SampleCovariance.apply(data)
-        # Note : CovTensor_adaptive must be in the proper tangent space here
-        CovTensor = self.CovTensor_adaptive + self.tensor_adaptive_momentum * SCM
+        CovTensor = (1 - self.tensor_adaptive_momentum) * self.transport_tensor_fun(
+            self.CovTensor_adaptive, self.previous_mean, mean
+        ) + self.tensor_adaptive_momentum * CovTensor_batch
         with torch.no_grad():
             self.CovTensor_adaptive = CovTensor.detach()
+            self.previous_mean = mean.detach()
         return CovTensor
+
+    def _init_neutral_bias(self) -> None:
+        """
+        Initialize neutral bias elements
+
+        Note to self: Before LogEig, shouldn't we still learn
+        a bias for the tensor and just not bias mean ? Appears more logical
+
+        rename norm_only as norm_only_mean
+        """
+        self.Covbias = torch.eye(
+            self.n_features, dtype=self.dtype, device=self.device, requires_grad=False
+        )
+        self.Tensorbias = torch.ones(
+            (self.dim,), dtype=self.dtype, device=self.device, requires_grad=False
+        )
+
+    def _init_bias_parameters(self) -> None:
+        """
+        Initialize bias parameters
+        """
+        self.Covbias = torch.nn.Parameter(
+            torch.eye(self.n_features, dtype=self.dtype, device=self.device)
+        )
+        self.cov_parametrization = SPDParametrization(
+            self.n_features, mapping=self.parametrization
+        )
+        register_parametrization(self, "Covbias", self.cov_parametrization)
+        if self.tensor_format == "diagonal":
+            self.Tensorbias = torch.nn.Parameter(
+                torch.ones((self.dim,), dtype=self.dtype, device=self.device)
+            )
+            self.tensor_parametrization = ElementwiseSoftPlusParametrization()
+        elif self.tensor_format == "full":
+            self.Tensorbias = torch.nn.Parameter(
+                torch.eye(self.dim, dtype=self.dtype, device=self.device)
+            )
+            self.tensor_parametrization = SPDParametrization(
+                self.dim, mapping="softplus"
+            )
+        register_parametrization(self, "Tensorbias", self.tensor_parametrization)
+
+    def _get_norm_parameters(
+        self, data: torch.Tensor
+    ) -> tuple[
+        tuple[torch.Tensor, torch.Tensor],
+        tuple[torch.Tensor, torch.Tensor],
+        torch.Tensor,
+    ]:
+        """
+        Get parameters used to normalize data
+
+        Parameters
+        ----------
+        data : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        Returns
+        -------
+        mean : torch.Tensor of shape (n_features, n_features)
+            SPD mean used for normalization
+
+        mean_batch : torch.Tensor of shape (n_features, n_features)
+            SPD mean of data
+            (different from mean in minibatch mode)
+        """
+        # get mean
+        mean_batch = self.mean_fun(data)
+        mean = self.get_norm_mean(mean_batch)
+        # compute Fisher vectors
+        data_fisher_vec = self.fisher_vec_fun(data, mean)
+        # compute CovTensor
+        covtensor_batch = self.var_fun(data_fisher_vec)
+        covtensor = self.get_norm_var(covtensor_batch, mean)
+        return (mean, covtensor), (mean_batch, covtensor_batch), data_fisher_vec
+
+    def _update_running_parameters(
+        self,
+        parameters: tuple[torch.Tensor, torch.Tensor],
+        parameters_batch: tuple[torch.Tensor, torch.Tensor],
+    ) -> None:
+        """
+        Update running parameters
+
+        Parameters
+        ----------
+        parameters : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and (dim,) or (dim, dim)
+            SPD mean and covariance tensor used for normalization
+
+        parameters_batch : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and (dim,) or (dim, dim)
+            SPD mean and covariance tensor of the batch of data
+        """
+        new_running_mean = self.geodesic_fun(
+            self.running_mean.to(parameters_batch[0].device),
+            parameters_batch,
+            self.momentum,
+        )
+        self.running_covTensor = self.transport_tensor_fun(
+            self.running_covTensor, self.running_mean, new_running_mean
+        ) + self.momentum * self.transport_tensor_fun(
+            parameters_batch[1], parameters[0], new_running_mean
+        )
+        self.running_mean = new_running_mean
+
+    def _get_running_parameters(
+        self, data: torch.Tensor
+    ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
+        """
+        Get running parameters
+        """
+        running_mean = self.running_mean
+        running_covTensor = self.running_covTensor
+        # compute Fisher vectors
+        data_fisher_vec = self.fisher_vec_fun(data, running_mean)
+        return (running_mean, running_covTensor), data_fisher_vec
+
+    def _norm_and_bias(self, data: torch.Tensor, parameters) -> torch.Tensor:
+        """
+        Normalize and bias data with parameters
+        """
+        # data are already Fisher vectors at parameters[0]
+        # normalize metric tensor
+        data_tensor_norm = self.tensor_norm_fun(data, parameters[1])
+        # transport coordinates to tangent space of Covbias
+        data_tensor_norm_transp = self.coordinates_transport_fun(
+            data_tensor_norm, parameters[0], self.Covbias
+        )
+        # bias tensor metric
+        data_transp_bias = self.tensor_bias_fun(
+            data_tensor_norm_transp, self.Tensorbias
+        )
+        # send back to SPD manifold
+        return self.coordinates_to_SPD_fun(data_transp_bias, self.Covbias)

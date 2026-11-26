@@ -5,9 +5,6 @@ from yetanotherspdnet.functions.scalar_functions import (
     inv_scaled_softplus,
     scaled_softplus,
 )
-from yetanotherspdnet.functions.spd_geometries.affine_invariant import (
-    AffineInvariantParallelTransportTangentTensor,
-)
 from yetanotherspdnet.random.stiefel import random_stiefel
 
 from ..functions.spd_linalg import (
@@ -28,40 +25,40 @@ from ..functions.stiefel import (
 )
 
 
-class ScalarSoftPlusParametrization(nn.Module):
-    def forward(self, scalar: torch.Tensor) -> torch.Tensor:
+class ElementwiseSoftPlusParametrization(nn.Module):
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
         """
         Positive definite scalars parametrization using the SoftPlus function
         (rescaled so that f(0) = 1 as compared to default torch function)
 
         Parameters
         ----------
-        scalar : torch.Tensor of shape ()
-            Real scalar
+        tensor : torch.Tensor of any shape
+            Tensor with real entries
 
         Returns
         -------
-        scalar_pd : torch.Tensor of shape ()
-            Positive definite scalar
+        tensor_pd : torch.Tensor of any shape
+            Tensor with positive definite entries
         """
-        return scaled_softplus(scalar)
+        return scaled_softplus(tensor)
 
-    def right_inverse(self, scalar_pd: torch.Tensor) -> torch.Tensor:
+    def right_inverse(self, tensor_pd: torch.Tensor) -> torch.Tensor:
         """
         Mapping from positive definite scalar onto real scalars through
         the inverse SoftPlus function
 
         Parameters
         ----------
-        scalar_pd : torch.Tensor of shape ()
-            Positive definite scalar
+        tensor_pd : torch.Tensor of any shape
+            Tensor with positive definite entries
 
         Returns
         -------
-        scalar : torch.Tensor of shape ()
-            Real scalar
+        tensor : torch.Tensor of any shape
+            Tensor with real entries
         """
-        return inv_scaled_softplus(scalar_pd)
+        return inv_scaled_softplus(tensor_pd)
 
 
 class SPDParametrization(nn.Module):
@@ -140,210 +137,6 @@ class SPDParametrization(nn.Module):
         """
         return (
             f"SPDParametrization(n_features={self.n_features}, mapping={self.mapping})"
-        )
-
-    def __str__(self) -> str:
-        """
-        String representation of the layer
-
-        Returns
-        -------
-        str
-            String representation of the layer
-        """
-        return self.__repr__()
-
-
-class SPDAndTensorParametrization(nn.Module):
-    def __init__(
-        self,
-        n_features: int,
-        mapping: str = "softplus",
-        tensor_format: str = "diagonal",
-    ) -> None:
-        """
-        SPD and metric tensor parametrization
-
-        Parameters
-        ----------
-        n_features : int
-            Number of features.
-
-        mapping : str, optional
-            Mapping to obtain a SPD point from a symmetric matrix.
-            Default is "softplus".
-            Choices are: "softplus" and "exp".
-
-        tensor_format : str, optional
-            Structure of the metric tensor at identity point.
-            Default is "diagonal".
-            Choices are: "diagonal" and "full".
-        """
-        super().__init__()
-        self.n_features = n_features
-        self.dim = n_features * (n_features + 1) // 2
-        assert mapping in [
-            "softplus",
-            "exp",
-        ], f"mapping must be in ['softplus', 'exp'], got {mapping}"
-        self.mapping = mapping
-        assert tensor_format in ["diagonal", "full"], (
-            f"tensor_format must be in ['diagonal', 'full'], got {tensor_format}"
-        )
-        self.tensor_format = tensor_format
-
-        # deal with mapping
-        if self.mapping == "softplus":
-            self.spd_fun = ScaledSoftPlusSymmetric.apply
-            self.tangent_fun = InvScaledSoftPlusSPD.apply
-        elif self.mapping == "exp":
-            self.spd_fun = ExpmSymmetric.apply
-            self.tangent_fun = LogmSPD.apply
-
-        # deal with tensor_format
-        if self.tensor_format == "diagonal":
-            self.tensor_fun_fwd = self._tensor_fun_fwd_diagonal
-            self.tensor_fun_bkwd = self._tensor_fun_bkwd_diagonal
-        elif self.tensor_format == "full":
-            self.tensor_fun_fwd = self._tensor_fun_fwd_full
-            self.tensor_fun_bkwd = self._tensor_fun_bkwd_full
-
-    def _tensor_fun_fwd_diagonal(self, tangent_tensor: torch.Tensor) -> torch.Tensor:
-        """
-        Auxiliary function to compute metric tensor at spd_point.
-
-        Parameters
-        ----------
-        tangent_tensor : torch.Tensor of shape (dim,) with dim = n_features*(n_features+1)//2
-            Vector encoding the diagonal of tangent vector of the metric tensor at the identity matrix.
-
-        Returns
-        -------
-        tensor : torch.Tensor of shape (dim,)
-            Metric tensor at spd_point, transported from diagonal metric tensor at identity.
-        """
-        return scaled_softplus(tangent_tensor)
-
-    def _tensor_fun_bkwd_diagonal(self, tensor: torch.Tensor) -> torch.Tensor:
-        """
-        Auxiliary function to compute the tangent vector of the tensor at identity
-        from the tensor at spd_point.
-
-        Parameters
-        ----------
-        tensor : torch.Tensor of shape (dim,) with dim = n_features*(n_features+1)//2
-            Metric tensor at spd_point, transported from diagonal metric tensor at identity.
-
-        Returns
-        -------
-        tangent_tensor : torch.Tensor of shape (dim,)
-            Vector encoding the diagonal of tangent vector of the metric tensor at the identity matrix.
-        """
-        return inv_scaled_softplus(tensor)
-
-    def _tensor_fun_fwd_full(self, tangent_tensor: torch.Tensor) -> torch.Tensor:
-        """
-        Auxiliary function to compute metric tensor at spd_point.
-
-        Parameters
-        ----------
-        tangent_tensor : torch.Tensor of shape (dim*(dim+1)//2,) with dim = n_features*(n_features+1)//2
-            Vector (in coordinates) encoding the diagonal of tangent vector
-            of the metric tensor at the identity matrix.
-
-        spd_point : torch.Tensor of shape (n_features, n_features)
-            SPD matrix, reference_point for metric tensor.
-
-        Returns
-        -------
-        tensor : torch.Tensor of shape (dim, dim)
-            Metric tensor at spd_point, transported from diagonal metric tensor at identity.
-        """
-        return ScaledSoftPlusSymmetric.apply(
-            SymCoordinatesToMatrix.apply(tangent_tensor, self.dim)
-        )
-
-    def _tensor_fun_bkwd_full(self, tensor: torch.Tensor) -> torch.Tensor:
-        """
-            Auxiliary function to compute the tangent vector of the tensor at identity
-            from the tensor at spd_point.
-
-            Parameters
-            ----------
-            tensor : torch.Tensor of shape (dim, dim) with dim = n_features*(n_features+1)//2
-                Metric tensor at spd_point, transported from diagonal metric tensor at identity.
-
-        Returns
-            -------
-            tangent_tensor : torch.Tensor of shape (dim*(dim+1)//2,)
-                Vector encoding the diagonal of tangent vector of the metric tensor at the identity matrix.
-        """
-        tangent = SymMatrixToCoordinates.apply(InvScaledSoftPlusSPD.apply(tensor))
-        return tangent
-
-    def forward(
-        self, tangent_vector: tuple[torch.Tensor, torch.Tensor]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        For SPD matrix: mapping from the tangent space at identity to the SPD manifold.
-        For metric tensor: mapping from symmetric matrices to SPD matrices (tensor at identity),
-        followed by parallel transport to get tensor at spd_point.
-
-        Parameters
-        ----------
-        tangent_vector : tuple[torch.Tensor, torch.Tensor] of shapes (dim,) and (dim*(dim+1)//2,) or (dim,),
-        where dim = n_features*(n_features+1)//2
-            Coordinates of symmetric matrix and of tangent of metric tensor at identity
-
-        Returns
-        -------
-        point : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and (dim, dim) or (dim,)
-            SPD matrix and metric tensor
-        """
-        spd_point = self.spd_fun(
-            SymCoordinatesToMatrix.apply(tangent_vector[0], self.n_features)
-        )
-        tensor = self.tensor_fun_fwd(tangent_vector[1])
-        return (spd_point, tensor)
-
-    def right_inverse(
-        self, point: tuple[torch.Tensor, torch.Tensor]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        For SPD matrix: mapping from SPD manifold to tangent space at identity.
-        For metric tensor: tensor at spd_point transported at identity then
-        mapped to symmetric matrices.
-
-        Parameters
-        ----------
-        point : tuple[torch.Tensor, torch.Tensor] of shapes (n_features, n_features) and (dim, dim) or (dim,),
-        where dim = n_features*(n_features+1)//2
-            SPD matrix and metric tensor
-
-        Returns
-        -------
-        tangent_vector : tuple[torch.Tensor, torch.Tensor] of shapes (dim,) and (dim*(dim+1)//2,) or (dim,),
-            Coordinates of symmetric matrix and of tangent of metric tensor at identity
-        """
-        tangent_matrix = SymMatrixToCoordinates.apply(self.tangent_fun(point[0]))
-        tangent_tensor = self.tensor_fun_bkwd(point[1])
-        return (tangent_matrix, tangent_tensor)
-
-    def __repr__(self) -> str:
-        """
-        Representation of the layer
-
-        Returns
-        -------
-        str
-            Representation of the layer
-        """
-        return (
-            f"SPDAndTensorParametrization(\n"
-            f"n_features={self.n_features},\n"
-            f"mapping={self.mapping},\n"
-            f"tensor_format={self.tensor_format},\n"
-            ")"
         )
 
     def __str__(self) -> str:
