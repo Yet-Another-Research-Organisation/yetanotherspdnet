@@ -8,7 +8,11 @@ from torch.autograd import Function
 from yetanotherspdnet.functions.spd_linalg import (
     eigh_operation,
     eigh_operation_grad,
+    sym_coordinates_to_matrix,
+    sym_matrix_to_coordinates,
     symmetrize,
+    unvec_batch,
+    vec_batch,
 )
 
 
@@ -598,3 +602,502 @@ class EighReLuAndWhitening(Function):
         )
 
         return grad_input_cov, grad_input_raw, None, None
+
+
+# ------------------------------------------------------------
+# Two-stream LogEig: matrix logarithm of the SPD matrices, with
+# the raw data unchanged (version 1) or whitened (version 2)
+# ------------------------------------------------------------
+def _log_deriv(x: torch.Tensor) -> torch.Tensor:
+    """Derivative of the logarithm."""
+    return 1 / x
+
+
+def _inv_sqrt(x: torch.Tensor) -> torch.Tensor:
+    """Inverse square root."""
+    return torch.rsqrt(x)
+
+
+def _inv_sqrt_deriv(x: torch.Tensor) -> torch.Tensor:
+    """Derivative of the inverse square root."""
+    return -0.5 * torch.pow(x, -1.5)
+
+
+def logm_two_stream(
+    data_cov: torch.Tensor, data_raw: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    r"""
+    Forward pass of the two-stream LogEig layer, version 1: matrix logarithm of
+    the SPD matrices, and raw data left unchanged.
+
+    .. math::
+        L = \log\Sigma, \qquad W = X
+
+    Parameters
+    ----------
+    data_cov : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    data_raw : torch.Tensor of shape (..., n_features, n_samples)
+        Batch of raw data associated with the SPD matrices
+
+    Returns
+    -------
+    data_log : torch.Tensor of shape (..., n_features, n_features)
+        Batch of matrix logarithms of the SPD matrices
+
+    data_raw_transformed : torch.Tensor of shape (..., n_features, n_samples)
+        Batch of raw data (unchanged)
+
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues of the matrices in data_cov
+
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors of the matrices in data_cov
+    """
+    eigvals, eigvecs = torch.linalg.eigh(data_cov)
+    data_log = eigh_operation(eigvals, eigvecs, torch.log)
+    return data_log, data_raw, eigvals, eigvecs
+
+
+class LogmTwoStream(Function):
+    """
+    Two-stream LogEig layer, version 1: matrix logarithm of the SPD matrices,
+    and raw data left unchanged
+    """
+
+    @staticmethod
+    def forward(
+        ctx, data_cov: torch.Tensor, data_raw: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the two-stream LogEig layer, version 1
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        data_cov : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        data_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data
+
+        Returns
+        -------
+        data_log : torch.Tensor of shape (..., n_features, n_features)
+            Batch of matrix logarithms of the SPD matrices
+
+        data_raw_transformed : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data (unchanged)
+        """
+        data_log, _, eigvals, eigvecs = logm_two_stream(data_cov, data_raw)
+        ctx.save_for_backward(eigvals, eigvecs)
+        # clone, so that the output is not the input itself
+        return data_log, data_raw.clone()
+
+    @staticmethod
+    def backward(
+        ctx, grad_output_log: torch.Tensor, grad_output_raw: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        r"""
+        Backward pass of the two-stream LogEig layer, version 1.
+
+        With :math:`G_L = \partial \ell / \partial L` and
+        :math:`G_W = \partial \ell / \partial W`:
+
+        .. math::
+            \frac{\partial \ell}{\partial \Sigma} = U \big[ K_{\log} \odot
+            (U^\top \mathrm{sym}(G_L) U) \big] U^\top, \qquad
+            \frac{\partial \ell}{\partial X} = G_W
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output_log : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the matrix logarithms
+
+        grad_output_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Gradient of the loss with respect to the output raw data
+
+        Returns
+        -------
+        grad_input_cov : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input SPD matrices
+
+        grad_input_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Gradient of the loss with respect to the input raw data
+        """
+        eigvals, eigvecs = ctx.saved_tensors
+        grad_input_cov = eigh_operation_grad(
+            grad_output_log, eigvals, eigvecs, torch.log, _log_deriv
+        )
+        return grad_input_cov, grad_output_raw
+
+
+def logm_and_whitening(
+    data_cov: torch.Tensor, data_raw: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    r"""
+    Forward pass of the two-stream LogEig layer, version 2: matrix logarithm of
+    the SPD matrices, and raw data whitened by the SPD matrices.
+
+    .. math::
+        L = \log\Sigma, \qquad W = \Sigma^{-1/2} X
+
+    Parameters
+    ----------
+    data_cov : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    data_raw : torch.Tensor of shape (..., n_features, n_samples)
+        Batch of raw data associated with the SPD matrices
+
+    Returns
+    -------
+    data_log : torch.Tensor of shape (..., n_features, n_features)
+        Batch of matrix logarithms of the SPD matrices
+
+    data_raw_transformed : torch.Tensor of shape (..., n_features, n_samples)
+        Batch of whitened raw data
+
+    eigvals : torch.Tensor of shape (..., n_features)
+        Eigenvalues of the matrices in data_cov
+
+    eigvecs : torch.Tensor of shape (..., n_features, n_features)
+        Eigenvectors of the matrices in data_cov
+    """
+    eigvals, eigvecs = torch.linalg.eigh(data_cov)
+    data_log = eigh_operation(eigvals, eigvecs, torch.log)
+    data_raw_transformed = eigh_operation(eigvals, eigvecs, _inv_sqrt) @ data_raw
+    return data_log, data_raw_transformed, eigvals, eigvecs
+
+
+class LogmAndWhitening(Function):
+    """
+    Two-stream LogEig layer, version 2: matrix logarithm of the SPD matrices,
+    and raw data whitened by the SPD matrices
+    """
+
+    @staticmethod
+    def forward(
+        ctx, data_cov: torch.Tensor, data_raw: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the two-stream LogEig layer, version 2
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        data_cov : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        data_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data
+
+        Returns
+        -------
+        data_log : torch.Tensor of shape (..., n_features, n_features)
+            Batch of matrix logarithms of the SPD matrices
+
+        data_raw_transformed : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of whitened raw data
+        """
+        data_log, data_raw_transformed, eigvals, eigvecs = logm_and_whitening(
+            data_cov, data_raw
+        )
+        ctx.save_for_backward(eigvals, eigvecs, data_raw)
+        return data_log, data_raw_transformed
+
+    @staticmethod
+    def backward(
+        ctx, grad_output_log: torch.Tensor, grad_output_raw: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        r"""
+        Backward pass of the two-stream LogEig layer, version 2.
+
+        With :math:`G_L = \partial \ell / \partial L` and
+        :math:`G_W = \partial \ell / \partial W`:
+
+        .. math::
+            \frac{\partial \ell}{\partial \Sigma} = U \big[ K_{\log} \odot
+            (U^\top \mathrm{sym}(G_L) U) + K_{h_2} \odot
+            (U^\top \mathrm{sym}(G_W X^\top) U) \big] U^\top, \qquad
+            \frac{\partial \ell}{\partial X} = \Sigma^{-1/2} G_W
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output_log : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the matrix logarithms
+
+        grad_output_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Gradient of the loss with respect to the whitened raw data
+
+        Returns
+        -------
+        grad_input_cov : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input SPD matrices
+
+        grad_input_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Gradient of the loss with respect to the input raw data
+        """
+        eigvals, eigvecs, data_raw = ctx.saved_tensors
+
+        # SPD stream: U [K_log o (U^T sym(G_L) U)] U^T
+        grad_input_cov = eigh_operation_grad(
+            grad_output_log, eigvals, eigvecs, torch.log, _log_deriv
+        )
+
+        # raw data stream: W = B X with B = Sigma^{-1/2}, so dl/dX = B G_W, and
+        # dl/dB = G_W X^T goes back to Sigma through B
+        inv_sqrt_cov = eigh_operation(eigvals, eigvecs, _inv_sqrt)
+        grad_input_raw = inv_sqrt_cov @ grad_output_raw
+        grad_input_cov = grad_input_cov + eigh_operation_grad(
+            grad_output_raw @ data_raw.transpose(-1, -2),
+            eigvals,
+            eigvecs,
+            _inv_sqrt,
+            _inv_sqrt_deriv,
+        )
+
+        return grad_input_cov, grad_input_raw
+
+
+# ------------------------------------------------------------
+# Two-stream vectorization: orthonormal coordinates of the
+# symmetric matrices, with or without the vectorized raw data
+# ------------------------------------------------------------
+def coordinates_and_vec(data_sym: torch.Tensor, data_raw: torch.Tensor) -> torch.Tensor:
+    r"""
+    Forward pass of the two-stream vectorization: the symmetric matrices are
+    mapped to their Euclidean orthonormal coordinates, and concatenated with the
+    vectorized raw data.
+
+    .. math::
+        z = \big[\mathrm{coord}(L)\,;\,\mathrm{vec}(W)\big]
+
+    where :math:`\mathrm{coord}` keeps the lower triangular part, with the
+    off-diagonal entries scaled by :math:`\sqrt{2}`.
+
+    Parameters
+    ----------
+    data_sym : torch.Tensor of shape (..., n_features, n_features)
+        Batch of symmetric matrices
+
+    data_raw : torch.Tensor of shape (..., n_features, n_samples)
+        Batch of raw data
+
+    Returns
+    -------
+    data_vec : torch.Tensor of shape (..., n_features*(n_features+1)//2 + n_features*n_samples)
+        Batch of concatenated vectors
+    """
+    return torch.cat([sym_matrix_to_coordinates(data_sym), vec_batch(data_raw)], dim=-1)
+
+
+class CoordinatesAndVec(Function):
+    """
+    Two-stream vectorization: orthonormal coordinates of the symmetric matrices,
+    concatenated with the vectorized raw data
+    """
+
+    @staticmethod
+    def forward(ctx, data_sym: torch.Tensor, data_raw: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the two-stream vectorization
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        data_sym : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        data_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data
+
+        Returns
+        -------
+        data_vec : torch.Tensor of shape (..., n_features*(n_features+1)//2 + n_features*n_samples)
+            Batch of concatenated vectors
+        """
+        ctx.n_features = data_sym.shape[-1]
+        return coordinates_and_vec(data_sym, data_raw)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        r"""
+        Backward pass of the two-stream vectorization.
+
+        The gradient is split as the output, :math:`[g_1\,;\,g_2]`, and both
+        parts are reshaped as matrices:
+
+        .. math::
+            \frac{\partial \ell}{\partial L} = \mathrm{coord}^{-1}(g_1), \qquad
+            \frac{\partial \ell}{\partial W} = \mathrm{unvec}(g_2).
+
+        The orthonormal coordinates are an isometry, so that their adjoint is
+        their inverse.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output : torch.Tensor of shape (..., n_features*(n_features+1)//2 + n_features*n_samples)
+            Gradient of the loss with respect to the output vectors
+
+        Returns
+        -------
+        grad_input_sym : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the symmetric matrices
+
+        grad_input_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Gradient of the loss with respect to the raw data
+        """
+        n_features = ctx.n_features
+        n_coord = n_features * (n_features + 1) // 2
+        grad_input_sym = sym_coordinates_to_matrix(
+            grad_output[..., :n_coord], n_features
+        )
+        grad_input_raw = unvec_batch(grad_output[..., n_coord:], n_features)
+        return grad_input_sym, grad_input_raw
+
+
+# ------------------------------------------------------------
+# Two-stream Mixing: Euclidean mixing of the SPD matrices with
+# the covariance of the raw data, to restore the link between
+# both streams
+# ------------------------------------------------------------
+def euclidean_mixing(
+    data_cov: torch.Tensor, data_raw: torch.Tensor, alpha: float
+) -> tuple[torch.Tensor, torch.Tensor]:
+    r"""
+    Forward pass of the two-stream Mixing layer (Euclidean path): the SPD
+    matrices are mixed with the covariance of the raw data, and the raw data are
+    left unchanged.
+
+    .. math::
+        P = \alpha\,\Sigma + (1-\alpha)\,\tfrac{1}{n} X X^\top, \qquad Y = X
+
+    Parameters
+    ----------
+    data_cov : torch.Tensor of shape (..., n_features, n_features)
+        Batch of SPD matrices
+
+    data_raw : torch.Tensor of shape (..., n_features, n_samples)
+        Batch of raw data associated with the SPD matrices
+
+    alpha : float
+        Fixed mixing weight, in (0, 1]
+
+    Returns
+    -------
+    data_cov_transformed : torch.Tensor of shape (..., n_features, n_features)
+        Batch of mixed SPD matrices
+
+    data_raw_transformed : torch.Tensor of shape (..., n_features, n_samples)
+        Batch of raw data (unchanged)
+    """
+    n_samples = data_raw.shape[-1]
+    data_cov_transformed = alpha * data_cov + (1 - alpha) * (
+        data_raw @ data_raw.transpose(-1, -2) / n_samples
+    )
+    return data_cov_transformed, data_raw
+
+
+class EuclideanMixing(Function):
+    """
+    Two-stream Mixing layer (Euclidean path): mixing of the SPD matrices with
+    the covariance of the raw data
+    """
+
+    @staticmethod
+    def forward(
+        ctx, data_cov: torch.Tensor, data_raw: torch.Tensor, alpha: float
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the two-stream Mixing layer (Euclidean path)
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to save tensors for the backward pass
+
+        data_cov : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        data_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data
+
+        alpha : float
+            Fixed mixing weight, in (0, 1]
+
+        Returns
+        -------
+        data_cov_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Batch of mixed SPD matrices
+
+        data_raw_transformed : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data (unchanged)
+        """
+        data_cov_transformed, _ = euclidean_mixing(data_cov, data_raw, alpha)
+        ctx.save_for_backward(data_raw)
+        ctx.alpha = alpha
+        # clone, so that the output is not the input itself
+        return data_cov_transformed, data_raw.clone()
+
+    @staticmethod
+    def backward(
+        ctx, grad_output_cov: torch.Tensor, grad_output_raw: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, None]:
+        r"""
+        Backward pass of the two-stream Mixing layer (Euclidean path).
+
+        With :math:`E = \partial \ell / \partial P` and
+        :math:`F = \partial \ell / \partial Y`:
+
+        .. math::
+            \frac{\partial \ell}{\partial \Sigma} = \alpha\,E, \qquad
+            \frac{\partial \ell}{\partial X} = F + \frac{2(1-\alpha)}{n}\,E X
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+            Context object to retrieve tensors saved during the forward pass
+
+        grad_output_cov : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the output SPD matrices
+
+        grad_output_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Gradient of the loss with respect to the output raw data
+
+        Returns
+        -------
+        grad_input_cov : torch.Tensor of shape (..., n_features, n_features)
+            Gradient of the loss with respect to the input SPD matrices
+
+        grad_input_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Gradient of the loss with respect to the input raw data
+        """
+        alpha = ctx.alpha
+        (data_raw,) = ctx.saved_tensors
+        n_samples = data_raw.shape[-1]
+        E = symmetrize(grad_output_cov)
+
+        # SPD stream: dl/dSigma = alpha E
+        grad_input_cov = alpha * E
+
+        # raw data stream: directly through Y = X, and through the covariance
+        grad_input_raw = grad_output_raw + 2 * (1 - alpha) / n_samples * E @ data_raw
+
+        return grad_input_cov, grad_input_raw, None
