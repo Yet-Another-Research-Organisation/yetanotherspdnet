@@ -16,7 +16,7 @@ from yetanotherspdnet.functions.spd_geometries.registry import (
     get_geometry,
 )
 
-from ..functions._constants import BW_TRANSPORT_FLOOR_POWER, STD_FLOOR
+from ..functions._constants import STD_FLOOR
 from ..functions.dispatch import select_path
 from ..functions.spd_linalg import (
     CongruenceSPD,
@@ -114,50 +114,8 @@ def _check_bw_theta(theta: float) -> float:
 #: ``mean_type="bures_wasserstein"``): data, parameters and running statistics are
 #: cast to it on the fly and the output is cast back to the dtype of the input.
 #: The Bures-Wasserstein pipeline (square roots, cross terms, Lyapunov solves, the
-#: power 1/theta of the post-transform) squares condition numbers, and its domain
-#: projection needs a bound tied to the precision (bw_transport_floor): float32
-#: would need tau ~ 0.14 at theta = 0.5.
+#: power 1/theta of the post-transform) squares condition numbers.
 BW_COMPUTE_DTYPE = torch.float64
-
-
-def bw_transport_floor(dtype: torch.dtype, theta: float) -> float:
-    r"""
-    Lower bound of the eigenvalues of the transport map of the GBWBN bias.
-
-    The bias step is :math:`\mathrm{Exp}_{\hat G}(V) = T \hat G T` with
-    :math:`T = I + Z` the Brenier map, which must be positive definite (the
-    domain of the BW exponential, see
-    :func:`~yetanotherspdnet.functions.spd_geometries.bures_wasserstein._bures_wasserstein_exp`).
-    The layer output is :math:`(M^{1/2} T \hat G T M^{1/2})^{1/\theta}`: a
-    direction where :math:`T = \tau` shrinks it, relative to :math:`\hat G`,
-    by :math:`\tau^{2/|\theta|}`. With
-
-    .. math:: \tau = \varepsilon^{|\theta| / 4}
-
-    (:math:`\varepsilon` the machine epsilon of the dtype) that shrinkage is at
-    most :math:`\sqrt{\varepsilon}`, which leaves a condition number of
-    :math:`1/\sqrt{\varepsilon}` (6.7e7 in float64) to :math:`M` and
-    :math:`\hat G` before the output is numerically singular. :math:`T` is
-    dimensionless (invariant when the data and :math:`\hat G` are scaled
-    together), so the bound is absolute. float64: 1.2e-2 for
-    :math:`\theta = 0.5`, 1.2e-4 for :math:`\theta = 1`.
-
-    The layer computes in :data:`BW_COMPUTE_DTYPE` (float64) whatever the dtype
-    of its data, so it always uses the float64 bound.
-
-    Parameters
-    ----------
-    dtype : torch.dtype
-        dtype of the computation
-    theta : float
-        Power deformation of GBWBN
-
-    Returns
-    -------
-    float
-        Lower bound :math:`\tau`
-    """
-    return float(torch.finfo(dtype).eps ** (BW_TRANSPORT_FLOOR_POWER * abs(theta)))
 
 
 class BatchNormSPDBase(ABC, nn.Module):
@@ -996,6 +954,23 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
     ``mean_type="bures_wasserstein"`` the layer implements GBWBN (generalized
     Bures-Wasserstein batch normalization) with learnable pre/post transforms.
 
+    .. warning::
+
+        GBWBN can output singular matrices. Its bias step
+        :math:`\mathrm{Exp}_{\hat G}(V) = T \hat G T`, :math:`T = I + Z`,
+        :math:`\hat G Z + Z \hat G = V`, is the Bures-Wasserstein exponential
+        as in the paper and the reference code: it is defined (a geodesic) only
+        for :math:`T \succ 0`; outside, the output folds back into the cone,
+        and on the boundary it is singular. With :math:`\hat G = gI` an
+        eigenvalue :math:`\lambda` of :math:`X^{1/2}` (scaled data) gives the
+        output eigenvalue :math:`(\lambda + \sqrt g - 1)^2`, zero at
+        :math:`\lambda = 1 - \sqrt g`: a bias with small eigenvalues brings the
+        boundary close, and a ``LogEig`` right after the layer then takes the log
+        of a zero or negative eigenvalue (NaN loss, seen on HDM05). Follow the
+        layer by a ``ReEig``, as the reference architecture (``BiMap -> GBWBN ->
+        ReEig``; the default of :class:`~yetanotherspdnet.model.SPDnet` with
+        GBWBN, see ``batchnorm_position``). See the batch normalization guide.
+
     """
 
     # buffers registered in __init__ (declared for type checkers)
@@ -1691,10 +1666,10 @@ class BatchNormSPDMeanScalarVariance(BatchNormSPDMean):
         # BW center, scale, bias
         centered = center(data_hat, mean)
         scaled = scale(centered, std**2, self.stdScalarbias.to(data))
-        # the transported vector can leave the domain of Exp_G (I + Z > 0, Z the
-        # Lyapunov solution): its transport map is projected back into it, see
-        # bw_transport_floor
-        biased = bias(scaled, G_hat, bw_transport_floor(data.dtype, theta))
+        # Exp_G as in the paper and the reference code: the transported vector
+        # can leave the domain I + Z > 0 of Exp_G (the output folds, or is
+        # singular at the boundary), see the class docstring
+        biased = bias(scaled, G_hat)
 
         # Post-transform: output = (M^{1/2} X_tilde M^{1/2})^{1/theta}
         return to_input(biased)

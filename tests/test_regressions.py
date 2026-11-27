@@ -414,7 +414,8 @@ def test_bures_wasserstein_batchnorm_dynamic_optimizer_step(generator):
 # ---------------------------------------------------------------------------
 # GBWBN: the bias exponential Exp_G left its domain (I + Z > 0) and produced a
 # numerically singular output, which LogEig turned into NaN (E1 benchmark,
-# HDM05 and GSOFF)
+# HDM05 and GSOFF): SPDnet now places GBWBN before the ReEig, as the reference
+# code (the projection of Exp_G stays an opt-in of the geometry functions)
 # ---------------------------------------------------------------------------
 def _diagonal_batch(rows):
     return torch.diag_embed(torch.tensor(rows, dtype=DTYPE))
@@ -452,17 +453,20 @@ def _gbwbn_at_the_boundary(use_autograd):
 
 
 @pytest.mark.parametrize("use_autograd", [False, True])
-def test_gbwbn_bias_exponential_stays_in_the_spd_cone(use_autograd):
-    from yetanotherspdnet.nn import LogEig
+def test_gbwbn_singular_output_is_floored_by_reeig(use_autograd):
+    """GBWBN at the boundary of its bias exponential: singular output, which a
+    LogEig cannot take; the ReEig placed after it (BiMap -> GBWBN -> ReEig, the
+    SPDnet default for GBWBN) floors it, and LogEig and the gradients are finite."""
+    from yetanotherspdnet.nn import LogEig, ReEig
 
-    layer, X, g = _gbwbn_at_the_boundary(use_autograd)
+    layer, X, _ = _gbwbn_at_the_boundary(use_autograd)
     output = layer(X)
-    # output = T G T with T >= tau = eps^(1/4) (bw_transport_floor, theta = 1):
-    # lambda_min >= tau^2 lambda_min(G); before, 1e-13 (numerically singular)
-    tau = torch.finfo(DTYPE).eps ** 0.25
-    eigvals = torch.linalg.eigvalsh(output)
-    assert eigvals.min() >= 0.99 * tau**2 * g
-    features = LogEig(use_autograd=use_autograd)(output)
+    eigvals = torch.linalg.eigvalsh(output.detach())
+    # the paper's formula: singular (the formula folds through 0)
+    assert (eigvals[:, 0] / eigvals[:, -1]).min() < 1e-10
+    features = LogEig(use_autograd=use_autograd)(
+        ReEig(eps=1e-4, use_autograd=use_autograd)(output)
+    )
     assert torch.isfinite(features).all()
     if use_autograd:
         # autograd through eigh is undefined at M = I (repeated eigenvalues)
@@ -470,6 +474,30 @@ def test_gbwbn_bias_exponential_stays_in_the_spd_cone(use_autograd):
     features.square().sum().backward()
     for name, parameter in layer.named_parameters():
         assert torch.isfinite(parameter.grad).all(), name
+
+
+def test_spdnet_places_gbwbn_before_reeig():
+    from yetanotherspdnet.nn import ReEig
+
+    gbwbn = {
+        "batchnorm": True,
+        "batchnorm_type": "mean_var_scalar",
+        "batchnorm_mean_type": "bures_wasserstein",
+    }
+    kinds = lambda model: [type(m).__name__ for m in model.spdnet_layers]
+    model = SPDnet(8, [6, 4], 3, **gbwbn, dtype=DTYPE)
+    layers = list(model.spdnet_layers)
+    for i, layer in enumerate(layers):
+        if isinstance(layer, BatchNormSPDMeanScalarVariance):
+            assert isinstance(layers[i + 1], ReEig)
+    assert kinds(model)[-2:] == ["ReEig", "LogEig"]
+    # explicit placement of the other batch norms, and of GBWBN after the ReEig
+    other = SPDnet(8, [6, 4], 3, batchnorm=True, dtype=DTYPE)
+    assert kinds(other)[1:3] == ["ReEig", "ParametrizedBatchNormSPDMean"]
+    after = SPDnet(8, [6, 4], 3, **gbwbn, batchnorm_position="after_reeig", dtype=DTYPE)
+    assert kinds(after)[-2:] == ["ParametrizedBatchNormSPDMeanScalarVariance", "LogEig"]
+    with pytest.raises(ValueError, match="batchnorm_position"):
+        SPDnet(8, [6], 3, batchnorm=True, batchnorm_position="before", dtype=DTYPE)
 
 
 def test_bw_bias_projection_is_exact_inside_the_domain(generator):
@@ -517,7 +545,9 @@ def test_bw_bias_projection_gradients(generator):
 
 
 def test_gbwbn_short_training_stays_finite():
-    """Deterministic SPDnet + GBWBN training on synthetic data (NaN at step 184 before)."""
+    """Deterministic SPDnet + GBWBN training on synthetic data: NaN loss at epoch 23
+    with the GBWBN after the ReEig (the placement before the fix, still available as
+    batchnorm_position="after_reeig"), finite with the default GBWBN -> ReEig."""
     seed, n = 2, 20
     g = torch.Generator().manual_seed(seed)
     batches, labels = [], []
@@ -586,7 +616,8 @@ def test_gbwbn_float32_data_matches_float64(norm_strategy):
     def relative_error(out32, out64):
         # float32 rounding of the input, the output and the float32 buffers
         # (running statistics, minibatch regularizers) between steps
-        diff = torch.linalg.matrix_norm(out32.double() - out64)
+        out32, out64 = out32.detach().double(), out64.detach()
+        diff = torch.linalg.matrix_norm(out32 - out64)
         return float((diff / torch.linalg.matrix_norm(out64)).max())
 
     for _ in range(3):  # training steps (running statistics), then evaluation
@@ -618,16 +649,16 @@ def test_gbwbn_float32_gradients_reach_parameters():
 
 
 @pytest.mark.parametrize("bw_theta", [1.0, 0.5])
-def test_gbwbn_float32_projection_uses_float64_bound(monkeypatch, bw_theta):
+def test_gbwbn_float32_bias_step_runs_in_float64(monkeypatch, bw_theta):
     from yetanotherspdnet.functions.dispatch import DualPath
     from yetanotherspdnet.nn import batchnorm
 
     calls = []
     original = batchnorm.BURES_WASSERSTEIN_STEPS["bias"]
 
-    def spy(data, bias_point, bound):
-        calls.append((data.dtype, bias_point.dtype, bound))
-        return original.manual(data, bias_point, bound)
+    def spy(data, bias_point, *args):
+        calls.append((data.dtype, bias_point.dtype, args))
+        return original.manual(data, bias_point, *args)
 
     monkeypatch.setitem(
         batchnorm.BURES_WASSERSTEIN_STEPS, "bias", DualPath(original.autograd, spy)
@@ -636,7 +667,6 @@ def test_gbwbn_float32_projection_uses_float64_bound(monkeypatch, bw_theta):
         4, mean_type="bures_wasserstein", bw_theta=bw_theta, dtype=torch.float32
     )
     X = random_SPD(4, 8, cond=10, dtype=torch.float32)
-    layer(X)
-    tau = torch.finfo(torch.float64).eps ** (bw_theta / 4)
-    assert calls == [(torch.float64, torch.float64, pytest.approx(tau))]
-    assert batchnorm.bw_transport_floor(torch.float64, bw_theta) == pytest.approx(tau)
+    assert layer(X).dtype == torch.float32
+    # float64 tensors, and no projection of the bias exponential (paper formula)
+    assert calls == [(torch.float64, torch.float64, ())]
