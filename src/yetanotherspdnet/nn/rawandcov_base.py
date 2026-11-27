@@ -6,8 +6,12 @@ from torch.nn.utils import parametrizations
 
 from ..functions.rawandcov_linalg import (
     CongruenceAndProjection,
+    CoordinatesAndVec,
     EighReLuAndProjection,
     EighReLuAndWhitening,
+    EuclideanMixing,
+    LogmAndWhitening,
+    LogmTwoStream,
 )
 from ..random.stiefel import _init_weights_stiefel
 
@@ -211,3 +215,229 @@ class ReEigTwoStream(nn.Module):
             Representation of the layer
         """
         return f"ReEigTwoStream(eps={self.eps}, mode={self.mode!r}, dim={self.dim})"
+
+
+class LogEigTwoStream(nn.Module):
+    r"""
+    Two-stream LogEig layer, version 1: :math:`(\Sigma, X) \mapsto (\log\Sigma, X)`.
+
+    The SPD stream is the classical LogEig layer, and the raw data are left
+    unchanged. The layer has no parameter; it is usually followed by
+    :class:`VecTwoStream`.
+    """
+
+    def __init__(self, dim: int | None = None) -> None:
+        """
+        Build a two-stream LogEig layer, version 1.
+
+        Parameters
+        ----------
+        dim : int, optional
+            Dimension of the SPD matrices. Default is None.
+            Used for logging purposes.
+        """
+        super().__init__()
+        self.dim = dim
+
+    def forward(
+        self, data_cov: torch.Tensor, data_raw: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the two-stream LogEig layer, version 1
+
+        Parameters
+        ----------
+        data_cov : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        data_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data associated with the SPD matrices
+
+        Returns
+        -------
+        data_log : torch.Tensor of shape (..., n_features, n_features)
+            Batch of matrix logarithms of the SPD matrices
+
+        data_raw_transformed : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data (unchanged)
+        """
+        return LogmTwoStream.apply(data_cov, data_raw)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"LogEigTwoStream(dim={self.dim})"
+
+
+class LogEigWhitenedTwoStream(nn.Module):
+    r"""
+    Two-stream LogEig layer, version 2:
+    :math:`(\Sigma, X) \mapsto (\log\Sigma, \Sigma^{-1/2} X)`.
+
+    The SPD stream is the classical LogEig layer, and the raw data are whitened
+    by the SPD matrices. The layer has no parameter; it is usually followed by
+    :class:`VecTwoStream`.
+    """
+
+    def __init__(self, dim: int | None = None) -> None:
+        """
+        Build a two-stream LogEig layer, version 2.
+
+        Parameters
+        ----------
+        dim : int, optional
+            Dimension of the SPD matrices. Default is None.
+            Used for logging purposes.
+        """
+        super().__init__()
+        self.dim = dim
+
+    def forward(
+        self, data_cov: torch.Tensor, data_raw: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the two-stream LogEig layer, version 2
+
+        Parameters
+        ----------
+        data_cov : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        data_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data associated with the SPD matrices
+
+        Returns
+        -------
+        data_log : torch.Tensor of shape (..., n_features, n_features)
+            Batch of matrix logarithms of the SPD matrices
+
+        data_raw_transformed : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of whitened raw data
+        """
+        return LogmAndWhitening.apply(data_cov, data_raw)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"LogEigWhitenedTwoStream(dim={self.dim})"
+
+
+class VecTwoStream(nn.Module):
+    r"""
+    Two-stream vectorization layer:
+    :math:`(L, W) \mapsto z = [\mathrm{coord}(L)\,;\,\mathrm{vec}(W)]`, the
+    vector fed to the classifier.
+
+    :math:`\mathrm{coord}` gives the Euclidean orthonormal coordinates of a
+    symmetric matrix (off-diagonal entries scaled by :math:`\sqrt{2}`).
+    The layer has no parameter.
+    """
+
+    def forward(self, data_sym: torch.Tensor, data_raw: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the two-stream vectorization layer
+
+        Parameters
+        ----------
+        data_sym : torch.Tensor of shape (..., n_features, n_features)
+            Batch of symmetric matrices
+
+        data_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data
+
+        Returns
+        -------
+        data_vec : torch.Tensor of shape (..., n_features*(n_features+1)//2 + n_features*n_samples)
+            Batch of concatenated vectors
+        """
+        return CoordinatesAndVec.apply(data_sym, data_raw)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return "VecTwoStream()"
+
+
+class MixingTwoStream(nn.Module):
+    r"""
+    Two-stream Mixing layer (Euclidean path):
+    :math:`(\Sigma, X) \mapsto (P, Y)` with
+
+    .. math::
+        P = \alpha\,\Sigma + (1-\alpha)\,\tfrac{1}{n} X X^\top, \qquad Y = X.
+
+    It restores the link between both streams after a layer that partially breaks it.
+    The mixing weight :math:`\alpha` is fixed: the layer has no learnable parameter.
+    """
+
+    def __init__(self, alpha: float = 0.5, dim: int | None = None) -> None:
+        """
+        Build a two-stream Mixing layer.
+
+        Parameters
+        ----------
+        alpha : float, optional
+            Fixed mixing weight, in (0, 1]. alpha = 1 leaves the SPD matrices
+            unchanged. Default is 0.5
+
+        dim : int, optional
+            Dimension of SPD matrices. Default is None.
+            Used for logging purposes.
+        """
+        super().__init__()
+        assert 0 < alpha <= 1, "alpha must be in (0, 1]"
+        self.alpha = alpha
+        self.dim = dim
+
+    def forward(
+        self, data_cov: torch.Tensor, data_raw: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the two-stream Mixing layer
+
+        Parameters
+        ----------
+        data_cov : torch.Tensor of shape (..., n_features, n_features)
+            Batch of SPD matrices
+
+        data_raw : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data associated with the SPD matrices
+
+        Returns
+        -------
+        data_cov_transformed : torch.Tensor of shape (..., n_features, n_features)
+            Batch of mixed SPD matrices
+
+        data_raw_transformed : torch.Tensor of shape (..., n_features, n_samples)
+            Batch of raw data (unchanged)
+        """
+        return EuclideanMixing.apply(data_cov, data_raw, self.alpha)
+
+    def __repr__(self) -> str:
+        """
+        Representation of the layer
+
+        Returns
+        -------
+        str
+            Representation of the layer
+        """
+        return f"MixingTwoStream(alpha={self.alpha}, dim={self.dim})"

@@ -1,6 +1,12 @@
 from .base import BiMap, LogEig, ReEig, Vec, Vech
 from .batchnorm import BatchNormSPDMean
-from .rawandcov_base import BiMapTwoStream, ReEigTwoStream
+from .rawandcov_base import (
+    BiMapTwoStream,
+    LogEigTwoStream,
+    LogEigWhitenedTwoStream,
+    MixingTwoStream,
+    ReEigTwoStream,
+)
 
 
 __all__ = [
@@ -12,4 +18,7 @@ __all__ = [
     "BatchNormSPDMean",
     "BiMapTwoStream",
     "ReEigTwoStream",
+    "LogEigTwoStream",
+    "LogEigWhitenedTwoStream",
+    "MixingTwoStream",
 ]
