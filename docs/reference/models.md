@@ -15,6 +15,7 @@ layers; the {doc}`../user_guide/models` guide groups these arguments by role.
    SPDnet
    RResNet
    GBWBNRResNet
+   GBWBNPlacementWarning
 ```
 
 ```{eval-rst}
@@ -30,4 +31,8 @@ layers; the {doc}`../user_guide/models` guide groups these arguments by role.
 ```{eval-rst}
 .. autoclass:: yetanotherspdnet.model.GBWBNRResNet
    :members: forward, register_optimizer_hook
+```
+
+```{eval-rst}
+.. autoclass:: yetanotherspdnet.model.GBWBNPlacementWarning
 ```

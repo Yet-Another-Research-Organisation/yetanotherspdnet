@@ -1,5 +1,6 @@
 """SPD network model definitions: SPDnet, GBWBNRResNet, and RResNet."""
 
+import warnings
 import zlib
 from collections.abc import Callable
 from typing import Any
@@ -14,6 +15,17 @@ from yetanotherspdnet.nn.batchnorm import (
     BatchNormSPDMeanScalarVariance,
 )
 from yetanotherspdnet.nn.rresnet_layers import ResidualBlock
+
+
+#: Section of the batch normalization guide on the placement of GBWBN
+GBWBN_PLACEMENT_DOCS = (
+    "https://yet-another-research-organisation.github.io/yetanotherspdnet/"
+    "user_guide/batchnorm.html#singular-outputs-at-the-bias-step-put-a-reeig-after-gbwbn"
+)
+
+
+class GBWBNPlacementWarning(UserWarning):
+    """A GBWBN batch normalization is placed where its output is not floored."""
 
 
 class _ModelMixin(nn.Module):
@@ -311,7 +323,8 @@ class SPDnet(_ModelMixin, nn.Module):
             ``batchnorm_mean_type="bures_wasserstein"``), whose bias
             exponential can output singular matrices that the ReEig then floors
             (see :class:`~yetanotherspdnet.nn.batchnorm.BatchNormSPDMeanScalarVariance`),
-            ``"after_reeig"`` otherwise.
+            ``"after_reeig"`` otherwise. GBWBN with ``"after_reeig"`` emits a
+            :class:`GBWBNPlacementWarning`.
 
         vec_type : str, optional
             Whether to use Vec or Vech module.
@@ -342,6 +355,13 @@ class SPDnet(_ModelMixin, nn.Module):
 
         generator : torch.Generator, optional
             Generator to ensure reproducibility. Default is None
+
+        Warns
+        -----
+        GBWBNPlacementWarning
+            Once per model, if the batch normalization is GBWBN and
+            ``batchnorm_position="after_reeig"``: its output is not floored
+            before the next LogEig or batch norm.
 
         Attributes
         ----------
@@ -387,6 +407,22 @@ class SPDnet(_ModelMixin, nn.Module):
         self.batchnorm_position = _resolve_batchnorm_position(
             batchnorm_position, batchnorm_type, batchnorm_mean_type
         )
+        if (
+            batchnorm
+            and self.batchnorm_position == "after_reeig"
+            and _is_gbwbn(batchnorm_type, batchnorm_mean_type)
+        ):
+            warnings.warn(
+                "SPDnet with GBWBN (batchnorm_type='mean_var_scalar', "
+                "batchnorm_mean_type='bures_wasserstein') and "
+                "batchnorm_position='after_reeig': the Bures-Wasserstein bias "
+                "exponential can leave its domain and output singular matrices, "
+                "which the next LogEig or batch norm turns into NaN. Use "
+                "batchnorm_position='before_reeig' (the default for GBWBN, "
+                f"BiMap -> GBWBN -> ReEig). See {GBWBN_PLACEMENT_DOCS}",
+                GBWBNPlacementWarning,
+                stacklevel=2,
+            )
 
         self.vec_type = vec_type
         if self.vec_type not in ("vec", "vech"):
@@ -579,6 +615,11 @@ class SPDnet(_ModelMixin, nn.Module):
 BATCHNORM_POSITIONS = ("after_reeig", "before_reeig")
 
 
+def _is_gbwbn(batchnorm_type: str, mean_type: str) -> bool:
+    """Whether the batch normalization is GBWBN (scalar variance, BW mean)."""
+    return batchnorm_type == "mean_var_scalar" and mean_type == "bures_wasserstein"
+
+
 def _resolve_batchnorm_position(
     position: str | None, batchnorm_type: str, mean_type: str
 ) -> str:
@@ -591,8 +632,7 @@ def _resolve_batchnorm_position(
     normalizations output congruences of SPD matrices and stay after the ReEig.
     """
     if position is None:
-        gbwbn = batchnorm_type == "mean_var_scalar" and mean_type == "bures_wasserstein"
-        return "before_reeig" if gbwbn else "after_reeig"
+        return "before_reeig" if _is_gbwbn(batchnorm_type, mean_type) else "after_reeig"
     if position not in BATCHNORM_POSITIONS:
         raise ValueError(
             f"batchnorm_position must be in {list(BATCHNORM_POSITIONS)} or None, "

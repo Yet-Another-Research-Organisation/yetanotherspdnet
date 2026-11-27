@@ -158,10 +158,12 @@ singular output is floored before the next logarithm.
 `"after_reeig"` keeps the former placement). The ReEig floors the singular
 directions at `reeig_eps`; its gradient there is zero, as for any clamped
 eigenvalue. `GBWBNRResNet` and `RResNet` already floor the output of GBWBN at
-the start of their residual block. An alternative, not used by the layer: the
-geometry functions (`bures_wasserstein_bias`, `BuresWassersteinBias`) accept
-`min_transport_eigval`, which projects $T$ onto $\{T \succeq \tau I\}$; it
-changes the outputs wherever the formula folds.
+the start of their residual block (an `RResNet` stage with
+`n_residual_blocks` 0 does not). `SPDnet` emits a `GBWBNPlacementWarning` when
+GBWBN is built with `batchnorm_position="after_reeig"`. An alternative, not
+used by the layer: the geometry functions (`bures_wasserstein_bias`,
+`BuresWassersteinBias`) accept `min_transport_eigval`, which projects $T$
+onto $\{T \succeq \tau I\}$; it changes the outputs wherever the formula folds.
 
 **Precision.** GBWBN computes in float64 whatever the dtype of its data
 (`BW_COMPUTE_DTYPE`): the data, $M$, $G$, $s$ and the running statistics are

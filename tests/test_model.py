@@ -1,10 +1,17 @@
+import warnings
+
 import pytest
 import torch
 from torch.nn.utils import parametrize
 from torch.testing import assert_close
 
 # from utils import is_symmetric
-from yetanotherspdnet.model import GBWBNRResNet, RResNet, SPDnet
+from yetanotherspdnet.model import (
+    GBWBNPlacementWarning,
+    GBWBNRResNet,
+    RResNet,
+    SPDnet,
+)
 from yetanotherspdnet.nn.base import BiMap, LogEig, ReEig, Vec, Vech
 from yetanotherspdnet.nn.batchnorm import (
     BatchNormSPDMean,
@@ -1365,12 +1372,14 @@ _MODEL_HASHES = [
 ]
 
 
+@pytest.mark.filterwarnings("ignore::yetanotherspdnet.model.GBWBNPlacementWarning")
 @pytest.mark.parametrize("model, kwargs, expected", _MODEL_HASHES)
 def test_model_hash_is_stable(model, kwargs, expected):
     net = model(**kwargs, dtype=torch.float64, generator=torch.Generator())
     assert net.get_model_hash() == expected
 
 
+@pytest.mark.filterwarnings("ignore::yetanotherspdnet.model.GBWBNPlacementWarning")
 @pytest.mark.parametrize("model, kwargs, expected", _MODEL_HASHES)
 def test_use_autograd_expansion(model, kwargs, expected):
     net = model(**kwargs, dtype=torch.float64, generator=torch.Generator())
@@ -1381,3 +1390,96 @@ def test_use_autograd_expansion(model, kwargs, expected):
             assert value is use_autograd
         else:
             assert value is use_autograd.get(key, False)
+
+
+# ---------------------------------------------------------------------------
+# GBWBN after the ReEig: one GBWBNPlacementWarning per model, no hash change
+# ---------------------------------------------------------------------------
+_GBWBN = {
+    "batchnorm": True,
+    "batchnorm_type": "mean_var_scalar",
+    "batchnorm_mean_type": "bures_wasserstein",
+}
+
+
+def _placement_warnings(build):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model = build()
+    found = [w for w in caught if issubclass(w.category, GBWBNPlacementWarning)]
+    return model, found
+
+
+def test_gbwbn_after_reeig_warns_once_per_model():
+    # two GBWBN layers, one warning per construction, pointing at the caller
+    for _ in range(2):
+        _, found = _placement_warnings(
+            lambda: SPDnet(8, [6, 4], 3, **_GBWBN, batchnorm_position="after_reeig")
+        )
+        assert len(found) == 1
+        assert found[0].filename == __file__
+        message = str(found[0].message)
+        assert "before_reeig" in message
+        assert "user_guide/batchnorm.html#" in message
+    with pytest.warns(GBWBNPlacementWarning, match="leave its domain"):
+        SPDnet(8, [6], 3, **_GBWBN, batchnorm_position="after_reeig")
+
+
+def test_gbwbn_placement_warning_keeps_the_hash():
+    # the hash of the former placement (see _MODEL_HASHES)
+    with pytest.warns(GBWBNPlacementWarning):
+        model = SPDnet(
+            8,
+            [6],
+            3,
+            **_GBWBN,
+            batchnorm_position="after_reeig",
+            dtype=torch.float64,
+            generator=torch.Generator(),
+        )
+    assert model.get_model_hash() == "475b16dd"
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        # the default GBWBN placement, and the explicit one
+        lambda: SPDnet(8, [6, 4], 3, **_GBWBN),
+        lambda: SPDnet(8, [6, 4], 3, **_GBWBN, batchnorm_position="before_reeig"),
+        # the other batch norms, in both placements
+        lambda: SPDnet(8, [6, 4], 3, batchnorm=True),
+        lambda: SPDnet(8, [6, 4], 3, batchnorm=True, batchnorm_position="after_reeig"),
+        lambda: SPDnet(
+            8,
+            [6],
+            3,
+            batchnorm=True,
+            batchnorm_type="mean_var_scalar",
+            batchnorm_mean_type="affine_invariant",
+            batchnorm_position="after_reeig",
+        ),
+        lambda: SPDnet(
+            8,
+            [6],
+            3,
+            batchnorm=True,
+            batchnorm_mean_type="bures_wasserstein",
+            batchnorm_position="after_reeig",
+        ),
+        # GBWBN options without batch norm
+        lambda: SPDnet(
+            8,
+            [6],
+            3,
+            **(_GBWBN | {"batchnorm": False}),
+            batchnorm_position="after_reeig",
+        ),
+        # the residual networks floor the GBWBN output in their residual block
+        lambda: GBWBNRResNet(8, 6, 3),
+        lambda: RResNet(8, [6, 4], [1, 1], 3, **_GBWBN),
+        lambda: RResNet(8, [6, 4], [1, 1], 3, **_GBWBN, reeig=True),
+    ],
+)
+def test_no_gbwbn_placement_warning(build):
+    _, found = _placement_warnings(build)
+    assert found == []
