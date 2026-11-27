@@ -21,7 +21,12 @@ from yetanotherspdnet.functions.spd_geometries import (
     kullback_leibler_symmetrized,
     log_euclidean,
 )
-from yetanotherspdnet.model import GBWBNRResNet, RResNet, SPDnet
+from yetanotherspdnet.model import (
+    GBWBNPlacementWarning,
+    GBWBNRResNet,
+    RResNet,
+    SPDnet,
+)
 from yetanotherspdnet.nn.base import BiMap
 from yetanotherspdnet.nn.batchnorm import BatchNormSPDMeanScalarVariance
 from yetanotherspdnet.nn.rresnet_layers import SpectralVectorField
@@ -494,7 +499,10 @@ def test_spdnet_places_gbwbn_before_reeig():
     # explicit placement of the other batch norms, and of GBWBN after the ReEig
     other = SPDnet(8, [6, 4], 3, batchnorm=True, dtype=DTYPE)
     assert kinds(other)[1:3] == ["ReEig", "ParametrizedBatchNormSPDMean"]
-    after = SPDnet(8, [6, 4], 3, **gbwbn, batchnorm_position="after_reeig", dtype=DTYPE)
+    with pytest.warns(GBWBNPlacementWarning):
+        after = SPDnet(
+            8, [6, 4], 3, **gbwbn, batchnorm_position="after_reeig", dtype=DTYPE
+        )
     assert kinds(after)[-2:] == ["ParametrizedBatchNormSPDMeanScalarVariance", "LogEig"]
     with pytest.raises(ValueError, match="batchnorm_position"):
         SPDnet(8, [6], 3, batchnorm=True, batchnorm_position="before", dtype=DTYPE)
